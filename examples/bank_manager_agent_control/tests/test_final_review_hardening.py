@@ -330,7 +330,13 @@ def test_invalid_tier_blocks_write_before_tool_execution(
         description="Prepare a loan modification.",
     )
     control_cls, blocked_cls, mode_cls = agent_tier_authz._load_acs()
-    control = control_cls.from_path(str(agent_tier_authz.ACS_MANIFEST))
+    control = control_cls.from_path(
+        str(
+            agent_tier_authz._manifest_with_absolute_bundle(
+                agent_tier_authz.ACS_MANIFEST
+            )
+        )
+    )
     state = agent_tier_authz._new_host_state()
     wrapped = agent_tier_authz._wrap_tool(
         tool,
@@ -975,6 +981,10 @@ def test_policy_engine_failure_is_fail_closed(tmp_path: Path) -> None:
 
 
 def test_acs_decision_is_emitted_as_normal_otel_tool_evidence() -> None:
+    pytest.importorskip(
+        "agent_control_specification",
+        reason="native ACS publishes Linux wheels only",
+    )
     exporter = LiveOTelExporter()
     exporter.setup()
     exporter.clear()
@@ -1034,6 +1044,10 @@ def test_acs_decision_is_emitted_as_normal_otel_tool_evidence() -> None:
 
 
 def test_verified_action_binding_is_emitted_in_otel_policy_input() -> None:
+    pytest.importorskip(
+        "agent_control_specification",
+        reason="native ACS publishes Linux wheels only",
+    )
     exporter = LiveOTelExporter()
     exporter.setup()
     exporter.clear()
