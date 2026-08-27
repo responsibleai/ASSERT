@@ -12,7 +12,11 @@ from functools import wraps
 from typing import TypeVar
 from uuid import uuid4
 
-from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+)
 from pydantic import BaseModel
 
 from assert_ai.core.workspace import WorkspaceService
@@ -24,7 +28,7 @@ log = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-class _McpToolError(RuntimeError):
+class _McpToolError(ToolError):
     """Expected sanitized error that should survive nested adaptation."""
 
 
