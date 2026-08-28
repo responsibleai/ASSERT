@@ -429,7 +429,7 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
             raise LLMAuthError(
                 "Azure managed-identity auth is active but the "
                 "azure-identity package is not installed. Install it "
-                "with `pip install 'assert-ai[azure-aad]'`, or set "
+                "with `pip install 'assert-ai[azure-auth]'`, or set "
                 "AZURE_API_KEY to use API-key auth."
             )
         # aad-fallback path: silently skip — LiteLLM's own auth error
@@ -964,14 +964,14 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
                         "a manually-minted token (`az account "
                         "get-access-token --resource https://ai.azure.com`), "
                         "or install Azure AD support with "
-                        "`pip install 'assert-ai[azure-aad]'`."
+                        "`pip install 'assert-ai[azure-auth]'`."
                     )
                 else:
                     msg += (
                         "\nNo AZURE_API_KEY is set and azure-identity is not "
                         "installed. Either export AZURE_API_KEY, or install "
                         "Azure AD support with "
-                        "`pip install 'assert-ai[azure-aad]'`."
+                        "`pip install 'assert-ai[azure-auth]'`."
                     )
             elif _model_family(model) == "azure_ai":
                 msg += (
@@ -1104,7 +1104,7 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
                 hint = (
                     "Azure AI Foundry rejected the call because no bearer "
                     "token was supplied. Install Azure AD support with "
-                    "`pip install 'assert-ai[azure-aad]'` and run "
+                    "`pip install 'assert-ai[azure-auth]'` and run "
                     "`az login`, or export AZURE_AI_API_KEY with a "
                     "manually-minted token (`az account get-access-token "
                     "--resource https://ai.azure.com`)."

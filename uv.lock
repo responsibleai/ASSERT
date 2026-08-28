@@ -396,8 +396,10 @@ name = "assert-ai"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "click" },
     { name = "litellm" },
+    { name = "openinference-instrumentation-litellm" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
@@ -420,16 +422,14 @@ all = [
     { name = "azure-identity" },
     { name = "numpy" },
     { name = "openai" },
-    { name = "openinference-instrumentation-langchain" },
     { name = "pandas" },
     { name = "sentence-transformers" },
 ]
 analysis = [
     { name = "numpy" },
     { name = "openai" },
-    { name = "pandas" },
 ]
-azure-aad = [
+azure-auth = [
     { name = "azure-identity" },
 ]
 dev = [
@@ -437,17 +437,17 @@ dev = [
     { name = "agent-control-specification" },
     { name = "numpy" },
     { name = "openai" },
-    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
 embeddings = [
+    { name = "numpy" },
     { name = "sentence-transformers" },
 ]
-otel = [
+phoenix = [
     { name = "arize-phoenix" },
     { name = "arize-phoenix-otel" },
-    { name = "openinference-instrumentation-langchain" },
+    { name = "pandas" },
 ]
 
 [package.dev-dependencies]
@@ -461,19 +461,21 @@ dev = [
 requires-dist = [
     { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0,<0.4" },
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
-    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0,<19.18.0" },
-    { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
+    { name = "aiohttp", specifier = ">=3.12.0" },
+    { name = "arize-phoenix", marker = "extra == 'phoenix'", specifier = ">=15.0.0,<19.18.0" },
+    { name = "arize-phoenix-otel", marker = "extra == 'phoenix'", specifier = ">=0.15.0" },
     { name = "assert-ai", extras = ["analysis", "acs"], marker = "extra == 'dev'" },
-    { name = "assert-ai", extras = ["otel", "analysis", "embeddings", "azure-aad", "acs"], marker = "extra == 'all'" },
-    { name = "azure-identity", marker = "extra == 'azure-aad'", specifier = ">=1.19.0" },
+    { name = "assert-ai", extras = ["phoenix", "analysis", "embeddings", "azure-auth", "acs"], marker = "extra == 'all'" },
+    { name = "azure-identity", marker = "extra == 'azure-auth'", specifier = ">=1.19.0" },
     { name = "click", specifier = ">=8.0" },
     { name = "litellm", specifier = ">=1.84.1,<2" },
     { name = "numpy", marker = "extra == 'analysis'", specifier = ">=2.0.0" },
-    { name = "openai", marker = "extra == 'analysis'", specifier = ">=1.30.0" },
-    { name = "openinference-instrumentation-langchain", marker = "extra == 'otel'", specifier = ">=0.1.62" },
+    { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=2.0.0" },
+    { name = "openai", marker = "extra == 'analysis'", specifier = ">=2.20.0,<3" },
+    { name = "openinference-instrumentation-litellm", specifier = ">=0.1.30" },
     { name = "opentelemetry-api", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0" },
-    { name = "pandas", marker = "extra == 'analysis'", specifier = ">=2.2.0" },
+    { name = "pandas", marker = "extra == 'phoenix'", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.2.0" },
@@ -483,7 +485,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.0" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0.0" },
 ]
-provides-extras = ["otel", "analysis", "embeddings", "azure-aad", "acs", "all", "dev"]
+provides-extras = ["phoenix", "analysis", "embeddings", "azure-auth", "acs", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2545,20 +2547,21 @@ wheels = [
 ]
 
 [[package]]
-name = "openinference-instrumentation-langchain"
-version = "0.1.63"
+name = "openinference-instrumentation-litellm"
+version = "0.1.39"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openinference-instrumentation" },
     { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-sdk" },
+    { name = "setuptools" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/ed/a752b9827f3d49c49580417103c05ee41defe9242a13e50bde06e71146b4/openinference_instrumentation_langchain-0.1.63.tar.gz", hash = "sha256:fcfd010f9c2577cc78c2dbace7000c0855ee24ec0d2891c99f4df51072596def", size = 75540, upload-time = "2026-04-22T00:39:28.473Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/66/657d4739b75c8f0991690a90d174b8ba27dc4b5a99a280dd31a89fa0ddaf/openinference_instrumentation_litellm-0.1.39.tar.gz", hash = "sha256:d33a80f53b7766780c9e6efbeceaa731e3e348c263158a6ca8cb830f66130a64", size = 111018, upload-time = "2026-08-25T05:32:47.209Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/c2/3068ef467e0918d61c74fdfecd30a0cd44384a80d39046c957d5ff8e1611/openinference_instrumentation_langchain-0.1.63-py3-none-any.whl", hash = "sha256:c67f4c3e3a3848dfbb7f1c79fbe83f9501ebb7c6e297f624d719061cfc487162", size = 24746, upload-time = "2026-04-22T00:39:27.431Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/43/241377d9353030660432dea8dd311fb0886112d20bdc66843c96c4e15cc4/openinference_instrumentation_litellm-0.1.39-py3-none-any.whl", hash = "sha256:e1e6ef864fa3547b5ae1be21b1a24e57a366b870b96364ca2cd46e538d0bdc50", size = 24557, upload-time = "2026-08-25T05:32:45.739Z" },
 ]
 
 [[package]]

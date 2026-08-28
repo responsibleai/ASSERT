@@ -1166,7 +1166,7 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(model_client.LLMAuthError) as ctx:
                 await model_client.generate("azure/gpt-4o-mini", "hi")
         self.assertIn("azure-identity", str(ctx.exception))
-        self.assertIn("assert-ai[azure-aad]", str(ctx.exception))
+        self.assertIn("assert-ai[azure-auth]", str(ctx.exception))
 
     # Row 6b: aad-fallback + azure/* + missing dep → silent skip (no inject, no raise)
     async def test_aad_fallback_missing_dep_silently_skips_injection(self) -> None:
@@ -1257,7 +1257,7 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(model_client.LLMAuthError) as ctx:
                 await model_client.generate("azure_ai/agents/asst_xxx", "hi")
         self.assertIn("azure-identity", str(ctx.exception))
-        self.assertIn("assert-ai[azure-aad]", str(ctx.exception))
+        self.assertIn("assert-ai[azure-auth]", str(ctx.exception))
 
     async def test_aad_fallback_azure_ai_agent_missing_dep_silently_skips(self) -> None:
         captured = await self._run_chat(
@@ -1408,7 +1408,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
              patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", True):
             wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
-        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertIn("assert-ai[azure-auth]", str(wrapped))
         # The RBAC hint must not appear in this branch — it would be misleading.
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
 
@@ -1430,7 +1430,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
                 exc, model="azure_ai/agents/asst_xxx"
             )
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
-        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertIn("assert-ai[azure-auth]", str(wrapped))
         self.assertIn("AZURE_AI_API_KEY", str(wrapped))
         # The Azure OpenAI env var must not appear: it would send the
         # user to the wrong resource's key.
@@ -1453,7 +1453,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         # Neither the RBAC hint nor the install hint should appear on a
         # non-Azure call.
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
-        self.assertNotIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertNotIn("assert-ai[azure-auth]", str(wrapped))
         self.assertNotIn("Azure AD auth is active", str(wrapped))
 
     def test_auth_error_omits_azure_hints_when_model_not_supplied(self) -> None:
@@ -1468,7 +1468,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
             wrapped = model_client._classify_llm_error(exc)
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
-        self.assertNotIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertNotIn("assert-ai[azure-auth]", str(wrapped))
 
     # ── azure_ai/* (Azure AI Foundry) hints ────────────────────────
 
@@ -1504,7 +1504,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
                 exc, model="azure_ai/agents/asst_xxx"
             )
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
-        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertIn("assert-ai[azure-auth]", str(wrapped))
         self.assertIn("az login", str(wrapped))
         self.assertIn("AZURE_AI_API_KEY", str(wrapped))
 
