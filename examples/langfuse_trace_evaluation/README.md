@@ -211,12 +211,30 @@ Look for:
 - the specific transcript turns that caused the verdict;
 - any judge failure or content-filter status.
 
+## 7. Return the judgments to Langfuse
+
+Use the artifact bridge to create deterministic ASSERT-owned traces in the
+Langfuse project and attach the completed verdict dimensions as scores:
+
+```powershell
+$env:LANGFUSE_BASE_URL = "https://your-langfuse-origin.example"
+$env:LANGFUSE_PUBLIC_KEY = "<project-public-key>"
+$env:LANGFUSE_SECRET_KEY = "<project-secret-key>"
+
+python examples/langfuse_bridge/run_bridge.py `
+  --run-dir artifacts/results/helix-docs-assistant/langfuse-import-1
+```
+
+ASSERT remains the evaluator; Langfuse stores and visualizes the exported
+traces and scores. This creates separate ASSERT-owned trace objects rather than
+mutating the original Langfuse traces.
+
 ## Use your own Langfuse project
 
 Set your Langfuse connection in the current shell:
 
 ```powershell
-$env:LANGFUSE_HOST = 'https://cloud.langfuse.com'
+$env:LANGFUSE_BASE_URL = 'https://cloud.langfuse.com'
 $env:LANGFUSE_PUBLIC_KEY = 'pk-lf-REPLACE'
 $env:LANGFUSE_SECRET_KEY = 'sk-lf-REPLACE'
 ```
@@ -241,7 +259,8 @@ Then:
 2. copy `eval_config.yaml` and replace the Helix policy with your policy;
 3. create a taxonomy with explicit permissible and impermissible categories;
 4. update `suite` and `run` so they match the inference-set destination;
-5. run only the judge stage.
+5. run only the judge stage;
+6. use the artifact bridge to return the completed judgments to Langfuse.
 
 The direct API client uses Langfuse's public trace list and trace-detail
 endpoints. If your Langfuse version no longer exposes the v1 trace-detail

@@ -95,7 +95,7 @@ Local artifact validation completes before the first network request. HTTP
 failures can still leave a partial remote export; deterministic IDs make a
 manual re-export safe.
 
-## Tier-1 boundaries
+## Current boundaries
 
 This bridge exports only ASSERT-produced traces and scores. It does not add:
 
@@ -111,7 +111,8 @@ configuration that is not present in ASSERT's run artifacts. Posting the
 result as an API score accurately preserves ownership: ASSERT made the
 judgment, while Langfuse stores and visualizes it.
 
-For a partner verification pass, run the synthetic example against both a
-supported self-hosted deployment and Langfuse Cloud, then confirm that two
-traces and their `policy_violation` and `overrefusal` scores appear. Do not add
-live project credentials or exported customer data to the repository.
+Before relying on the bridge in production, run the synthetic example against
+the intended self-hosted deployment or Langfuse Cloud project, then confirm
+that two traces and their `policy_violation` and `overrefusal` scores appear.
+Do not add live project credentials or exported customer data to the
+repository.

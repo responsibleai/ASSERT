@@ -4,7 +4,7 @@
     Langfuse public API -> OTLP JSON -> inference_set.jsonl
                                        -> assert-ai run --force-stage judge
 
-Why a real converter is needed (all verified, see README.md "Why Tier-2"):
+Why a real converter is needed:
 
   * Langfuse's OTLP surface is **ingest-only**. There is no corresponding OTLP
     read path, so "export the OTLP you sent" is not an option.
@@ -770,6 +770,39 @@ def load_traces_from_file(path: Path) -> list[dict[str, Any]]:
     raise ValueError(f"Unrecognized Langfuse export shape in {path}")
 
 
+def _validate_langfuse_origin(value: str) -> str:
+    origin = value.strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(origin)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError(
+            "Langfuse base URL must be an http(s) origin without credentials or a path"
+        )
+    return origin
+
+
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Prevent Basic Auth credentials from leaving the configured origin."""
+
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> None:
+        return None
+
+
 class LangfuseClient:
     """Minimal Langfuse public-API client (stdlib only).
 
@@ -777,13 +810,14 @@ class LangfuseClient:
     """
 
     def __init__(self, host: str, public_key: str, secret_key: str, timeout: int = 60):
-        self.host = host.rstrip("/")
+        self.host = _validate_langfuse_origin(host)
         token = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
         self.headers = {
             "Authorization": f"Basic {token}",
             "Accept": "application/json",
         }
         self.timeout = timeout
+        self._opener = urllib.request.build_opener(_RejectRedirectHandler())
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         url = f"{self.host}{path}"
@@ -792,7 +826,7 @@ class LangfuseClient:
             if clean:
                 url = f"{url}?{urllib.parse.urlencode(clean)}"
         req = urllib.request.Request(url, headers=self.headers)
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with self._opener.open(req, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def list_traces(
@@ -1011,7 +1045,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--group-by", default="session.id", help="Grouping attribute (matches assert-ai judge-traces).")
     p.add_argument("--behavior", default="langfuse_import", help="behavior label for emitted inference rows.")
 
-    p.add_argument("--host", default=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"))
+    p.add_argument(
+        "--base-url",
+        "--host",
+        dest="host",
+        default=os.environ.get(
+            "LANGFUSE_BASE_URL",
+            os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        ),
+        help="Langfuse origin. Defaults to LANGFUSE_BASE_URL.",
+    )
     p.add_argument("--public-key", default=os.environ.get("LANGFUSE_PUBLIC_KEY", ""))
     p.add_argument("--secret-key", default=os.environ.get("LANGFUSE_SECRET_KEY", ""))
     p.add_argument("--limit", type=int, default=20)

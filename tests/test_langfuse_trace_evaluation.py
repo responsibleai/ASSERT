@@ -8,8 +8,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import urllib.error
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+import pytest
+
+from tests.langfuse_fake_server import fake_langfuse_server
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -173,3 +178,41 @@ def test_out_of_order_trace_input_is_sorted_deterministically() -> None:
 
     assert _reconstructed_messages([second, first]) == expected
     assert _reconstructed_messages([first, second]) == expected
+
+
+def test_api_client_rejects_redirect_without_forwarding_credentials() -> None:
+    with fake_langfuse_server() as redirect_target:
+        with fake_langfuse_server() as server:
+            server.response_status = 302
+            server.response_headers["Location"] = (
+                redirect_target.base_url + "/credential-target"
+            )
+            client = bridge.LangfuseClient(
+                server.base_url,
+                "public-placeholder",
+                "secret-placeholder",
+            )
+            with pytest.raises(urllib.error.HTTPError) as raised:
+                client.list_traces()
+
+    assert raised.value.code == 302
+    assert len(server.requests) == 1
+    assert redirect_target.requests == []
+
+
+def test_parser_prefers_current_langfuse_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://current.example")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://legacy.example")
+
+    args = bridge.build_parser().parse_args(["--api"])
+
+    assert args.host == "https://current.example"
+
+
+def test_api_client_rejects_non_origin_base_url() -> None:
+    with pytest.raises(ValueError, match="without credentials or a path"):
+        bridge.LangfuseClient(
+            "https://example.test/api/public",
+            "public-placeholder",
+            "secret-placeholder",
+        )
