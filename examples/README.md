@@ -80,6 +80,7 @@ scenario, setup, run commands, and artifact paths.
 | [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry. |
 | [`langfuse_trace_evaluation/`](langfuse_trace_evaluation/) | Reconstruct and judge existing Langfuse traces without re-running the agent. |
 | [`azure_managed_identity/`](azure_managed_identity/) | Azure OpenAI authentication with managed identity or `az login`. |
+| [`langfuse_bridge/`](langfuse_bridge/) | Export synthetic or completed ASSERT traces and judgments to Langfuse. |
 
 ## Specialized demos and shared assets
 
