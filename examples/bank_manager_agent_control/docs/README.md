@@ -219,7 +219,7 @@ PowerShell (Windows):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
@@ -229,7 +229,7 @@ bash (macOS / Linux):
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 

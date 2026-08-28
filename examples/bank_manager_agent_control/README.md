@@ -71,8 +71,8 @@ Policy Agent) binary on PATH.
 Install ASSERT with the extras this example uses:
 
 ```bash
-python -m pip install -e ".[acs,otel]"
-pip install -r examples/bank_manager_agent_control/requirements.txt
+python -m pip install -e ".[acs]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
 (`acs` pulls the Agent Control Specification runtime; see
