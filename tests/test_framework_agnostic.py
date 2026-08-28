@@ -664,6 +664,11 @@ class TestOTelTracedSession(unittest.TestCase):
                 "openinference-instrumentation-*",
                 result.raw["span_validation"]["warnings"][0],
             )
+            final_interaction = result.interaction_messages[-1]
+            self.assertEqual(
+                final_interaction["raw"]["span_validation"],
+                result.raw["span_validation"],
+            )
             self.assertIn("openinference-instrumentation-*", logs.output[0])
         finally:
             del sys.modules["_test_otel_target"]

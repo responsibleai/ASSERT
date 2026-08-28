@@ -281,6 +281,7 @@ class OTelTracedSession:
             "raw": {
                 "trace_events": all_conversation_events,
                 "trace_metadata": full_aggregate,
+                "span_validation": turn_trace["validation"],
             },
         })
 
