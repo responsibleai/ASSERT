@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
+from typing import Literal
 
 log = logging.getLogger(__name__)
 
@@ -16,28 +16,86 @@ from pydantic import BaseModel, ConfigDict
 
 from assert_ai.core.config_model import ModelConfig
 from assert_ai.core.io import load_prompt_text
-from assert_ai.core.model_client import GenerateOptions, generate_structured, is_truncated_response
+from assert_ai.core.llm_diagnostics import llm_failure_error
+from assert_ai.core.model_client import (
+    GenerateOptions,
+    generate_structured,
+    is_content_filtered_response,
+    is_truncated_response,
+)
 
 SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
 ALLOWED_MODES = {"research", "direct"}
 
 
-class SummaryItem(BaseModel):
-    description: str
-    example: str
+class StakeholderLens(BaseModel):
+    label: str
+    expertise: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class KeyTerm(BaseModel):
+    term: str
+    definition: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotValue(BaseModel):
+    slot_value: str
+    definition: str
+    example_phrase: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NestedSlotComponent(BaseModel):
+    component: str
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotComponent(BaseModel):
+    component: str
+    nested_slot_components: list[NestedSlotComponent] | None
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BehaviorPattern(BaseModel):
+    pattern: str
+    pattern_role: Literal["problematic", "acceptable"]
+    primary_theory: str
+    related_theory: str
+    key_terms: list[KeyTerm]
+    slot_components: list[SlotComponent]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConceptSpec(BaseModel):
+    behavior: str
+    patterns: list[BehaviorPattern]
 
     model_config = ConfigDict(extra="forbid")
 
 
 class SystematizationResponse(BaseModel):
-    systematization: str
-    summary_items: list[SummaryItem]
+    """Structured output contract mirrored by systematization_single.md."""
+
+    behavior: str
+    scope: str
+    impact_analysis: str
+    alternative_systematizations: str
+    references: list[str]
+    stakeholder_lenses: list[StakeholderLens]
+    reasoning_summary: str
+    concept_spec: ConceptSpec
 
     model_config = ConfigDict(extra="forbid")
-
-
-def _humanize_behavior_name(behavior_name: str | None) -> str:
-    return str(behavior_name or "").replace("_", " ").replace("-", " ").strip()
 
 def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = None) -> str:
     parts = [
@@ -52,56 +110,6 @@ def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = No
     return "".join(parts)
 
 
-def _extract_pattern_blocks(systematization: str) -> list[str]:
-    """Split the systematization into individual pattern blocks.
-
-    Each block starts with ``- **Pattern**:`` and extends until the next
-    pattern bullet or the end of the patterns section.
-    """
-    parts = re.split(r"(?m)^- \*\*Pattern\*\*:", systematization)
-    return [part.strip() for part in parts[1:] if part.strip()]
-
-
-def _validate_pattern_block(block: str) -> None:
-    """Validate a single slot-based pattern block."""
-    if "**Key Terms**:" not in block:
-        raise ValueError("systematization pattern block is missing Key Terms section")
-    if "**Variables**:" not in block:
-        raise ValueError("systematization pattern block is missing Variables section")
-    slot_refs = re.findall(r"\[([A-Z][A-Z0-9_]*)\]", block.split("**Variables**:")[0])
-    if not slot_refs:
-        raise ValueError("systematization pattern template has no [SLOT] placeholders")
-    variable_names = re.findall(r"\*\*\[([A-Z][A-Z0-9_]*)\]\*\*:\s*\{\{", block)
-    if not variable_names:
-        raise ValueError("systematization pattern has no {{ }} variable blocks")
-    for slot in slot_refs:
-        if slot not in variable_names:
-            raise ValueError(f"systematization pattern has [SLOT] '{slot}' with no matching variable block")
-
-
-def _validate_systematization(systematization: str) -> None:
-    text = systematization.strip()
-    if not text:
-        raise ValueError("systematization returned empty systematization")
-
-    # The systematization prompt now produces structured JSON output.
-    # The text field may contain either Markdown-formatted or plain-text
-    # systematization. Only validate non-emptiness — the Pydantic model
-    # already enforces schema correctness.
-    # Legacy Markdown header validation is skipped since the prompt was
-    # updated to produce JSON-structured output.
-
-
-def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
-    if not summary_items:
-        raise ValueError("systematization requires at least one summary item")
-    for item in summary_items:
-        if not item.description.strip():
-            raise ValueError("systematization summary_items.description must be non-empty")
-        if not item.example.strip():
-            raise ValueError("systematization summary_items.example must be non-empty")
-
-
 async def run_systematization(
     *,
     behavior: str,
@@ -111,6 +119,7 @@ async def run_systematization(
     mode: str = "research",
     web_search: bool = True,
     context: str | None = None,
+    diagnostics_dir: str | Path | None = None,
 ) -> Path:
     """Generate one systematization artifact and persist it to disk.
 
@@ -127,6 +136,8 @@ async def run_systematization(
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
     log.debug(f"systematization: behavior={behavior}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
+    output_path = Path(save_path).expanduser().with_suffix(".json")
+    diagnostic_root = Path(diagnostics_dir).expanduser() if diagnostics_dir else output_path.parent / "diagnostics"
 
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
@@ -145,41 +156,87 @@ async def run_systematization(
             reasoning_effort=model_cfg.reasoning_effort,
         ),
     )
+    if is_content_filtered_response(response):
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="content_filtered",
+            attempt=1,
+            message=(
+                "systematization response was stopped by the provider content filter "
+                "before the structured document completed. This is not a token or quota "
+                "failure. ASSERT requests masked, provider-safe examples; if this persists, "
+                "use a model deployment approved for this evaluation content."
+            ),
+        )
     if is_truncated_response(response):
         finish_reason = getattr(response, "finish_reason", None)
-        raise ValueError(
-            "systematization response was truncated by the model's output budget "
-            f"(finish_reason={finish_reason!r}, max_tokens={model_cfg.max_tokens}). "
-            "Increase pipeline.systematize.model.max_tokens (or remove the override "
-            "to use the default) or simplify the behavior description."
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="output_truncated",
+            attempt=1,
+            message=(
+                "systematization response was truncated by the model's output budget "
+                f"(finish_reason={finish_reason!r}, max_tokens={model_cfg.max_tokens}). "
+                "Increase pipeline.systematize.model.max_tokens (or remove the override "
+                "to use the default) or simplify the behavior description."
+            ),
         )
     payload = response.parsed
     if not isinstance(payload, dict) or not payload:
         if not response.text:
-            raise ValueError("systematization returned no structured systematization")
+            raise llm_failure_error(
+                response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization",
+                reason="empty_structured_output",
+                attempt=1,
+                message="systematization returned no structured systematization",
+            )
         try:
             payload = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"systematization model returned unparseable output: {exc}. "
-                f"Raw text (first 500 chars): {response.text[:500]}"
+            raise llm_failure_error(
+                response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization",
+                reason="unparseable_output",
+                attempt=1,
+                message=(
+                    f"systematization model returned unparseable output: {exc}. "
+                    f"Raw text (first 500 chars): {response.text[:500]}"
+                ),
             ) from exc
 
-    parsed = SystematizationResponse.model_validate(payload)
-    _validate_systematization(parsed.systematization)
-    _validate_summary_items(parsed.summary_items)
+    try:
+        parsed = SystematizationResponse.model_validate(payload)
+        if parsed.behavior != behavior or parsed.concept_spec.behavior != behavior:
+            raise ValueError(
+                "systematization behavior labels must exactly match the input behavior "
+                f"{behavior!r}"
+            )
+    except ValueError as exc:
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="schema_validation_failed",
+            attempt=1,
+            message=str(exc),
+        ) from exc
 
     artifact = {
         "behavior": behavior,
-        "systematization": parsed.systematization,
-        "summary_items": [item.model_dump() for item in parsed.summary_items],
+        "systematization": parsed.model_dump(mode="json"),
         "meta": {
             "mode": mode,
             "model": model_cfg.name,
             "reasoning_effort": model_cfg.reasoning_effort,
         },
     }
-    output_path = Path(save_path).expanduser().with_suffix(".json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path

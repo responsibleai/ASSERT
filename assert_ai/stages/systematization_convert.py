@@ -20,7 +20,13 @@ from assert_ai.core.config_model import (
     ModelConfig,
 )
 from assert_ai.core.io import load_prompt_text
-from assert_ai.core.model_client import GenerateOptions, generate_structured, is_truncated_response
+from assert_ai.core.llm_diagnostics import llm_failure_error
+from assert_ai.core.model_client import (
+    GenerateOptions,
+    generate_structured,
+    is_content_filtered_response,
+    is_truncated_response,
+)
 from assert_ai.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -107,6 +113,7 @@ async def run_systematization_to_taxonomy(
     save_path: str = "artifacts/taxonomies/taxonomy.json",
     model_cfg: ModelConfig | None = None,
     behavior_category_count_hint: int = DEFAULT_BEHAVIOR_CATEGORY_COUNT_HINT,
+    diagnostics_dir: str | Path | None = None,
 ) -> Path:
     """Convert the systematization artifact into the taxonomy JSON artifact."""
     if model_cfg is None:
@@ -116,6 +123,10 @@ async def run_systematization_to_taxonomy(
             max_tokens=DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
         )
     log.debug(f"systematization_convert: model={model_cfg.name}, behavior_category_count_hint={behavior_category_count_hint}")
+    output_path = Path(save_path).expanduser()
+    if not output_path.is_absolute():
+        output_path = BASE_DIR / output_path
+    diagnostic_root = Path(diagnostics_dir).expanduser() if diagnostics_dir else output_path.parent / "diagnostics"
     data_path = Path(systematization_path).expanduser()
     if not data_path.is_absolute():
         data_path = BASE_DIR / data_path
@@ -130,8 +141,18 @@ async def run_systematization_to_taxonomy(
     behavior = str(data.get("behavior") or "").strip()
     if not behavior:
         raise ValueError("systematization_convert requires systematization.json to include behavior")
-    systematization_text = str(data.get("systematization") or "").strip()
-    if not systematization_text:
+    systematization_payload = data.get("systematization")
+    if isinstance(systematization_payload, dict) and systematization_payload:
+        systematization_text = json.dumps(
+            systematization_payload,
+            ensure_ascii=False,
+            indent=2,
+        )
+    elif isinstance(systematization_payload, str) and systematization_payload.strip():
+        # Backward compatibility for cached/pre-0.2.1 artifacts, which stored
+        # the systematization as Markdown or JSON text in a single string.
+        systematization_text = systematization_payload.strip()
+    else:
         raise ValueError("systematization_convert requires a non-empty systematization")
     summary_items = data.get("summary_items")
     if summary_items is not None and not isinstance(summary_items, list):
@@ -165,6 +186,8 @@ async def run_systematization_to_taxonomy(
     taxonomy_payload: dict[str, Any] | None = None
     last_text = ""
     last_response = None
+    last_attempt = 0
+    content_filtered = False
     for _attempt in range(_MAX_PARSE_ATTEMPTS):
         response = await generate_structured(
             model_cfg.name,
@@ -178,6 +201,11 @@ async def run_systematization_to_taxonomy(
             ),
         )
         last_response = response
+        last_attempt = _attempt + 1
+        if is_content_filtered_response(response):
+            content_filtered = True
+            last_text = response.text or ""
+            break
         if isinstance(response.parsed, dict) and response.parsed:
             taxonomy_payload = response.parsed
             break
@@ -190,14 +218,49 @@ async def run_systematization_to_taxonomy(
             )
 
     if not isinstance(taxonomy_payload, dict) or not taxonomy_payload:
+        if last_response is not None and content_filtered:
+            raise llm_failure_error(
+                last_response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization_convert",
+                reason="content_filtered",
+                attempt=last_attempt,
+                message=(
+                    "systematization_convert response was stopped by the provider content "
+                    "filter before the taxonomy JSON completed. This is not a token or quota "
+                    "failure. ASSERT requests masked, provider-safe examples; if this persists, "
+                    "use a model deployment approved for this evaluation content."
+                ),
+            )
         if last_response is not None and is_truncated_response(last_response):
             finish_reason = getattr(last_response, "finish_reason", None)
-            raise ValueError(
-                "systematization_convert response was truncated by the model's "
-                f"output budget (finish_reason={finish_reason!r}, "
-                f"max_tokens={model_cfg.max_tokens}) after {_MAX_PARSE_ATTEMPTS} attempts. "
-                "Increase pipeline.systematize.model.max_tokens (or remove the override "
-                "to use the default) or simplify the systematization input."
+            raise llm_failure_error(
+                last_response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization_convert",
+                reason="output_truncated",
+                attempt=last_attempt,
+                message=(
+                    "systematization_convert response was truncated by the model's "
+                    f"output budget (finish_reason={finish_reason!r}, "
+                    f"max_tokens={model_cfg.max_tokens}) after {_MAX_PARSE_ATTEMPTS} attempts. "
+                    "Increase pipeline.systematize.model.max_tokens (or remove the override "
+                    "to use the default) or simplify the systematization input."
+                ),
+            )
+        if last_response is not None:
+            raise llm_failure_error(
+                last_response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization_convert",
+                reason="unparseable_output",
+                attempt=last_attempt,
+                message=(
+                    f"systematization_convert returned no structured taxonomy after "
+                    f"{_MAX_PARSE_ATTEMPTS} attempts (last response: {last_text[:200]}). "
+                    f"This is usually a transient model issue — rerun the command to retry. "
+                    f"If it persists, check your endpoint's token rate limit and quota."
+                ),
             )
         raise ValueError(
             f"systematization_convert returned no structured taxonomy after "
@@ -206,12 +269,24 @@ async def run_systematization_to_taxonomy(
             f"If it persists, check your endpoint's token rate limit and quota."
         )
 
-    behavior_block = taxonomy_payload.get("behavior")
-    if not isinstance(behavior_block, dict):
-        raise ValueError("systematization_convert returned invalid behavior")
-    behavior_definition = _require_nonempty_string(behavior_block.get("definition"), field="behavior.definition")
-    terms = _normalize_definition_of_terms(taxonomy_payload.get("definition_of_terms"))
-    behavior_categories = _normalize_behavior_categories(taxonomy_payload.get("behavior_categories"))
+    try:
+        behavior_block = taxonomy_payload.get("behavior")
+        if not isinstance(behavior_block, dict):
+            raise ValueError("systematization_convert returned invalid behavior")
+        behavior_definition = _require_nonempty_string(behavior_block.get("definition"), field="behavior.definition")
+        terms = _normalize_definition_of_terms(taxonomy_payload.get("definition_of_terms"))
+        behavior_categories = _normalize_behavior_categories(taxonomy_payload.get("behavior_categories"))
+    except ValueError as exc:
+        if last_response is not None:
+            raise llm_failure_error(
+                last_response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization_convert",
+                reason="schema_validation_failed",
+                attempt=last_attempt,
+                message=str(exc),
+            ) from exc
+        raise
     taxonomy = {
         "behavior": {
             "name": behavior,
@@ -226,9 +301,6 @@ async def run_systematization_to_taxonomy(
             "run_id": uuid.uuid4().hex[:8],
         },
     }
-    output_path = Path(save_path).expanduser()
-    if not output_path.is_absolute():
-        output_path = BASE_DIR / output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(taxonomy, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path

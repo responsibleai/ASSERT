@@ -7,9 +7,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.model_client import ModelResponse
 from assert_ai.core.config_model import ModelConfig
-from assert_ai.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.stages.systematization_convert import (
+    GUIDELINE_PROMPT,
+    run_systematization_to_taxonomy,
+)
 
 _FIXTURE_SYSTEMATIZATION = (
     "# Systematization\n\n## Scope\nText\n\n## Coverage notes\nText\n\n"
@@ -43,6 +46,20 @@ _FIXTURE_SYSTEMATIZATION = (
     "## Downstream harms\n- Harm\n"
 )
 
+_STRUCTURED_SYSTEMATIZATION = {
+    "behavior": "Harmful advice",
+    "scope": "Assistant output that operationally enables harmful activity.",
+    "impact_analysis": "The output can reduce the effort required to cause harm.",
+    "alternative_systematizations": "A topic-only framing was rejected.",
+    "references": ["Authoritative safety policy"],
+    "stakeholder_lenses": [],
+    "reasoning_summary": "Separate operational enablement from benign discussion.",
+    "concept_spec": {
+        "behavior": "Harmful advice",
+        "patterns": [],
+    },
+}
+
 
 class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
     def test_guideline_prompt_preserves_converter_specific_contract(self) -> None:
@@ -51,15 +68,19 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("A single conversation may trigger multiple behavior_categories.", GUIDELINE_PROMPT)
         self.assertIn("Expand patterns via slot values", GUIDELINE_PROMPT)
         self.assertIn("`behavior.definition` must capture the overall scope", GUIDELINE_PROMPT)
-        self.assertIn("4–8 concrete text snippets", GUIDELINE_PROMPT)
+        self.assertIn("provider-safe", GUIDELINE_PROMPT)
+        self.assertIn("square-bracket placeholders", GUIDELINE_PROMPT)
+        self.assertNotIn("Prefer 6–8 examples", GUIDELINE_PROMPT)
         self.assertIn("slot_components", GUIDELINE_PROMPT)
 
     async def test_run_systematization_to_taxonomy_writes_policy(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             self.assertEqual(schema_name, "taxonomy")
-            self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
-            self.assertIn("[DELIVERY_MODE]", prompt)
-            self.assertIn("# SUMMARY ITEMS\n[", prompt)
+            self.assertIn(
+                "# SYSTEMATIZATION\n" + json.dumps(_STRUCTURED_SYSTEMATIZATION, ensure_ascii=False, indent=2),
+                prompt,
+            )
+            self.assertNotIn("# SUMMARY ITEMS", prompt)
             self.assertIn("12", prompt)
             return ModelResponse(
                 model=model,
@@ -90,13 +111,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps(
                     {
                         "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [
-                            {
-                                "description": "Pattern summary",
-                                "example": "Example summary snippet",
-                            }
-                        ],
+                        "systematization": _STRUCTURED_SYSTEMATIZATION,
                     }
                 ),
                 encoding="utf-8",
@@ -311,6 +326,56 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
                 )
 
+    async def test_content_filter_stops_retry_and_writes_specific_diagnostic(self) -> None:
+        attempts = 0
+        partial_text = '{"behavior":{"name":"hate_speech_generation"'
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            nonlocal attempts
+            del prompt, schema_name, json_schema, options
+            attempts += 1
+            return ModelResponse(
+                model=model,
+                text=partial_text,
+                finish_reason="content_filter",
+                response_id="chatcmpl-content-filtered",
+                api_mode="chat_completion",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            diagnostics_dir = tmp_path / "diagnostics"
+            with (
+                patch(
+                    "assert_ai.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "provider content filter.*Full response diagnostic",
+                ),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                    diagnostics_dir=str(diagnostics_dir),
+                )
+
+            self.assertEqual(attempts, 1)
+            diagnostic_files = list(
+                (diagnostics_dir / "systematization_convert").glob("*.json")
+            )
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "content_filtered")
+            self.assertEqual(
+                diagnostic["response_metadata"]["finish_reason"],
+                "content_filter",
+            )
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], partial_text)
+
     async def test_chat_completions_length_truncation_raises_clear_error(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del prompt, schema_name, json_schema, options
@@ -339,25 +404,43 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
     async def test_persistent_empty_parse_keeps_transient_error_message(self) -> None:
         """When neither attempt was truncated, the pre-existing 'transient
         model issue' error message is preserved verbatim."""
+        full_text = "garbage-response-" * 80
+
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del prompt, schema_name, json_schema, options
-            return ModelResponse(model=model, parsed=None, finish_reason="stop", text="garbage")
+            return ModelResponse(
+                model=model,
+                parsed=None,
+                finish_reason="stop",
+                text=full_text,
+                status="completed",
+                response_id="resp-convert-failure",
+            )
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = self._write_fixture(tmp_path)
+            diagnostics_dir = tmp_path / "diagnostics"
             with (
                 patch(
                     "assert_ai.stages.systematization_convert.generate_structured",
                     new=fake_generate_structured,
                 ),
-                self.assertRaisesRegex(ValueError, "transient model issue"),
+                self.assertRaisesRegex(ValueError, "transient model issue.*Full response diagnostic"),
             ):
                 await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                    diagnostics_dir=str(diagnostics_dir),
                 )
+
+            diagnostic_files = list((diagnostics_dir / "systematization_convert").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "unparseable_output")
+            self.assertEqual(diagnostic["attempt"], 2)
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], full_text)
 
     async def test_first_attempt_failure_then_success_uses_existing_retry(self) -> None:
         """The pre-existing 2-attempt retry loop must keep working: attempt
@@ -366,8 +449,9 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
         attempts = 0
 
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
-            del prompt, schema_name, json_schema, options
             nonlocal attempts
+            del schema_name, json_schema, options
+            self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
             attempts += 1
             if attempts == 1:
                 return ModelResponse(model=model, parsed=None, finish_reason="stop", text="oops")

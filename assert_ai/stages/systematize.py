@@ -17,6 +17,7 @@ from assert_ai.core.config_model import (
     DEFAULT_SYSTEMATIZE_TEMPERATURE,
 )
 from assert_ai.core.io import load_prompt_text, write_json
+from assert_ai.core.llm_diagnostics import llm_failure_error
 from assert_ai.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -90,6 +91,7 @@ async def run_systematize(
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
     save_dir: str | None = None,
+    diagnostics_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Generate one taxonomy JSON artifact from the provided behavior text."""
     if not behavior:
@@ -121,9 +123,17 @@ async def run_systematize(
     )
     taxonomy_json = response.parsed
     if not isinstance(taxonomy_json, dict):
-        raise ValueError(
-            f"taxonomy generation returned non-JSON output (model: {model}). "
-            f"Raw text (first 500 chars): {(response.text or '')[:500]}"
+        diagnostic_root = Path(diagnostics_dir).expanduser() if diagnostics_dir else save_path / "diagnostics"
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematize_direct",
+            reason="unparseable_output",
+            attempt=1,
+            message=(
+                f"taxonomy generation returned non-JSON output (model: {model}). "
+                f"Raw text (first 500 chars): {(response.text or '')[:500]}"
+            ),
         )
 
     save_path.mkdir(parents=True, exist_ok=True)
@@ -161,6 +171,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     web_search = web_search_raw if web_search_raw is not None else True
 
     suite_root = Path(ctx["suite_root"])
+    diagnostics_dir = str(suite_root / "diagnostics")
     save_dir = raw_cfg.get("save_dir") or ctx.get("systematize_artifact_dir") or str(suite_root)
 
     cfg = resolve_stage_paths(
@@ -195,6 +206,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             model_cfg=sys_model_cfg,
             web_search=web_search,
             context=context,
+            diagnostics_dir=diagnostics_dir,
         )
     log.info("[systematize] [1/2] Behavior taxonomy complete")
 
@@ -212,6 +224,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             save_path=taxonomy_path_str,
             model_cfg=convert_model_cfg,
             behavior_category_count_hint=behavior_category_count,
+            diagnostics_dir=diagnostics_dir,
         )
 
     return {

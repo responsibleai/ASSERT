@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
+- Align the systematization prompt and response schema so the model returns one structured document instead of escaping the full document inside a string; conversion still accepts legacy string artifacts.
+- Use masked, provider-safe examples in generated systematizations and taxonomies, and report provider content filtering directly instead of retrying it as a transient parse failure.
+- Preserve a credential-sanitized request, full model response, and provider metadata when systematization parsing or validation fails, and print the diagnostic artifact path in the error.
 
 ## [0.2.0] - 2026-08-14
 

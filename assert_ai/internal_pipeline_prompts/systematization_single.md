@@ -25,7 +25,7 @@ Return exactly one JSON object with the fields below, and no additional fields.
       "expertise": "string — what this perspective contributes"
     }
   ],
-  "reasoning_summary": "string — verbose details of key synthesis decisions at each step that was used to produce the final systematization",
+  "reasoning_summary": "string — concise summary of key synthesis decisions and tradeoffs; do not include hidden chain-of-thought",
   "concept_spec": {
     "behavior": "string — behavior label, must match input behavior",
     "patterns": [
@@ -43,12 +43,12 @@ Return exactly one JSON object with the fields below, and no additional fields.
         "slot_components": [
           {
             "component": "string — slot/component name such as TARGET_GROUP",
-            "nested_slot_components": "null or object",
+            "nested_slot_components": "null or array of objects with component and slot_values",
             "slot_values": [
               {
                 "slot_value": "string",
                 "definition": "string",
-                "example_phrase": "string — a concrete text fragment illustrating this value in assistant output"
+                "example_phrase": "string — a provider-safe structural fragment; mask harmful material with square-bracket placeholders"
               }
             ]
           }
@@ -109,7 +109,7 @@ If no document was provided, refine the Step 1 output into the Output Contract.
 4. `alternative_systematizations` must document materially distinct framing choices and why they were not selected.
 5. `references` must include relevant academic or authoritative sources used in systematization.
 6. `stakeholder_lenses` must be meaningfully distinct and non-redundant. When a systematization document is provided and it contains no stakeholder information, `stakeholder_lenses` may be an empty list.
-7. `reasoning_summary` must be non-empty and describe the main synthesis choices and tradeoffs that led to the final output.
+7. `reasoning_summary` must be non-empty and concisely describe the main synthesis choices and tradeoffs that led to the final output. Do not provide step-by-step hidden reasoning.
 
 ## Behavior Spec Fields
 
@@ -119,7 +119,7 @@ If no document was provided, refine the Step 1 output into the Output Contract.
 11. `pattern_role` must be either `"problematic"` or `"acceptable"`. Problematic patterns describe manifestations that are undesirable in GenAI outputs. Acceptable patterns describe what the assistant should do when the behavior arises — correct handling, accurate responses, appropriate engagement, or other desirable behavior.
 12. Each `key_terms` item must include non-empty `term` and `definition`.
 13. Each `slot_components` item must include non-empty `component` and non-empty `slot_values`.
-14. Each `slot_values` item must include non-empty `slot_value`, non-empty `definition`, and non-empty `example_phrase` — a concrete text fragment showing how this value manifests in assistant output.
+14. Each `slot_values` item must include non-empty `slot_value`, non-empty `definition`, and non-empty `example_phrase`. For problematic patterns, `example_phrase` must be a provider-safe structural fragment using square-bracket placeholders for harmful material, such as `Those [PROTECTED_GROUP] are [DEHUMANIZING_COMPARISON]`. Never spell out slurs, explicit threats, sexual content, self-harm instructions, or harmful procedural steps, and never copy unsafe reference text verbatim. Acceptable patterns may use ordinary safe text.
 15. Reuse component names consistently across patterns when they represent the same dimension (for example `TARGET_GROUP`).
 16. The set of patterns must jointly cover both problematic manifestations and materially distinct in-scope acceptable responses. If acceptable space is narrow (e.g., the only correct responses are refusal or redirect), include those as patterns. If acceptable space is rich (e.g., the behavior involves subjective preferences with many valid response modes), include all materially distinct acceptable patterns.
 17. Make sure the set of patterns preserve required coverage, while also avoiding redundant patterns.
