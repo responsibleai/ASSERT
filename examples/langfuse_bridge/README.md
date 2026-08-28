@@ -35,4 +35,3 @@ python examples/langfuse_bridge/run_bridge.py `
 The directory must contain matching, complete `inference_set.jsonl` and
 `scores.jsonl` files. See the [integration guide](../../docs/integrations/langfuse.md)
 for the mapping, limitations, and data-handling notes.
-

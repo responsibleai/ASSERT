@@ -115,4 +115,3 @@ For a partner verification pass, run the synthetic example against both a
 supported self-hosted deployment and Langfuse Cloud, then confirm that two
 traces and their `policy_violation` and `overrefusal` scores appear. Do not add
 live project credentials or exported customer data to the repository.
-

@@ -35,4 +35,3 @@ class LangfuseAuthError(LangfuseHTTPError):
 
 class LangfuseResponseError(LangfuseAdapterError):
     """Langfuse returned a response that did not match its public API."""
-
