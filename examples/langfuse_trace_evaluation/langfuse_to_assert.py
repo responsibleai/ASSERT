@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -785,7 +786,22 @@ def _validate_langfuse_origin(value: str) -> str:
         raise ValueError(
             "Langfuse base URL must be an http(s) origin without credentials or a path"
         )
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise ValueError(
+            "Langfuse base URL must use HTTPS except for a loopback development server"
+        )
     return origin
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if hostname == "localhost":
+        return True
+    if hostname is None:
+        return False
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -878,14 +894,21 @@ def fetch_traces(
         from_timestamp=from_timestamp,
     )
     full: list[dict[str, Any]] = []
+    failed_ids: list[str] = []
     for summary in summaries:
         trace_id = summary.get("id")
         if not trace_id:
+            failed_ids.append("<missing-id>")
             continue
         try:
             full.append(client.get_trace(str(trace_id)))
         except urllib.error.HTTPError as exc:
-            print(f"  ! skipping trace {trace_id}: HTTP {exc.code}", file=sys.stderr)
+            failed_ids.append(f"{trace_id} (HTTP {exc.code})")
+    if failed_ids:
+        raise RuntimeError(
+            "Langfuse trace-detail import failed for "
+            f"{len(failed_ids)} trace(s): {', '.join(failed_ids)}"
+        )
     return full
 
 
@@ -921,17 +944,26 @@ def emit_inference_set(
 
     rows = parse_otel_traces(otlp_path, group_by=group_by)
     repaired: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
     for index, row in enumerate(rows):
         metadata = row.get("metadata") or {}
         session_id = str(metadata.get("session_id") or f"session-{index}")
         events = _restore_roles(row.get("events") or [])
+        kind = str(row.get("type") or "scenario")
+        test_case_id = str(row.get("test_case_id") or _slug(session_id))
+        key = kind, test_case_id
+        if key in seen_keys:
+            raise ValueError(
+                f"Duplicate imported conversation identity: {kind}:{test_case_id}"
+            )
+        seen_keys.add(key)
         # Newer ASSERT builds already stamp a top-level type/test_case_id. Keep
         # theirs so the judge's resume cache key matches between this path and
         # the stock `assert-ai judge-traces` path; only fill in when absent.
         repaired.append(
             {
-                "type": row.get("type") or "scenario",
-                "test_case_id": row.get("test_case_id") or _slug(session_id),
+                "type": kind,
+                "test_case_id": test_case_id,
                 "behavior": behavior,
                 "target": target,
                 "tester_model": "",
@@ -987,7 +1019,11 @@ def _restore_roles(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
-    return cleaned[:64] or "session"
+    if cleaned == value and len(cleaned) <= 64:
+        return cleaned or "session"
+    suffix = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+    prefix = (cleaned or "session")[:53]
+    return f"{prefix}-{suffix}"
 
 
 def assert_recovers_input_messages() -> bool:
@@ -1108,8 +1144,8 @@ def main(argv: list[str] | None = None) -> int:
                 tags=args.tags,
                 from_timestamp=args.from_timestamp,
             )
-        except urllib.error.URLError as exc:
-            print(f"ERROR: could not reach Langfuse at {args.host}: {exc}", file=sys.stderr)
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            print(f"ERROR: Langfuse import failed: {exc}", file=sys.stderr)
             return 1
         if not traces:
             print("ERROR: Langfuse returned 0 traces. Nothing converted.", file=sys.stderr)

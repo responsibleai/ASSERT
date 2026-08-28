@@ -216,3 +216,46 @@ def test_api_client_rejects_non_origin_base_url() -> None:
             "public-placeholder",
             "secret-placeholder",
         )
+
+
+def test_api_client_requires_https_outside_loopback() -> None:
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        bridge.LangfuseClient(
+            "http://example.test",
+            "public-placeholder",
+            "secret-placeholder",
+        )
+
+
+def test_fetch_traces_fails_closed_when_any_detail_fetch_fails() -> None:
+    class PartialClient:
+        def list_traces(self, **kwargs: object) -> list[dict[str, str]]:
+            return [{"id": "trace-ok"}, {"id": "trace-failed"}]
+
+        def get_trace(self, trace_id: str) -> dict[str, str]:
+            if trace_id == "trace-failed":
+                raise urllib.error.HTTPError(
+                    url="https://example.test/api/public/traces/trace-failed",
+                    code=500,
+                    msg="server error",
+                    hdrs=None,
+                    fp=None,
+                )
+            return {"id": trace_id}
+
+    with pytest.raises(RuntimeError, match="trace-failed \\(HTTP 500\\)"):
+        bridge.fetch_traces(
+            PartialClient(),
+            limit=20,
+            session_id=None,
+            user_id=None,
+            tags=None,
+            from_timestamp=None,
+        )
+
+
+def test_slug_hashes_lossy_or_truncated_session_ids() -> None:
+    assert bridge._slug("plain-session") == "plain-session"
+    assert bridge._slug("same/value") != bridge._slug("same?value")
+    assert bridge._slug(("x" * 64) + "a") != bridge._slug(("x" * 64) + "b")
+    assert len(bridge._slug(("x" * 64) + "a")) <= 64

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import os
 from collections.abc import Mapping
@@ -171,7 +172,22 @@ def _validate_base_url(value: str) -> str:
         raise LangfuseConfigurationError(
             "LANGFUSE_BASE_URL must be an http(s) origin without credentials or a path"
         )
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise LangfuseConfigurationError(
+            "LANGFUSE_BASE_URL must use HTTPS except for a loopback development server"
+        )
     return base_url
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if hostname == "localhost":
+        return True
+    if hostname is None:
+        return False
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 __all__ = ["LangfuseHTTPClient"]

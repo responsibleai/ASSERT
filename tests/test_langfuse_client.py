@@ -97,6 +97,13 @@ def test_client_from_env_requires_current_documented_names() -> None:
     assert "LANGFUSE_PUBLIC_KEY" in str(raised.value)
     assert "LANGFUSE_SECRET_KEY" in str(raised.value)
 
+    with pytest.raises(LangfuseConfigurationError, match="must use HTTPS"):
+        LangfuseHTTPClient(
+            base_url="http://example.test",
+            public_key="public-placeholder",
+            secret_key="secret-placeholder",
+        )
+
     with pytest.raises(LangfuseConfigurationError, match="without credentials"):
         LangfuseHTTPClient(
             base_url="https://user:password@example.test/path",

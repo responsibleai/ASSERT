@@ -265,7 +265,8 @@ Then:
 The direct API client uses Langfuse's public trace list and trace-detail
 endpoints. If your Langfuse version no longer exposes the v1 trace-detail
 shape, export full traces through the Langfuse SDK and pass the resulting JSON
-to `--input`.
+to `--input`. API import is fail-closed: if any selected trace-detail request
+fails, the command writes no partial conversation set.
 
 ## Files
 

@@ -19,9 +19,10 @@ $env:LANGFUSE_SECRET_KEY = "<project-secret-key>"
 python examples/langfuse_bridge/run_bridge.py
 ```
 
-`LANGFUSE_BASE_URL` is the origin only, without `/api/public`. The exporter
-does not read `.env`, print credential values, retry requests, or install the
-Langfuse SDK.
+`LANGFUSE_BASE_URL` is an HTTPS origin only, without `/api/public`. Plain HTTP
+is accepted only for a loopback development server. The exporter does not
+follow redirects, read `.env`, print credential values, retry requests, or
+install the Langfuse SDK.
 
 ## Export your own run
 
@@ -32,6 +33,8 @@ python examples/langfuse_bridge/run_bridge.py `
   --run-dir artifacts/results/<suite>/<run>
 ```
 
-The directory must contain matching, complete `inference_set.jsonl` and
-`scores.jsonl` files. See the [integration guide](../../docs/integrations/langfuse.md)
-for the mapping, limitations, and data-handling notes.
+The directory must contain matching `inference_set.jsonl` and `scores.jsonl`
+files. Score rows are bound to the exact inference content they judged; older
+runs must re-run the judge stage once before export. See the
+[integration guide](../../docs/integrations/langfuse.md) for the mapping,
+skip/failure accounting, limitations, and data-handling notes.

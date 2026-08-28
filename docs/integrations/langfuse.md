@@ -25,6 +25,8 @@ is not posted as a score.
 - A completed ASSERT run containing `inference_set.jsonl` and `scores.jsonl`.
 - A Langfuse Cloud project, or a self-hosted deployment with the OTLP HTTP
   endpoint (introduced in Langfuse v3.22).
+- An HTTPS Langfuse origin. Plain HTTP is accepted only for a loopback
+  development server.
 - Python 3.11+ and the normal ASSERT install. The bridge uses Python's standard
   library HTTP stack: it adds no core dependency and does not use the Langfuse
   SDK.
@@ -51,9 +53,10 @@ $env:LANGFUSE_PUBLIC_KEY = "<project-public-key>"
 $env:LANGFUSE_SECRET_KEY = "<project-secret-key>"
 ```
 
-`LANGFUSE_BASE_URL` must be an `http` or `https` origin without credentials or
-an `/api/public` path. The bridge never reads `.env`, logs credentials, or
-includes them in raised errors.
+`LANGFUSE_BASE_URL` must be an HTTPS origin without credentials or an
+`/api/public` path. Plain HTTP is accepted only for `localhost` or a loopback
+IP during local development. The bridge rejects redirects, never reads `.env`,
+logs credentials, or includes them in raised errors.
 
 ## Export a run
 
@@ -78,6 +81,17 @@ type, and dimension. Re-exporting the same run therefore addresses the same
 Langfuse objects. The client deliberately performs no retries; callers see a
 typed error and decide whether to resume or re-export.
 
+Every score row records a digest of the exact inference row it judged. The
+exporter verifies that digest before any network request, preventing stale
+scores from being attached to changed transcripts. If a completed run predates
+this field, re-run its judge stage before exporting it.
+
+ASSERT can complete a run with explicitly skipped or failed judgments. The
+bridge still exports those inference traces, omits unavailable scores, and
+reports separate counts for scoring skips, filter skips, judge failures, and
+completed-stage rows with no score. A missing score is accepted only when
+`manifest.json` confirms that the judge stage completed.
+
 ## Errors
 
 All integration exceptions derive from `LangfuseAdapterError`:
@@ -85,7 +99,7 @@ All integration exceptions derive from `LangfuseAdapterError`:
 | Error | Meaning |
 |---|---|
 | `LangfuseConfigurationError` | Required environment names, URL, or timeout are invalid. |
-| `LangfuseContractError` | Local artifacts are missing, malformed, unmatched, duplicated, or incomplete. |
+| `LangfuseContractError` | Local artifacts are missing, malformed, unmatched, duplicated, stale, or incomplete. |
 | `LangfuseAuthError` | Langfuse returned `401` or `403`. |
 | `LangfuseHTTPError` | Langfuse returned another unsuccessful status. |
 | `LangfuseConnectionError` | The endpoint could not be reached. |

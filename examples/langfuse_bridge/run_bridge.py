@@ -36,6 +36,15 @@ def main() -> None:
             f"Omitted {summary.not_applicable_scores} explicitly "
             "not-applicable score(s)."
         )
+    incomplete = {
+        "scoring skipped": summary.scoring_skipped_traces,
+        "filter skipped": summary.filter_skipped_traces,
+        "judge failed": summary.judge_failed_traces,
+        "unscored after completed judge stage": summary.unscored_traces,
+    }
+    for label, count in incomplete.items():
+        if count:
+            print(f"Exported {count} trace(s) with no score: {label}.")
 
 
 if __name__ == "__main__":

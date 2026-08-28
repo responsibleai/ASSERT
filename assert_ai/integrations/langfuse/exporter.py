@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from assert_ai.core.judge import infer_judge_status
+from assert_ai.core.judge import infer_judge_status, inference_row_sha256
 from assert_ai.integrations.langfuse.client import LangfuseHTTPClient
 from assert_ai.integrations.langfuse.errors import LangfuseContractError
 from assert_ai.integrations.langfuse.mapping import (
@@ -29,6 +29,10 @@ class ExportSummary:
     traces_exported: int
     scores_exported: int
     not_applicable_scores: int
+    scoring_skipped_traces: int
+    filter_skipped_traces: int
+    judge_failed_traces: int
+    unscored_traces: int
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ class _ExportRecord:
     trace: dict[str, Any]
     scores: tuple[dict[str, Any], ...]
     not_applicable_scores: int
+    outcome: str
 
 
 class LangfuseExporter:
@@ -57,27 +62,46 @@ class LangfuseExporter:
         if not resolved_run_id:
             raise LangfuseContractError("run_id must be non-empty")
         inference_rows = _load_jsonl(resolved / "inference_set.jsonl")
-        score_rows = _load_jsonl(resolved / "scores.jsonl")
+        judge_completed = _judge_stage_completed(resolved / "manifest.json")
+        scores_path = resolved / "scores.jsonl"
+        score_rows = (
+            _load_jsonl(scores_path)
+            if scores_path.is_file()
+            else []
+        )
         records = _build_export_records(
             inference_rows,
             score_rows,
             run_id=resolved_run_id,
             timestamp_ns=time.time_ns() if timestamp_ns is None else timestamp_ns,
+            allow_missing_scores=judge_completed,
         )
 
         score_count = 0
         not_applicable_count = 0
+        outcome_counts = {
+            "scoring_skipped": 0,
+            "filter_skipped": 0,
+            "judge_failed": 0,
+            "unscored": 0,
+        }
         for record in records:
             self._client.post_trace(record.trace)
             for score in record.scores:
                 self._client.post_score(score)
                 score_count += 1
             not_applicable_count += record.not_applicable_scores
+            if record.outcome in outcome_counts:
+                outcome_counts[record.outcome] += 1
         return ExportSummary(
             run_id=resolved_run_id,
             traces_exported=len(records),
             scores_exported=score_count,
             not_applicable_scores=not_applicable_count,
+            scoring_skipped_traces=outcome_counts["scoring_skipped"],
+            filter_skipped_traces=outcome_counts["filter_skipped"],
+            judge_failed_traces=outcome_counts["judge_failed"],
+            unscored_traces=outcome_counts["unscored"],
         )
 
 
@@ -87,10 +111,11 @@ def _build_export_records(
     *,
     run_id: str,
     timestamp_ns: int,
+    allow_missing_scores: bool = False,
 ) -> tuple[_ExportRecord, ...]:
     if not inference_rows:
         raise LangfuseContractError("inference_set.jsonl contains no rows")
-    if not score_rows:
+    if not score_rows and not allow_missing_scores:
         raise LangfuseContractError("scores.jsonl contains no rows")
 
     scores_by_key: dict[tuple[str, str], dict[str, Any]] = {}
@@ -113,35 +138,44 @@ def _build_export_records(
         seen_inference.add(key)
         score_row = scores_by_key.get(key)
         if score_row is None:
-            raise LangfuseContractError(
-                f"inference row {key[0]}:{key[1]} has no matching score row"
-            )
-        if infer_judge_status(score_row) != "ok":
-            raise LangfuseContractError(
-                f"score row {key[0]}:{key[1]} does not satisfy ASSERT's "
-                "successful judge contract"
-            )
-        score_keys = score_row.get("score_keys")
-        if not isinstance(score_keys, list) or not all(
-            isinstance(name, str) and name for name in score_keys
-        ):
-            raise LangfuseContractError(
-                f"score row {key[0]}:{key[1]} requires string score_keys"
-            )
+            if not allow_missing_scores:
+                raise LangfuseContractError(
+                    f"inference row {key[0]}:{key[1]} has no matching score row"
+                )
+            outcome = "unscored"
+        else:
+            _validate_score_link(inference_row, score_row, key=key)
+            raw_status = score_row.get("judge_status")
+            if raw_status == "scoring_skipped":
+                outcome = "scoring_skipped"
+            elif raw_status == "filter_skipped":
+                outcome = "filter_skipped"
+            elif infer_judge_status(score_row) != "ok":
+                outcome = "judge_failed"
+            else:
+                outcome = "ok"
 
-        trace_id, _ = trace_ids(run_id=run_id, inference_row=inference_row)
         mapped_scores: list[dict[str, Any]] = []
         not_applicable = 0
-        for dimension in score_keys:
-            mapped = verdict_dimension_to_score(
-                score_row,
-                dimension=dimension,
-                trace_id=trace_id,
-            )
-            if mapped is None:
-                not_applicable += 1
-            else:
-                mapped_scores.append(mapped)
+        if score_row is not None and outcome == "ok":
+            score_keys = score_row.get("score_keys")
+            if not isinstance(score_keys, list) or not all(
+                isinstance(name, str) and name for name in score_keys
+            ):
+                raise LangfuseContractError(
+                    f"score row {key[0]}:{key[1]} requires string score_keys"
+                )
+            trace_id, _ = trace_ids(run_id=run_id, inference_row=inference_row)
+            for dimension in score_keys:
+                mapped = verdict_dimension_to_score(
+                    score_row,
+                    dimension=dimension,
+                    trace_id=trace_id,
+                )
+                if mapped is None:
+                    not_applicable += 1
+                else:
+                    mapped_scores.append(mapped)
         records.append(
             _ExportRecord(
                 trace=inference_to_otlp_trace(
@@ -151,6 +185,7 @@ def _build_export_records(
                 ),
                 scores=tuple(mapped_scores),
                 not_applicable_scores=not_applicable,
+                outcome=outcome,
             )
         )
 
@@ -161,6 +196,38 @@ def _build_export_records(
             f"score row {key[0]}:{key[1]} has no matching inference row"
         )
     return tuple(records)
+
+
+def _validate_score_link(
+    inference_row: dict[str, Any],
+    score_row: dict[str, Any],
+    *,
+    key: tuple[str, str],
+) -> None:
+    expected = inference_row_sha256(inference_row)
+    actual = score_row.get("inference_row_sha256")
+    if actual != expected:
+        raise LangfuseContractError(
+            f"score row {key[0]}:{key[1]} does not match the current "
+            "inference content; re-run the judge stage"
+        )
+
+
+def _judge_stage_completed(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise LangfuseContractError("manifest.json is not valid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise LangfuseContractError("manifest.json must contain a JSON object")
+    stages = manifest.get("stages")
+    return (
+        manifest.get("status") == "completed"
+        and isinstance(stages, dict)
+        and stages.get("judge") == "completed"
+    )
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
