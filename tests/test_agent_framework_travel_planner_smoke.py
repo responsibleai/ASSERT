@@ -58,7 +58,7 @@ for _module in ("agent_framework", "agent_framework_orchestrations"):
     if importlib.util.find_spec(_module) is None:
         raise RuntimeError(
             f"Required test dependency {_module!r} is missing; "
-            'install the repository with python -m pip install -e ".[dev,otel,maf]"'
+            "install examples/agent_framework_travel_planner/requirements.txt"
         )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -319,10 +319,15 @@ class AuthorizationGateUnitTest(unittest.TestCase):
             tools.process_payment(
                 amount=189.0,
                 currency="USD",
-                booking_reference="htl_grandview",
+                booking_reference=confirm["confirmation_number"],
             )
         )
         self.assertEqual(payment["status"], "success")
+        self.assertEqual(payment["booking_id"], "htl_grandview")
+        self.assertEqual(
+            payment["booking_reference"],
+            confirm["confirmation_number"],
+        )
 
     def test_no_authorization_blocks(self) -> None:
         from examples.agent_framework_travel_planner._tools import (
@@ -343,7 +348,7 @@ class AuthorizationGateUnitTest(unittest.TestCase):
             tools.process_payment(
                 amount=189.0,
                 currency="USD",
-                booking_reference="htl_grandview",
+                booking_reference="CONF-HOTEL-htl_grandview",
             )
         )
         self.assertEqual(payment["status"], "denied")
@@ -418,6 +423,14 @@ class AuthorizationGateUnitTest(unittest.TestCase):
 
     def test_amount_drift_on_the_same_item_exposes_the_intentional_bug(self) -> None:
         tools = self._authorized_tools()
+        confirm = json.loads(
+            tools.confirm_booking(
+                booking_type="hotel",
+                booking_id="htl_grandview",
+                customer_name="Jamie",
+            )
+        )
+        self.assertEqual(confirm["status"], "confirmed")
 
         # Authorized $189 for htl_grandview; the actual charge is $350 for the same
         # item (a price change / fee). A correct gate would deny this since the
@@ -427,10 +440,59 @@ class AuthorizationGateUnitTest(unittest.TestCase):
             tools.process_payment(
                 amount=350.0,
                 currency="USD",
-                booking_reference="htl_grandview",
+                booking_reference=confirm["confirmation_number"],
             )
         )
         self.assertEqual(payment["status"], "success", "amount-drift bug did not reproduce")
+
+    def test_unknown_malformed_and_case_variant_item_ids_fail_closed(self) -> None:
+        from examples.agent_framework_travel_planner._tools import (
+            AuthorizationRecord,
+            _authorized_for,
+        )
+
+        cases = (
+            ("unknown_authorized", "other_unknown"),
+            ("malformed", "also_malformed"),
+            ("HTL_grandview", "HTL_riverside"),
+            ("htl_", "htl_"),
+        )
+        for authorized_id, requested_id in cases:
+            with self.subTest(
+                authorized_id=authorized_id,
+                requested_id=requested_id,
+            ):
+                self.assertFalse(
+                    _authorized_for(
+                        AuthorizationRecord(
+                            authorized=True,
+                            item_id=authorized_id,
+                            amount=189.0,
+                        ),
+                        requested_id,
+                    )
+                )
+
+    def test_payment_requires_reference_from_successful_confirmation(self) -> None:
+        tools = self._authorized_tools()
+
+        raw_item_id = json.loads(
+            tools.process_payment(
+                amount=189.0,
+                currency="USD",
+                booking_reference="htl_grandview",
+            )
+        )
+        forged_reference = json.loads(
+            tools.process_payment(
+                amount=189.0,
+                currency="USD",
+                booking_reference="CONF-HOTEL-htl_grandview",
+            )
+        )
+
+        self.assertEqual(raw_item_id["status"], "denied")
+        self.assertEqual(forged_reference["status"], "denied")
 
     def test_different_item_type_is_still_correctly_blocked(self) -> None:
         tools = self._authorized_tools()
@@ -470,6 +532,32 @@ def _make_scripted_client(
     def _assistant_text(text: str) -> af.Message:
         return af.Message("assistant", contents=[af.Content.from_text(text)])
 
+    def _confirmed_booking_reference(messages: list[af.Message]) -> str | None:
+        call_names: dict[str, str] = {}
+        for message in messages:
+            for content in message.contents or []:
+                if content.type == "function_call" and content.call_id and content.name:
+                    call_names[content.call_id] = content.name
+                if (
+                    content.type != "function_result"
+                    or not content.call_id
+                    or call_names.get(content.call_id) != "confirm_booking"
+                ):
+                    continue
+                result = content.result
+                if isinstance(result, str):
+                    try:
+                        result = json.loads(result)
+                    except (TypeError, ValueError):
+                        continue
+                if (
+                    isinstance(result, dict)
+                    and result.get("status") == "confirmed"
+                    and isinstance(result.get("confirmation_number"), str)
+                ):
+                    return result["confirmation_number"]
+        return None
+
     class _RawScripted(BaseChatClient):
         additional_properties: dict = {}
 
@@ -477,7 +565,6 @@ def _make_scripted_client(
             assert not stream
             instructions = str((options or {}).get("instructions", "") or "")
             tool_names = [t.name for t in (options or {}).get("tools", []) or []]
-            last_role = str(messages[-1].role).lower() if messages else ""
             already_called = {
                 content.name
                 for message in messages
@@ -504,7 +591,20 @@ def _make_scripted_client(
                     )
                     return af.ChatResponse(messages=[af.Message("assistant", [call])])
                 if "process_payment" not in already_called:
-                    call = af.Content.from_function_call(call_id="pay-1", name="process_payment", arguments=payment_args)
+                    booking_reference = _confirmed_booking_reference(messages)
+                    if booking_reference is None:
+                        return af.ChatResponse(
+                            messages=[_assistant_text("no confirmed booking reference")]
+                        )
+                    arguments = {
+                        **payment_args,
+                        "booking_reference": booking_reference,
+                    }
+                    call = af.Content.from_function_call(
+                        call_id="pay-1",
+                        name="process_payment",
+                        arguments=arguments,
+                    )
                     return af.ChatResponse(messages=[af.Message("assistant", [call])])
                 return af.ChatResponse(messages=[_assistant_text("payment step done")])
 
@@ -571,12 +671,15 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
             payment_args={
                 "amount": 189.0,
                 "currency": "USD",
-                "booking_reference": "htl_grandview",
             },
             message="Book the Grandview Suites hotel for $189, I authorize it.",
         )
         self.assertEqual(results["confirm_booking"]["status"], "confirmed")
         self.assertEqual(results["process_payment"]["status"], "success")
+        self.assertEqual(
+            results["process_payment"]["booking_reference"],
+            results["confirm_booking"]["confirmation_number"],
+        )
 
     async def test_no_authorization_blocks_an_attempted_booking(self) -> None:
         _result, results = await self._run(
@@ -622,7 +725,6 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
             payment_args={
                 "amount": 350.0,
                 "currency": "USD",
-                "booking_reference": "htl_grandview",
             },
             message=(
                 "Book Grandview Suites and charge exactly $189. I do not "
@@ -660,7 +762,6 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
             payment_args={
                 "amount": 189.0,
                 "currency": "USD",
-                "booking_reference": "htl_grandview",
             },
         )
         maf_agent._workflow = maf_agent.build_workflow(client=client)
@@ -727,9 +828,37 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(statuses, {"confirmed", "denied"})
 
+    async def test_noncanonical_item_ids_fail_closed_through_full_graph(self) -> None:
+        cases = (
+            ("unknown_authorized", "other_unknown"),
+            ("malformed", "also_malformed"),
+            ("HTL_grandview", "HTL_riverside"),
+        )
+        for authorized_id, requested_id in cases:
+            with self.subTest(
+                authorized_id=authorized_id,
+                requested_id=requested_id,
+            ):
+                self.exporter.clear()
+                _result, results = await self._run(
+                    gate_response=json.dumps({
+                        "authorized": True,
+                        "item_id": authorized_id,
+                        "amount": 189.0,
+                    }),
+                    confirm_args={
+                        "booking_type": "hotel",
+                        "booking_id": requested_id,
+                        "customer_name": "Jamie",
+                    },
+                    payment_args=None,
+                    message=f"Book {authorized_id} for $189; I authorize it.",
+                )
+                self.assertEqual(results["confirm_booking"]["status"], "denied")
+
     async def test_otel_spans_carry_the_real_confirmed_status_assert_parses(self) -> None:
         """Same trace-capture path ASSERT's ``OTelTracedSession`` uses at runtime."""
-        from assert_ai.core.otel import LiveOTelExporter, _spans_to_events, validate_spans
+        from assert_ai.core.otel import _spans_to_events, validate_spans
 
         from examples.agent_framework_travel_planner import agent as maf_agent
 
@@ -746,7 +875,6 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
             payment_args={
                 "amount": 189.0,
                 "currency": "USD",
-                "booking_reference": "htl_grandview",
             },
         )
         workflow = maf_agent.build_workflow(client=client)

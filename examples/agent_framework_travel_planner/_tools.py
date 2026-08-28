@@ -35,6 +35,7 @@ flaw is granularity within a type -- see ``_authorized_for``.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from agent_framework import FunctionTool, tool
@@ -112,11 +113,17 @@ def format_authorization_message(record: AuthorizationRecord) -> str:
     )
 
 
+_ITEM_ID_PATTERN = re.compile(r"^(htl|flt|act)_[a-z0-9]+(?:_[a-z0-9]+)*$")
+
+
 def _item_type(item_id: str | None) -> str | None:
-    """Coarse item-type classifier from an item_id prefix (``htl_``/``flt_``/``act_``)."""
-    if not item_id or "_" not in item_id:
+    """Classify a canonical item ID, rejecting unknown or malformed values."""
+    if not item_id:
         return None
-    return {"htl": "hotel", "flt": "flight", "act": "activity"}.get(item_id.split("_", 1)[0])
+    match = _ITEM_ID_PATTERN.fullmatch(item_id)
+    if match is None:
+        return None
+    return {"htl": "hotel", "flt": "flight", "act": "activity"}[match.group(1)]
 
 
 def _authorized_for(record: AuthorizationRecord, item_id: str | None) -> bool:
@@ -134,7 +141,13 @@ def _authorized_for(record: AuthorizationRecord, item_id: str | None) -> bool:
     """
     if not record.authorized or not record.item_id or record.amount is None:
         return False
-    return _item_type(record.item_id) == _item_type(item_id)
+    authorized_type = _item_type(record.item_id)
+    requested_type = _item_type(item_id)
+    return (
+        authorized_type is not None
+        and requested_type is not None
+        and authorized_type == requested_type
+    )
 
 
 # ── Read-only search/detail/availability tools (ungated) ───────
@@ -206,6 +219,7 @@ def validate_payment_method(payment_method_type: str, card_last4: str) -> str:
 def build_commitment_tools() -> CommitmentTools:
     """Create terminal tools backed by fresh per-workflow authorization state."""
     authorization = AuthorizationState()
+    confirmed_items: dict[str, str] = {}
 
     @tool
     def confirm_booking(
@@ -225,8 +239,10 @@ def build_commitment_tools() -> CommitmentTools:
                 "status": "denied",
                 "reason": "no matching authorization on file for this item",
             })
+        confirmation_number = f"CONF-{booking_type.upper()}-{booking_id}"
+        confirmed_items[confirmation_number] = booking_id
         return json.dumps({
-            "confirmation_number": f"CONF-{booking_type.upper()}-{booking_id}",
+            "confirmation_number": confirmation_number,
             "booking_type": booking_type,
             "booking_id": booking_id,
             "status": "confirmed",
@@ -241,9 +257,19 @@ def build_commitment_tools() -> CommitmentTools:
         """Charge a payment method for a booking.
 
         The operation is irreversible from chat and is denied unless the
-        execution-owned authorization state covers the booking.
+        reference was produced by this workflow's successful confirmation and
+        the execution-owned authorization state covers that confirmed item.
         """
-        if not _authorized_for(authorization.record, booking_reference):
+        booking_id = confirmed_items.get(booking_reference)
+        if booking_id is None:
+            return json.dumps({
+                "amount": amount,
+                "currency": currency,
+                "booking_reference": booking_reference,
+                "status": "denied",
+                "reason": "booking reference was not produced by a confirmed booking",
+            })
+        if not _authorized_for(authorization.record, booking_id):
             return json.dumps({
                 "amount": amount,
                 "currency": currency,
@@ -255,6 +281,8 @@ def build_commitment_tools() -> CommitmentTools:
             "transaction_id": f"TXN-{booking_reference}",
             "amount": amount,
             "currency": currency,
+            "booking_id": booking_id,
+            "booking_reference": booking_reference,
             "status": "success",
         })
 

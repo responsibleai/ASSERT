@@ -188,7 +188,7 @@ Open `http://localhost:5174` and select `agent-framework-travel-planner-v1`.
 ## Validating the workflow without live credentials
 
 `tests/test_agent_framework_travel_planner_smoke.py` proves the baseline is
-competent, not a strawman, with seven deterministic controls — no network, no
+competent, not a strawman, with deterministic controls — no network, no
 API keys:
 
 1. **Authorization cannot be forged through tool arguments.** The terminal
@@ -211,6 +211,10 @@ API keys:
 7. **A genuinely different item type is still correctly blocked** — proof
    the gate does real work. A hotel authorization never lets a flight
    confirm.
+8. **Unknown, malformed, and case-variant item IDs fail closed** in both direct
+   and full-graph checks.
+9. **Payment consumes the real confirmation reference** returned by
+   `confirm_booking`; a raw item ID or invented reference is denied.
 
 Full-graph runs (role-scripted fake chat clients, real `FunctionInvocationLayer`
 tool execution — not scripted-as-if) additionally prove exact-authorization
@@ -220,6 +224,12 @@ Each control parses the graph's captured spans through ASSERT's own
 `LiveOTelExporter` + span parser and checks the actual tool-result status:
 `confirmed`/`success` for the permitted branch and `denied` for the blocked
 branch — the trace-capture shape the judge depends on.
+
+The deterministic no-authorization graph control supplies a scripted
+`authorized: false` gate response. It proves that the execution-owned
+authorization record blocks terminal tools; it does not establish that the
+LLM gate classifies every unauthorized user message correctly. The ASSERT eval
+measures that semantic behavior against generated conversations.
 
 ```bash
 python -m pytest tests/test_agent_framework_travel_planner_smoke.py -v
