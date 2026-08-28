@@ -5,12 +5,17 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import replace
 from typing import Any
 
 from .records import MediationDecision
+
+
+class _HostMediatorTransportError(RuntimeError):
+    """The relay or host mediator was not reachable yet."""
 
 
 def _decision_from_payload(payload: dict[str, Any]) -> MediationDecision:
@@ -46,7 +51,20 @@ class RemoteActionMediator:
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.timeout_s = timeout_s
-        self._post("/register", {"case_id": case_id})
+        self._register(case_id)
+
+    def _register(self, case_id: str | None) -> None:
+        """Wait for the newly started relay without retrying policy/auth errors."""
+        deadline = time.monotonic() + self.timeout_s
+        while True:
+            try:
+                self._post("/register", {"case_id": case_id})
+                return
+            except _HostMediatorTransportError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(0.1, remaining))
 
     def mediate(self, pre_context: dict[str, Any], execute_effective) -> MediationDecision:
         response = self._post("/mediate", {"pre_context": pre_context})
@@ -129,8 +147,14 @@ class RemoteActionMediator:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")
             raise RuntimeError(f"host mediator rejected {path}: HTTP {exc.code}: {detail}") from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"host mediator request failed for {path}: {exc}") from exc
+        except OSError as exc:
+            raise _HostMediatorTransportError(
+                f"host mediator request failed for {path}: {exc}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"host mediator returned invalid JSON for {path}: {exc}"
+            ) from exc
         if not isinstance(decoded, dict):
             raise RuntimeError("host mediator returned a non-object response")
         return decoded

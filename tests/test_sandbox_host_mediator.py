@@ -11,6 +11,7 @@ import pytest
 
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import TurnResult
+from assert_ai.integrations.sandbox import remote_mediator
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
 from assert_ai.integrations.sandbox.host_mediator import (
     HostMediationLedger,
@@ -166,6 +167,32 @@ def test_remote_mediator_rejects_invalid_token(tmp_path: Path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_remote_mediator_retries_registration_until_the_relay_is_ready(monkeypatch):
+    attempts: list[tuple[str, dict]] = []
+
+    def post(client, path, payload):
+        attempts.append((path, payload))
+        if len(attempts) < 3:
+            raise remote_mediator._HostMediatorTransportError("relay not ready")
+        return {"registered": True}
+
+    monkeypatch.setattr(RemoteActionMediator, "_post", post)
+    monkeypatch.setattr(remote_mediator.time, "sleep", lambda _seconds: None)
+
+    RemoteActionMediator(
+        "http://assert-sandbox-relay:18083",
+        "test-token",
+        case_id="case-1",
+        timeout_s=1,
+    )
+
+    assert attempts == [
+        ("/register", {"case_id": "case-1"}),
+        ("/register", {"case_id": "case-1"}),
+        ("/register", {"case_id": "case-1"}),
+    ]
 
 
 def test_pass_attempt_survives_when_target_never_reports_completion(tmp_path: Path):
