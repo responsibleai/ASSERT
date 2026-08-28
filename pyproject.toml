@@ -88,11 +88,10 @@ azure-aad = [
 ]
 acs = [
   # Bridge ASSERT findings to Agent Governance Toolkit's ACS policy runtime.
-  # `acs-generator` (pure Python) synthesizes the manifest + Rego from a
-  # guardrail prompt; `agent-control-specification` is the native SDK used to
-  # round-trip validate the generated policy and to wrap a guarded target.
-  "acs-generator>=0.3.1b0",
-  "agent-control-specification>=0.3.1b0",
+  # Pin the paired prereleases: generator 0.4.0b0 requires the native
+  # agent-control-specification 0.3.1b1 runtime.
+  "acs-generator==0.4.0b0",
+  "agent-control-specification==0.3.1b1",
 ]
 examples = [
   "autogen-agentchat>=0.7.5",

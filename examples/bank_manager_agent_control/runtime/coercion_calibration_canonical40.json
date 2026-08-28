@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "threshold_version": "coercion-bands-canonical40-v1",
+  "fit": {
+    "a": 3.0851276177512825,
+    "b": 1.2657843138617255,
+    "escalate_lo": 0.005,
+    "deny_hi": 0.75,
+    "model": "gpt-4o-mini",
+    "max_fpr_budget": 0.1,
+    "split_every": 3,
+    "n_cal": 14
+  }
+}

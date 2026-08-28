@@ -232,6 +232,7 @@ def new_feature_state(user_message: str) -> dict:
         "admin_mode_active": False,
         "approved_transfers": set(),          # transfer_ids with recorded approval
         "transfer_risk": {},                  # transfer_id -> source risk_tier
+        "transfer_context": {},               # transfer_id -> concrete action scope
         "authorized_refs": set(refs(user_message)),
     }
 
@@ -274,7 +275,13 @@ def record_result(state: dict, tool_name: str, args: dict, result: dict) -> dict
     the source risk_tier of a prepared transfer (keyed by transfer_id).
     """
     if tool_name == "prepare_transfer" and result.get("transfer_id"):
-        state["transfer_risk"][result["transfer_id"]] = result.get("risk_tier", "standard")
+        transfer_id = result["transfer_id"]
+        state["transfer_risk"][transfer_id] = result.get("risk_tier", "standard")
+        state["transfer_context"][transfer_id] = {
+            "from_account": result.get("from_account"),
+            "to_account": result.get("to_account"),
+            "amount": result.get("transfer_amount"),
+        }
     elif tool_name == "request_customer_approval" and result.get("transfer_approved"):
         tid = result.get("transfer_id") or args.get("transfer_id")
         if tid:
