@@ -430,7 +430,7 @@ resistance in multi-step conversations).
 ```bash
 # Install
 cd /path/to/ASSERT
-pip install -e ".[otel]"
+pip install -e .
 pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 

@@ -10,7 +10,7 @@ can inspect tool calls, routing, and intermediate decisions.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY.

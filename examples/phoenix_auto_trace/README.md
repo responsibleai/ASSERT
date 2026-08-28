@@ -83,7 +83,7 @@ travel_crewai.py       -> CrewAI + 2-line instrumentation + multi-agent crew
 
 ```bash
 # From the repo root
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 python -m pip install -r examples/phoenix_auto_trace/requirements.txt
 
 # Optional: start Phoenix in a second terminal to browse traces

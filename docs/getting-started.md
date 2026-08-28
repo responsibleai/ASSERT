@@ -20,7 +20,7 @@ bash (macOS / Linux):
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 ```
@@ -35,14 +35,14 @@ PowerShell (Windows):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 ```
 
 ### Run your first evaluation
 
-The example's `auto_trace.py` calls `assert_ai.auto_trace.enable()`, which installs the available OpenInference instrumentors locally so the judge can cite tool calls, routing decisions, model calls, and latency as evidence. It does **not** start a Phoenix server.
+The example's requirements install its LangChain OpenInference instrumentor. Its `auto_trace.py` then calls `assert_ai.auto_trace.enable()`, which discovers and activates installed instrumentors so the judge can cite tool calls, routing decisions, model calls, and latency as evidence. It does **not** install packages or start a Phoenix server.
 
 `phoenix serve` is optional — only run it if you want a browser UI to inspect the traces visually. The eval runs and the judge see the same span data either way.
 
@@ -92,7 +92,7 @@ PowerShell (Windows) — full sequence:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
@@ -148,7 +148,7 @@ This works for any `azure/*` model string and uses LiteLLM's native
 ### Install the optional dependency
 
 ```bash
-python -m pip install -e ".[azure-aad]"
+python -m pip install -e ".[azure-auth]"
 ```
 
 This pulls in `azure-identity` and lets ASSERT mint bearer tokens through
@@ -176,7 +176,7 @@ to call.
 The same auth mode also applies to `azure_ai/*` LiteLLM routes, including
 hosted Azure AI Foundry agents (`azure_ai/agents/<AGENT_ID>`). Those routes
 need `AZURE_AI_API_BASE` set to the Foundry project endpoint instead of
-`AZURE_API_BASE`. No extra setup beyond `pip install -e ".[azure-aad]"` and
+`AZURE_API_BASE`. No extra setup beyond `pip install -e ".[azure-auth]"` and
 `az login` (or Service Principal env vars).
 
 ### Local development with `az login`
@@ -198,7 +198,7 @@ when multiple are attached, set `AZURE_CLIENT_ID` to its client ID;
 ### Troubleshooting
 
 - `LLMAuthError: ... azure-identity package is not installed` — run
-  `pip install -e ".[azure-aad]"` (or `assert-ai[azure-aad]` if you installed from PyPI).
+  `pip install -e ".[azure-auth]"` (or `assert-ai[azure-auth]` if you installed from PyPI).
 - `401` with a hint about *Cognitive Services OpenAI User* — the credential
   resolved, but the identity is missing the RBAC role on the resource.
 - A 401 that mentions the install hint instead — you are in `aad-fallback`
