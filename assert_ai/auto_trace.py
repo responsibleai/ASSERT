@@ -4,7 +4,7 @@
 """Lightweight OpenInference/Phoenix auto-tracing helper.
 
 Use ``from assert_ai import auto_trace; auto_trace.enable()`` before importing
-or constructing the target agent. By default, the helper installs any available
+or constructing the target agent. By default, the helper activates any installed
 OpenTelemetry/OpenInference instrumentors but avoids importing ``phoenix.otel``
 when no Phoenix/OTLP collector is configured or reachable. This keeps local
 CLI/demo startup fast while still allowing ASSERT's in-process collector to
@@ -63,7 +63,7 @@ def _collector_available(*, timeout: float = 0.1) -> bool:
 
 
 def _enable_entrypoint_instrumentors() -> None:
-    """Install available OpenTelemetry instrumentors without importing Phoenix."""
+    """Activate installed OpenTelemetry instrumentors without importing Phoenix."""
     global _instrumentors_enabled
     if _instrumentors_enabled:
         return

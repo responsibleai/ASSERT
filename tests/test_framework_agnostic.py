@@ -504,12 +504,13 @@ class TestSpanValidation(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertTrue(any("tool.name" in w for w in result.warnings))
 
-    def test_empty_spans_valid(self):
+    def test_empty_spans_warns_about_missing_instrumentation(self):
         from assert_ai.core.otel import validate_spans
         result = validate_spans([])
-        self.assertTrue(result.valid)
+        self.assertFalse(result.valid)
         self.assertEqual(result.missing_attributes, [])
-        self.assertEqual(result.warnings, [])
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("openinference-instrumentation-*", result.warnings[0])
 
 
 # ── compress_trace_for_judge tests ───────────────────────────────
@@ -651,12 +652,19 @@ class TestOTelTracedSession(unittest.TestCase):
                 await session.close()
                 return result
 
-            result = asyncio.run(_run())
+            with self.assertLogs("assert_ai.core.otel_session", level="WARNING") as logs:
+                result = asyncio.run(_run())
             self.assertEqual(result.text, "traced: probe")
             self.assertEqual(result.raw["runtime_mode"], "otel_traced")
             self.assertIn("session_id", result.raw)
             self.assertIn("turn_id", result.raw)
             self.assertEqual(result.raw["accumulated_turns"], 1)
+            self.assertFalse(result.raw["span_validation"]["valid"])
+            self.assertIn(
+                "openinference-instrumentation-*",
+                result.raw["span_validation"]["warnings"][0],
+            )
+            self.assertIn("openinference-instrumentation-*", logs.output[0])
         finally:
             del sys.modules["_test_otel_target"]
 
@@ -802,11 +810,13 @@ class TestOTelTracedSession(unittest.TestCase):
                 await session.close()
                 return r1, r2
 
-            r1, r2 = asyncio.run(_run())
+            with self.assertLogs("assert_ai.core.otel_session", level="WARNING") as logs:
+                r1, r2 = asyncio.run(_run())
             self.assertEqual(r1.raw["accumulated_turns"], 1)
             self.assertEqual(r2.raw["accumulated_turns"], 2)
             self.assertEqual(r1.text, "turn_1")
             self.assertEqual(r2.text, "turn_2")
+            self.assertEqual(len(logs.output), 1)
         finally:
             del sys.modules["_test_otel_multi"]
 

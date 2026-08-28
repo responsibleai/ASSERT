@@ -21,6 +21,7 @@ capturing the target's internal execution traces.
 from __future__ import annotations
 
 import inspect
+import logging
 import uuid
 from contextlib import nullcontext
 from pathlib import Path
@@ -38,6 +39,9 @@ from assert_ai.core.otel import (
     validate_spans,
 )
 from assert_ai.core.session import TurnResult
+
+
+log = logging.getLogger(__name__)
 
 
 class OTelTracedSession:
@@ -90,6 +94,7 @@ class OTelTracedSession:
         self._session_id = ""
         self._turn_traces: list[dict[str, Any]] = []
         self._live_otel = live_otel
+        self._warned_no_spans = False
 
         if live_otel:
             from assert_ai.core.otel import LiveOTelExporter
@@ -144,6 +149,7 @@ class OTelTracedSession:
         self._supports_history = "history" in sig.parameters
         self._session_id = uuid.uuid4().hex[:12]
         self._turn_traces = []
+        self._warned_no_spans = False
         if self._live_exporter is not None:
             self._live_exporter.setup()
 
@@ -209,6 +215,9 @@ class OTelTracedSession:
             turn_spans = self._exporter.export_session(turn_id)
 
         validation = validate_spans(turn_spans)
+        if not turn_spans and not self._warned_no_spans:
+            log.warning(validation.warnings[0])
+            self._warned_no_spans = True
 
         # Convert spans to events (tool call visibility + judge metadata)
         if turn_spans:
