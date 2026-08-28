@@ -106,6 +106,49 @@ class ViewerServerArtifactsTest(unittest.TestCase):
     def _build_viewer_read_model(self, run_dir: Path) -> None:
         build_run_viewer_artifacts(run_dir)
 
+    def test_tool_result_formatter_uses_readable_action_mediation_summary(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            data_path = self._copy_data_harness(harness_dir)
+            script = textwrap.dedent(
+                f"""\
+                const {{ formatToolCallContent }} = await import({json.dumps(data_path.as_uri())});
+                const content = formatToolCallContent(
+                  'send_message',
+                  {{ recipient: '555-000-9999' }},
+                  '{{\"mode\":\"mock\",\"real_executed\":false}}',
+                  {{
+                    action_mediation: {{
+                      mode: 'mock',
+                      real_executed: false,
+                      matched: 'send_message',
+                      decision_reason: 'mocked by mediation policy rule',
+                      returned: {{ status: 'sent', message_id: 'msg-1' }}
+                    }}
+                  }}
+                );
+                console.log(JSON.stringify({{ content }}));
+                """
+            )
+            result = self._run_node(
+                harness_dir=harness_dir,
+                script=script,
+                env=os.environ.copy(),
+            )
+
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            content = json.loads(result.stdout)["content"]
+            self.assertIn("**Tool:** `send_message`", content)
+            self.assertIn("**Arguments:**", content)
+            self.assertIn('"recipient": "555-000-9999"', content)
+            self.assertIn("**Mode:** `mock`", content)
+            self.assertIn("**Real tool executed:** no", content)
+            self.assertIn("**Matched rule:** `send_message`", content)
+            self.assertIn('"message_id": "msg-1"', content)
+            self.assertIn("```json", content)
+            self.assertNotIn('\\"mode\\"', content)
+
     def test_build_viewer_read_model_writes_cache_under_hidden_subdir(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)

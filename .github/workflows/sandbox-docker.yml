@@ -1,0 +1,84 @@
+# Real-container verification for ASSERT-owned sandbox guarantees.
+name: Sandbox Docker Tests
+
+on:
+  # Run on every PR so this check can be made a required status gate. Path
+  # filters can leave required checks pending, can miss base-branch changes,
+  # and are subject to GitHub's changed-file filter limits.
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Branch names are not unique across forks. Scope PR runs to the PR number so
+  # one contributor cannot cancel another contributor's required Docker gate.
+  group: sandbox-docker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sandbox-docker:
+    name: "Sandbox: real Docker containment"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ASSERT_RUN_DOCKER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev,otel]"
+
+      - name: Require a working Docker daemon
+        run: docker info
+
+      - name: Run real Docker sandbox tests
+        # Keep this exact: the receipt below must be satisfiable only by the
+        # tests that start real containers, never by static workflow checks.
+        run: pytest tests/test_sandbox_runtime_docker.py --runxfail -x -q --junitxml=sandbox-docker-results.xml
+
+      - name: Verify Docker test receipt
+        if: always()
+        shell: python
+        run: |
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("sandbox-docker-results.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.findall(".//testsuite"))
+          totals = {
+              key: sum(int(suite.attrib.get(key, 0)) for suite in suites)
+              for key in ("tests", "failures", "errors", "skipped")
+          }
+          print(totals)
+          if totals["tests"] <= 0 or any(totals[key] for key in ("failures", "errors", "skipped")):
+              raise SystemExit("real Docker receipt must contain executed tests with no failures or skips")
+
+      - name: Preserve Docker test receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-docker-results-${{ github.run_attempt }}
+          path: sandbox-docker-results.xml
+          if-no-files-found: warn
+
+      - name: Verify no sandbox resources remain
+        if: always()
+        shell: bash
+        run: |
+          containers="$(docker ps -aq --filter 'name=assert-sandbox-')"
+          networks="$(docker network ls -q --filter 'name=assert-sandbox-')"
+          images="$(docker image ls -q --filter 'reference=assert-sandbox-stock-agent:local')"
+          if [[ -n "$containers" || -n "$networks" || -n "$images" ]]; then
+            echo 'ASSERT sandbox cleanup left Docker resources behind:'
+            docker ps -a --filter 'name=assert-sandbox-'
+            docker network ls --filter 'name=assert-sandbox-'
+            docker image ls --filter 'reference=assert-sandbox-stock-agent:local'
+            exit 1
+          fi

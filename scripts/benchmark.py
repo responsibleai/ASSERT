@@ -58,13 +58,11 @@ from assert_ai.runner import run_pipeline  # noqa: E402
 from assert_ai.logging_config import configure_logging  # noqa: E402
 
 DEFAULT_BASE_CONFIG = REPO_ROOT / "examples" / "benchmark" / "eval_config.yaml"
-# Quality-only behavior source colocated with the benchmark config. We deliberately
-# do not reuse the full travel-planner eval spec from the flagship YAML because
-# it includes adversarial safety behavior categories (prompt injection,
-# sycophancy bait) that push the tester into jailbreak-shaped turns and
-# get rejected by Azure Prompt Shields.
+# Atomic quality behavior source for the benchmark config. We deliberately
+# keep the throughput benchmark non-adversarial so generated scenarios focus on
+# explicit travel constraints rather than prompt-injection or sycophancy probes.
 DEFAULT_BEHAVIOR_SPEC_SOURCE = (
-    REPO_ROOT / "examples" / "benchmark" / "travel_planner_benchmark.md"
+    REPO_ROOT / "examples" / "behavior_specs" / "explicit_constraint_violation_failures.md"
 )
 # The default tester system prompt (prompts/inference_tester_system.md) is
 # itself jailbreak-shaped by design — it instructs the LLM to escalate
