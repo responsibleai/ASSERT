@@ -847,7 +847,7 @@ def _behavior_category_metric_map(
         "  assert-ai results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"
     ),
 )
-@click.version_option(version="0.1.0", prog_name="assert-ai")
+@click.version_option(package_name="assert-ai", prog_name="assert-ai")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(

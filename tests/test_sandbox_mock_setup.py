@@ -207,15 +207,17 @@ def test_case_glob_beats_generic_rule_regardless_of_argument_specificity():
     assert resolved is not None and resolved.value == {"picked": "glob"}
 
 
-def test_case_bound_rules_do_not_match_an_uncorrelated_call():
+@pytest.mark.parametrize("case_selector", ["case-*", "*"])
+@pytest.mark.parametrize("call_case_id", [None, ""])
+def test_case_bound_rules_do_not_match_an_uncorrelated_call(case_selector, call_case_id):
     library = MockLibrary.from_dict({
         "mocks": [
-            {"tool": "charge_card", "case_id": "case-*", "response": {"picked": "case"}},
+            {"tool": "charge_card", "case_id": case_selector, "response": {"picked": "case"}},
             {"tool": "charge_card", "response": {"picked": "generic"}},
         ]
     })
 
-    resolved = library.resolve(MockCall("charge_card", {}))
+    resolved = library.resolve(MockCall("charge_card", {}, case_id=call_case_id))
 
     assert resolved is not None and resolved.value == {"picked": "generic"}
 
@@ -955,6 +957,9 @@ def test_resolve_cli_reports_the_rule_the_named_case_will_actually_get(tmp_path,
         "    case_id: case-a\n"
         "    response: {branch: case-a-only}\n"
         "  - tool: charge_card\n"
+        "    case_id: '*'\n"
+        "    response: {branch: any-correlated-case}\n"
+        "  - tool: charge_card\n"
         "    response: {branch: uncorrelated-default}\n",
         encoding="utf-8",
     )
@@ -972,6 +977,13 @@ def test_resolve_cli_reports_the_rule_the_named_case_will_actually_get(tmp_path,
     out = capsys.readouterr().out
     assert rc == 0
     assert "case-a-only" in out, out
+    assert "any-correlated-case" not in out, out
+    assert "uncorrelated-default" not in out, out
+
+    rc = cli.main(["resolve", str(setup), "charge_card", "--case-id", "case-b"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "any-correlated-case" in out, out
     assert "uncorrelated-default" not in out, out
 
     # And without a case, it must not silently pass off the default branch as

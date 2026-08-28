@@ -209,8 +209,12 @@ class MockLibrary:
         for rule in self.rules:
             if not _glob_match(rule.tool, call.tool):
                 continue
-            if rule.case_id and not _glob_match(rule.case_id, call.case_id or ""):
-                continue
+            if rule.case_id is not None:
+                # Every case-bound rule, including the catch-all ``*`` glob,
+                # requires a correlated call. Matching a missing ID as an empty
+                # string makes ``*`` fail open and can select the wrong mock.
+                if not call.case_id or not _glob_match(rule.case_id, call.case_id):
+                    continue
             if not match_args(rule.when, call.args):
                 continue
             if rule.backend == "scenario" and isinstance(scenario_backend, ScenarioBackend):
