@@ -285,6 +285,49 @@ def test_endpoint_response_size_is_bounded_before_json_parsing():
     assert result.text == "bounded"
 
 
+def test_public_action_ids_stay_unique_across_turns():
+    """A multi-turn transcript must not reuse one public ID for two actions.
+
+    Per-turn alias numbering restarts at zero, so an early benign action and a
+    later sensitive action would share ``endpoint-action-0`` in the persisted
+    transcript and the judge could not tell them apart.
+    """
+    def event(call_id, tool):
+        return {
+            "role": "tool_call",
+            "tool_name": tool,
+            "tool_args": {},
+            "tool_call_id": call_id,
+            "content": "",
+        }
+
+    async def run_two_turns():
+        session = HTTPEndpointSession(endpoint="http://localhost:8080/chat")
+        client = _Client({"response": "unused"})
+        responses = [
+            {"response": "first", "events": [event("a1", "read_balance")]},
+            {"response": "second", "events": [event("b9", "wire_transfer")]},
+        ]
+        client.post = lambda *a, **k: _Response(responses.pop(0))  # type: ignore[method-assign]
+        setattr(session, "_aiohttp", aiohttp)
+        setattr(session, "_session", client)
+        first = await session.run_turn([Message(role="user", content="one")])
+        second = await session.run_turn([Message(role="user", content="two")])
+        return first, second
+
+    first, second = asyncio.run(run_two_turns())
+
+    def action_ids(result):
+        return [
+            call["id"]
+            for message in result.interaction_messages
+            for call in message.get("tool_calls") or []
+        ]
+
+    assert action_ids(first) == ["endpoint-action-0"]
+    assert action_ids(second) == ["endpoint-action-1"]
+
+
 def test_endpoint_rejects_non_object_json():
     try:
         asyncio.run(_run(["not", "an", "object"]))

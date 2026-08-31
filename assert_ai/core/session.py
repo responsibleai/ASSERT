@@ -46,8 +46,13 @@ def _sanitize_endpoint_value(value: Any) -> Any:
     return sanitize_untrusted_value(value)
 
 
-def _sanitize_endpoint_events(value: Any) -> Any:
-    """Redact event payloads and assign collision-free public call IDs."""
+def _sanitize_endpoint_events(value: Any, *, id_offset: int = 0) -> Any:
+    """Redact event payloads and assign collision-free public call IDs.
+
+    ``id_offset`` keeps aliases unique across turns in one session. Without it,
+    every turn restarts at zero and distinct actions from different turns share
+    a public ID in the persisted transcript.
+    """
     sanitized = sanitize_untrusted_value(value)
     if not isinstance(value, list) or not isinstance(sanitized, list):
         return sanitized
@@ -59,7 +64,7 @@ def _sanitize_endpoint_events(value: Any) -> Any:
         if isinstance(original_id, str):
             alias = id_aliases.setdefault(
                 original_id,
-                f"endpoint-action-{len(id_aliases)}",
+                f"endpoint-action-{id_offset + len(id_aliases)}",
             )
             redacted["tool_call_id"] = alias
     return sanitized
@@ -697,8 +702,24 @@ class HTTPEndpointSession:
         self._case_id = case_id
         self._capture_action_claims = capture_action_claims
         self._max_response_bytes = max_response_bytes
+        self._public_action_id_count = 0
         self._session = None  # aiohttp.ClientSession
         self._resolver = None
+
+    def _sanitize_events_for_turn(self, events: Any) -> Any:
+        """Sanitize turn events with session-unique public action IDs."""
+        sanitized = _sanitize_endpoint_events(
+            events,
+            id_offset=self._public_action_id_count,
+        )
+        if isinstance(sanitized, list):
+            turn_ids = {
+                event.get("tool_call_id")
+                for event in sanitized
+                if isinstance(event, dict) and isinstance(event.get("tool_call_id"), str)
+            }
+            self._public_action_id_count += len(turn_ids)
+        return sanitized
 
     @property
     def runtime_mode(self) -> str:
@@ -824,7 +845,7 @@ class HTTPEndpointSession:
                     # run artifacts, so it needs the same redaction as the
                     # response text.
                     "text": _sanitize_response_text(raw_text),
-                    "events": _sanitize_endpoint_events(data.get("events")),
+                    "events": self._sanitize_events_for_turn(data.get("events")),
                     # Do not persist the complete endpoint payload: it may carry
                     # backend diagnostics or sensitive data. Preserve only the
                     # endpoint identity; normalized event content is retained
