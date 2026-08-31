@@ -12,8 +12,9 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
+from assert_ai.core.action_claims import ActionClaim, action_claims_from_endpoint_events
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.model_client import (
     GenerateOptions,
@@ -46,16 +47,22 @@ def _sanitize_endpoint_value(value: Any) -> Any:
 
 
 def _sanitize_endpoint_events(value: Any) -> Any:
-    """Redact event payloads while preserving correlation identities."""
+    """Redact event payloads and alias credential-shaped correlation IDs."""
     sanitized = sanitize_untrusted_value(value)
     if not isinstance(value, list) or not isinstance(sanitized, list):
         return sanitized
+    id_aliases: dict[str, str] = {}
     for original, redacted in zip(value, sanitized, strict=True):
         if not isinstance(original, dict) or not isinstance(redacted, dict):
             continue
-        for structural_field in ("tool_name", "tool_call_id"):
-            if structural_field in original:
-                redacted[structural_field] = original[structural_field]
+        original_id = original.get("tool_call_id")
+        redacted_id = redacted.get("tool_call_id")
+        if isinstance(original_id, str) and redacted_id != original_id:
+            alias = id_aliases.setdefault(
+                original_id,
+                f"endpoint-action-{len(id_aliases)}",
+            )
+            redacted["tool_call_id"] = alias
     return sanitized
 
 
@@ -197,6 +204,9 @@ class TurnResult:
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] | None = None
     finish_reason: str | None = None
+    # Set only on individual HTTP results when requested. ClassVar keeps this
+    # digest-only side channel out of dataclass serialization.
+    _action_claims: ClassVar[list[ActionClaim] | None] = None
 
 
 class SimulatedResolver:
@@ -673,6 +683,7 @@ class HTTPEndpointSession:
         message_timeout_s: float | None = None,
         allow_private: bool = False,
         case_id: str | None = None,
+        capture_action_claims: bool = False,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
@@ -682,6 +693,7 @@ class HTTPEndpointSession:
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
         self._case_id = case_id
+        self._capture_action_claims = capture_action_claims
         self._session = None  # aiohttp.ClientSession
         self._resolver = None
 
@@ -772,6 +784,11 @@ class HTTPEndpointSession:
                         type(raw_text).__name__,
                     )
                     raw_text = str(raw_text)
+                private_action_claims = (
+                    action_claims_from_endpoint_events(data.get("events"))
+                    if self._capture_action_claims
+                    else None
+                )
                 response = _normalize_connector_response({
                     # Sanitize before persisting: endpoint-supplied event content
                     # (tool args, tool results) is agent-influenced and lands in
@@ -799,12 +816,14 @@ class HTTPEndpointSession:
             response=response,
         )
 
-        return TurnResult(
+        result = TurnResult(
             text=response.text,
             state_messages=list(messages) + [Message(role="assistant", content=response.text)],
             interaction_messages=interaction_messages,
             raw=response.raw,
         )
+        result.__dict__["_action_claims"] = private_action_claims
+        return result
 
 
 class _ValidatingResolver:

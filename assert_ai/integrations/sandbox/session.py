@@ -10,10 +10,12 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
+from assert_ai.core.action_claims import ActionClaim, make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, TurnResult
 
 from .evidence import host_action_event
+from .host_mediator import HostActionBatch
 from .mediation_setup import MediationSetup, load_setup
 from .runtime import (
     ContainerSpec,
@@ -53,101 +55,175 @@ def _validate_target_action_case(
             )
 
 
-def _record_action_claim(
-    claims: dict[str, tuple[str, dict[str, Any]]],
-    *,
-    call_id: Any,
-    tool: Any,
-    args: Any,
-    source: str,
-) -> None:
-    if not isinstance(call_id, str) or not call_id.strip():
-        raise RuntimeError(f"{source} action is missing a non-empty tool_call_id")
-    if not isinstance(tool, str) or not tool.strip():
-        raise RuntimeError(f"{source} action {call_id!r} is missing a tool name")
-    if not isinstance(args, dict):
-        raise RuntimeError(f"{source} action {call_id!r} has non-object arguments")
-    claim = (tool.strip(), dict(args))
-    existing = claims.get(call_id)
-    if existing is not None and existing != claim:
-        raise RuntimeError(
-            f"{source} action {call_id!r} has conflicting tool or argument claims"
-        )
-    claims[call_id] = claim
-
-
-def _target_action_claims(
+def _target_claims_from_messages(
     messages: list[dict[str, Any]],
-) -> dict[str, tuple[str, dict[str, Any]]]:
-    claims: dict[str, tuple[str, dict[str, Any]]] = {}
+) -> list[ActionClaim]:
+    """Compatibility extraction for test doubles without private claims."""
+    claims: list[ActionClaim] = []
+    event_index = 0
     for message in messages:
         tool_calls = message.get("tool_calls")
         if tool_calls:
             if not isinstance(tool_calls, list):
                 raise RuntimeError("target tool_calls must be a list")
             for call in tool_calls:
+                event_index += 1
                 if not isinstance(call, dict):
                     raise RuntimeError("target tool call must be an object")
-                _record_action_claim(
-                    claims,
-                    call_id=call.get("id"),
-                    tool=call.get("function"),
-                    args=call.get("arguments"),
-                    source="target-reported",
-                )
+                try:
+                    claims.append(make_action_claim(
+                        kind="call",
+                        call_id=call.get("id"),
+                        tool=call.get("function"),
+                        arguments=call.get("arguments", {}),
+                        arguments_supplied=True,
+                    ))
+                except ValueError as exc:
+                    raise RuntimeError(
+                        f"target action event {event_index} is invalid: {exc}"
+                    ) from exc
         if message.get("role") == "tool":
-            call_id = message.get("tool_call_id")
-            tool = message.get("function")
-            if "arguments" not in message:
-                if not isinstance(call_id, str) or not call_id.strip():
-                    raise RuntimeError(
-                        "target-reported action is missing a non-empty tool_call_id"
-                    )
-                existing = claims.get(call_id)
-                if existing is None:
-                    raise RuntimeError(
-                        f"target-reported tool result {call_id!r} omits arguments "
-                        "without a matching tool call"
-                    )
-                if not isinstance(tool, str) or tool.strip() != existing[0]:
-                    raise RuntimeError(
-                        f"target-reported action {call_id!r} has conflicting tool claims"
-                    )
-                continue
-            _record_action_claim(
-                claims,
-                call_id=call_id,
-                tool=tool,
-                args=message.get("arguments"),
-                source="target-reported",
+            event_index += 1
+            try:
+                claims.append(make_action_claim(
+                    kind="result",
+                    call_id=message.get("tool_call_id"),
+                    tool=message.get("function"),
+                    arguments=message.get("arguments"),
+                    arguments_supplied="arguments" in message,
+                ))
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"target action event {event_index} is invalid: {exc}"
+                ) from exc
+    return claims
+
+
+def _host_claims_from_rows(rows: list[dict[str, Any]]) -> list[ActionClaim]:
+    claims: list[ActionClaim] = []
+    for index, row in enumerate(rows, start=1):
+        try:
+            claims.append(make_action_claim(
+                kind="call",
+                call_id=row.get("id"),
+                tool=row.get("tool"),
+                arguments=row.get("args"),
+                arguments_supplied=True,
+            ))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"host action row {index} is invalid: {exc}"
+            ) from exc
+    return claims
+
+
+def _reconcile_action_claims(
+    target_claims: list[ActionClaim],
+    host_claims: list[ActionClaim],
+    host_public_ids: list[str],
+) -> list[tuple[str, str]]:
+    """Match each target action occurrence to one private host claim."""
+    if len(host_claims) != len(host_public_ids):
+        raise RuntimeError("host action claim and evidence counts disagree")
+
+    host_by_id: dict[str, tuple[ActionClaim, str]] = {}
+    for index, (claim, public_id) in enumerate(
+        zip(host_claims, host_public_ids, strict=True),
+        start=1,
+    ):
+        if claim.kind != "call":
+            raise RuntimeError(f"host action claim {index} is not a call")
+        if claim.call_id_digest in host_by_id:
+            raise RuntimeError("host action ledger returned a duplicate call ID")
+        host_by_id[claim.call_id_digest] = (claim, public_id)
+
+    target_actions: dict[str, ActionClaim] = {}
+    target_action_order: list[str] = []
+    result_ids: set[str] = set()
+    for index, claim in enumerate(target_claims, start=1):
+        call_id = claim.call_id_digest
+        if claim.kind == "call":
+            if call_id in target_actions:
+                raise RuntimeError(
+                    f"duplicate target tool-call occurrence at action event {index}"
+                )
+            target_actions[call_id] = claim
+            target_action_order.append(call_id)
+            continue
+
+        if call_id in result_ids:
+            raise RuntimeError(
+                f"duplicate target tool-result occurrence at action event {index}"
             )
-    return claims
+        result_ids.add(call_id)
+        existing = target_actions.get(call_id)
+        if existing is None:
+            if not claim.arguments_supplied:
+                raise RuntimeError(
+                    f"target tool result at action event {index} omits arguments "
+                    "without a matching tool call"
+                )
+            target_actions[call_id] = ActionClaim(
+                kind="call",
+                call_id_digest=claim.call_id_digest,
+                tool_digest=claim.tool_digest,
+                arguments_digest=claim.arguments_digest,
+                arguments_supplied=True,
+            )
+            target_action_order.append(call_id)
+            continue
+        if existing.tool_digest != claim.tool_digest or (
+            claim.arguments_supplied
+            and existing.arguments_digest != claim.arguments_digest
+        ):
+            raise RuntimeError(
+                f"target action event {index} conflicts with its matching tool call"
+            )
 
+    missing_positions: list[str] = []
+    mismatch_positions: list[str] = []
+    for position, call_id in enumerate(target_action_order, start=1):
+        host_match = host_by_id.get(call_id)
+        if host_match is None:
+            missing_positions.append(str(position))
+            continue
+        target_claim = target_actions[call_id]
+        host_claim = host_match[0]
+        if (
+            target_claim.tool_digest != host_claim.tool_digest
+            or target_claim.arguments_digest != host_claim.arguments_digest
+        ):
+            mismatch_positions.append(str(position))
 
-def _host_action_claims(
-    rows: list[dict[str, Any]],
-) -> dict[str, tuple[str, dict[str, Any]]]:
-    claims: dict[str, tuple[str, dict[str, Any]]] = {}
-    for row in rows:
-        call_id = row.get("id")
-        if isinstance(call_id, str) and call_id in claims:
-            raise RuntimeError(f"host action ledger returned duplicate call id {call_id!r}")
-        _record_action_claim(
-            claims,
-            call_id=call_id,
-            tool=row.get("tool"),
-            args=row.get("args"),
-            source="host-ledger",
+    if missing_positions or mismatch_positions:
+        details: list[str] = []
+        if missing_positions:
+            details.append(
+                "missing host action occurrences: " + ", ".join(missing_positions)
+            )
+        if mismatch_positions:
+            details.append(
+                "host/target identity mismatch at action occurrences: "
+                + ", ".join(mismatch_positions)
+            )
+        raise RuntimeError(
+            "host action mediation is enabled, but the target returned action events "
+            "not accounted for by the host mediator (" + "; ".join(details) + ")"
         )
-    return claims
+
+    return [
+        (claim.kind, host_by_id[claim.call_id_digest][1])
+        for claim in target_claims
+    ]
 
 
 def _replace_target_actions_with_host_evidence(
     messages: list[dict[str, Any]],
     additions: list[dict[str, Any]],
-    host_ids: set[str],
+    event_public_ids: list[tuple[str, str]],
+    host_public_ids: set[str],
 ) -> list[dict[str, Any]]:
-    """Replace matching target actions in place and retain host-only evidence."""
+    """Replace target action events in place using private reconciliation order."""
     host_messages: dict[str, dict[str, dict[str, Any]]] = {}
     host_order: list[str] = []
     passthrough: list[dict[str, Any]] = []
@@ -163,13 +239,25 @@ def _replace_target_actions_with_host_evidence(
         elif message.get("role") == "tool":
             call_id = message.get("tool_call_id")
             kind = "result"
-        if isinstance(call_id, str) and call_id in host_ids and kind is not None:
+        if isinstance(call_id, str) and call_id in host_public_ids and kind is not None:
             if call_id not in host_messages:
                 host_messages[call_id] = {}
                 host_order.append(call_id)
             host_messages[call_id][kind] = message
         else:
             passthrough.append(message)
+
+    event_index = 0
+
+    def next_public_id(expected_kind: str) -> str:
+        nonlocal event_index
+        if event_index >= len(event_public_ids):
+            raise RuntimeError("target action layout contains more events than private claims")
+        kind, public_id = event_public_ids[event_index]
+        event_index += 1
+        if kind != expected_kind:
+            raise RuntimeError("target action layout disagrees with private claim order")
+        return public_id
 
     rebuilt: list[dict[str, Any]] = []
     inserted: set[tuple[str, str]] = set()
@@ -180,30 +268,34 @@ def _replace_target_actions_with_host_evidence(
                 prose = dict(message)
                 prose.pop("tool_calls", None)
                 rebuilt.append(prose)
-            for call in tool_calls:
-                if not isinstance(call, dict):
-                    continue
-                call_id = call.get("id")
-                if not isinstance(call_id, str):
-                    continue
-                host_call = host_messages.get(call_id, {}).get("call")
-                if host_call is not None and (call_id, "call") not in inserted:
+            for _call in tool_calls:
+                public_id = next_public_id("call")
+                host_call = host_messages.get(public_id, {}).get("call")
+                if host_call is None:
+                    raise RuntimeError("matched host action is missing rendered call evidence")
+                if (public_id, "call") not in inserted:
                     rebuilt.append(host_call)
-                    inserted.add((call_id, "call"))
+                    inserted.add((public_id, "call"))
             continue
         if message.get("role") == "tool":
-            call_id = message.get("tool_call_id")
-            if isinstance(call_id, str) and call_id in host_messages:
-                host_call = host_messages[call_id].get("call")
-                if host_call is not None and (call_id, "call") not in inserted:
-                    rebuilt.append(host_call)
-                    inserted.add((call_id, "call"))
-                host_result = host_messages[call_id].get("result")
-                if host_result is not None and (call_id, "result") not in inserted:
-                    rebuilt.append(host_result)
-                    inserted.add((call_id, "result"))
-                continue
+            public_id = next_public_id("result")
+            host_call = host_messages.get(public_id, {}).get("call")
+            if host_call is None:
+                raise RuntimeError("matched host action is missing rendered call evidence")
+            if (public_id, "call") not in inserted:
+                rebuilt.append(host_call)
+                inserted.add((public_id, "call"))
+            host_result = host_messages[public_id].get("result")
+            if host_result is None:
+                raise RuntimeError("matched host action is missing rendered result evidence")
+            if (public_id, "result") not in inserted:
+                rebuilt.append(host_result)
+                inserted.add((public_id, "result"))
+            continue
         rebuilt.append(message)
+
+    if event_index != len(event_public_ids):
+        raise RuntimeError("private action claims contain events missing from the transcript")
 
     remaining: list[dict[str, Any]] = []
     for call_id in host_order:
@@ -254,9 +346,8 @@ class SandboxedEndpointSession:
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
         self._buffered_interaction_messages: list[dict[str, Any]] = []
         self._drained_host_action_rows = 0
-        self._drained_host_action_claims: dict[
-            str, tuple[str, dict[str, Any]]
-        ] = {}
+        self._drained_host_action_claims: list[ActionClaim] = []
+        self._drained_host_action_public_ids: list[str] = []
 
     async def open(self) -> None:
         target = self.setup.target
@@ -323,6 +414,7 @@ class SandboxedEndpointSession:
                 message_timeout_s=self._message_timeout_s,
                 allow_private=True,
                 case_id=self.case_id,
+                capture_action_claims=target.host_action_mediation,
             )
             await self._endpoint.open()
         except Exception:
@@ -367,47 +459,28 @@ class SandboxedEndpointSession:
         additions = await self.drain_pending_interaction_messages()
         if host_mediated:
             try:
-                target_action_claims = _target_action_claims(result.interaction_messages)
+                target_action_claims = (
+                    result._action_claims
+                    if result._action_claims is not None
+                    else _target_claims_from_messages(result.interaction_messages)
+                )
+                event_public_ids = _reconcile_action_claims(
+                    target_action_claims,
+                    self._drained_host_action_claims,
+                    self._drained_host_action_public_ids,
+                )
+                # The evaluated target controls endpoint events. Replace each
+                # action at its original position using the private match order.
+                # Host-only rows remain visible before the final response.
+                result.interaction_messages = _replace_target_actions_with_host_evidence(
+                    result.interaction_messages,
+                    additions,
+                    event_public_ids,
+                    set(self._drained_host_action_public_ids),
+                )
             except RuntimeError:
                 self._buffered_interaction_messages.extend(additions)
                 raise
-            # Trust the structural fact that the trusted host ledger produced
-            # rows this turn, rather than re-deriving it from a field value on
-            # a message. Evidence provenance is already known at drain time;
-            # string-matching it back out here would silently weaken the gate
-            # if the evidence shape ever changes.
-            unmatched_ids = sorted(
-                set(target_action_claims) - set(self._drained_host_action_claims)
-            )
-            mismatched_ids = sorted(
-                call_id
-                for call_id in set(target_action_claims) & set(self._drained_host_action_claims)
-                if target_action_claims[call_id]
-                != self._drained_host_action_claims[call_id]
-            )
-            if unmatched_ids or mismatched_ids:
-                self._buffered_interaction_messages.extend(additions)
-                details = []
-                if unmatched_ids:
-                    details.append(f"missing host call ids: {', '.join(unmatched_ids)}")
-                if mismatched_ids:
-                    details.append(
-                        "host/target tool or argument mismatch for: "
-                        + ", ".join(mismatched_ids)
-                    )
-                raise RuntimeError(
-                    "host action mediation is enabled, but the target returned tool events "
-                    "not accounted for by the host mediator (" + "; ".join(details) + ")"
-                )
-            # The evaluated target controls endpoint events. Replace each
-            # target action at its original position so trusted evidence does
-            # not reorder intermediate assistant text. Host-only rows remain
-            # visible immediately before the final response.
-            result.interaction_messages = _replace_target_actions_with_host_evidence(
-                result.interaction_messages,
-                additions,
-                set(self._drained_host_action_claims),
-            )
         else:
             try:
                 _validate_target_action_case(result.interaction_messages, self.case_id)
@@ -429,16 +502,34 @@ class SandboxedEndpointSession:
             self._buffered_interaction_messages,
             [],
         )
-        new_action_rows = getattr(self._handle, "new_action_rows", None)
+        new_action_batch = getattr(self._handle, "new_action_batch", None)
         action_rows: list[dict[str, Any]] = []
-        if callable(new_action_rows):
-            action_rows = cast(
-                list[dict[str, Any]],
-                await asyncio.to_thread(new_action_rows),
+        action_claims: list[ActionClaim] = []
+        if callable(new_action_batch):
+            batch = cast(
+                HostActionBatch,
+                await asyncio.to_thread(new_action_batch),
             )
+            action_rows = batch.rows
+            action_claims = batch.claims
+        else:
+            new_action_rows = getattr(self._handle, "new_action_rows", None)
+            if callable(new_action_rows):
+                action_rows = cast(
+                    list[dict[str, Any]],
+                    await asyncio.to_thread(new_action_rows),
+                )
+                action_claims = _host_claims_from_rows(action_rows)
+        host_public_ids = [
+            str(row.get("id") or "")
+            for row in action_rows
+        ]
+        if any(not public_id for public_id in host_public_ids):
+            raise RuntimeError("host action evidence is missing a public call ID")
         egress_rows = await asyncio.to_thread(self._handle.new_egress_rows)
         self._drained_host_action_rows = len(action_rows)
-        self._drained_host_action_claims = _host_action_claims(action_rows)
+        self._drained_host_action_claims = action_claims
+        self._drained_host_action_public_ids = host_public_ids
         events = [host_action_event(row) for row in action_rows]
         events.extend(egress_event(row, case_id=self.case_id) for row in egress_rows)
         additions: list[dict[str, Any]] = []

@@ -11,9 +11,11 @@ attempted action.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 
 import aiohttp
 
+from assert_ai.core.action_claims import make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, _normalize_connector_response
 
@@ -48,10 +50,11 @@ class _Client:
         return _Response(self.payload)
 
 
-async def _run(payload, *, case_id=None):
+async def _run(payload, *, case_id=None, capture_action_claims=False):
     session = HTTPEndpointSession(
         endpoint="http://localhost:8080/chat",
         case_id=case_id,
+        capture_action_claims=capture_action_claims,
     )
     client = _Client(payload)
     setattr(session, "_aiohttp", aiohttp)
@@ -169,6 +172,54 @@ def test_endpoint_preserves_omitted_tool_result_arguments():
         message for message in result.interaction_messages if message["role"] == "tool"
     )
     assert "arguments" not in tool_result
+
+
+def test_endpoint_captures_private_claims_before_sanitizing_artifacts():
+    call_id = "token-" + "a" * 24
+    tool_name = "secret-" + "b" * 24
+    arguments = {"authorization": "Bearer " + "c" * 24}
+    result, _ = asyncio.run(_run({
+        "response": "Done.",
+        "events": [
+            {
+                "role": "tool_call",
+                "tool_name": tool_name,
+                "tool_args": arguments,
+                "tool_call_id": call_id,
+                "content": "",
+            },
+            {
+                "role": "tool_result",
+                "tool_name": tool_name,
+                "tool_call_id": call_id,
+                "content": '{"status":"ok"}',
+            },
+        ],
+    }, capture_action_claims=True))
+
+    assert result._action_claims == [
+        make_action_claim(
+            kind="call",
+            call_id=call_id,
+            tool=tool_name,
+            arguments=arguments,
+            arguments_supplied=True,
+        ),
+        make_action_claim(
+            kind="result",
+            call_id=call_id,
+            tool=tool_name,
+            arguments=None,
+            arguments_supplied=False,
+        ),
+    ]
+    persisted_view = str(result.interaction_messages)
+    assert "_action_claims" not in asdict(result)
+    assert call_id not in persisted_view
+    assert tool_name not in persisted_view
+    assert arguments["authorization"] not in persisted_view
+    assert "endpoint-action-0" in persisted_view
+    assert "[REDACTED]" in persisted_view
 
 
 def test_structured_event_raw_is_sanitized_before_it_can_be_persisted():

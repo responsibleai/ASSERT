@@ -7,10 +7,12 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from assert_ai.core.action_claims import ActionClaim, make_action_claim
 from assert_ai.core.sanitization import sanitize_untrusted_value
 
 from .mediator import ActionMediator
@@ -22,30 +24,23 @@ _MAX_REQUEST_BYTES = 1024 * 1024
 _DEFAULT_MAX_WORKERS = 16
 _DEFAULT_CONNECTION_TIMEOUT_S = 5.0
 
-_STRUCTURAL_LEDGER_FIELDS = frozenset({
-    "id",
-    "sequence",
-    "tool",
-    "case_id",
-    "mode",
-    "flagged",
-    "is_error",
-    "real_executed",
-    "execution_status",
-    "evidence_source",
-    "decision_source",
-    "result_source",
-    "completion_status",
-    "decision_status",
-})
-
-
 def _public_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize payloads without changing reconciliation identities."""
-    return {
-        key: value if key in _STRUCTURAL_LEDGER_FIELDS else sanitize_untrusted_value(value)
-        for key, value in row.items()
-    }
+    """Sanitize persisted evidence and alias a credential-shaped call ID."""
+    sanitized = sanitize_untrusted_value(row)
+    if not isinstance(sanitized, dict):
+        raise TypeError("host action row must be an object")
+    if sanitized.get("id") != row.get("id"):
+        sequence = row.get("sequence")
+        sanitized["id"] = f"host-action-{sequence}"
+    return sanitized
+
+
+@dataclass(frozen=True)
+class HostActionBatch:
+    """Sanitized evidence plus private digests used only for reconciliation."""
+
+    rows: list[dict[str, Any]]
+    claims: list[ActionClaim]
 
 
 def decision_payload(decision: MediationDecision) -> dict[str, Any]:
@@ -232,8 +227,8 @@ class HostMediationLedger:
             self._completed[call_id] = completed
             self._ready.append(completed)
 
-    def drain(self) -> list[dict[str, Any]]:
-        """Return completed rows plus attempts whose target never reported completion."""
+    def drain_batch(self) -> HostActionBatch:
+        """Drain sanitized rows and their non-persisted canonical claims."""
         with self._lock:
             incomplete = [
                 {
@@ -253,9 +248,24 @@ class HostMediationLedger:
                 [*self._ready, *incomplete],
                 key=lambda row: int(row["sequence"]),
             )
+            claims = [
+                make_action_claim(
+                    kind="call",
+                    call_id=row.get("id"),
+                    tool=row.get("tool"),
+                    arguments=row.get("args"),
+                    arguments_supplied=True,
+                )
+                for row in rows
+            ]
+            public_rows = [_public_ledger_row(row) for row in rows]
             self._ready.clear()
             self._pending.clear()
-            return [_public_ledger_row(row) for row in rows]
+            return HostActionBatch(rows=public_rows, claims=claims)
+
+    def drain(self) -> list[dict[str, Any]]:
+        """Compatibility wrapper returning only sanitized evidence rows."""
+        return self.drain_batch().rows
 
     def _append_transition(self, row: dict[str, Any]) -> None:
         public_row = _public_ledger_row(row)

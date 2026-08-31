@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
+from assert_ai.core.action_claims import make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import TurnResult, _sanitize_endpoint_events
 from assert_ai.integrations.sandbox import remote_mediator
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
 from assert_ai.integrations.sandbox.host_mediator import (
+    HostActionBatch,
     HostMediationLedger,
     start_host_mediator,
 )
@@ -50,6 +52,39 @@ def _mediator() -> ActionMediator:
         ],
         "default": {"mode": "block"},
     }))
+
+
+def _fake_sandbox_session(tmp_path: Path) -> SandboxedEndpointSession:
+    (tmp_path / "policy.yaml").write_text(
+        "interactions: []\ndefault: {mode: block}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mocks.yaml").write_text(
+        "version: 1\nmocks: []\n",
+        encoding="utf-8",
+    )
+    setup = tmp_path / "setup.yaml"
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    return SandboxedEndpointSession(setup_path=setup, case_id="case-1")
+
+
+class _BatchHandle:
+    action_ledger = object()
+
+    def __init__(self, batch: HostActionBatch):
+        self._batch = batch
+
+    def new_action_batch(self) -> HostActionBatch:
+        batch = self._batch
+        self._batch = HostActionBatch(rows=[], claims=[])
+        return batch
+
+    def new_egress_rows(self):
+        return []
 
 
 def test_host_ledger_records_mock_before_returning_decision(tmp_path: Path):
@@ -320,39 +355,228 @@ def test_drain_preserves_attempt_order_across_pending_and_complete_rows(tmp_path
     assert [row["sequence"] for row in rows] == [0, 1]
 
 
-def test_structural_ids_survive_payload_sanitization(tmp_path: Path):
+def test_private_identities_remain_distinct_while_public_rows_are_sanitized(tmp_path: Path):
     ledger = HostMediationLedger(_mediator(), ledger_path=tmp_path / "trusted" / "actions.jsonl")
     first_id = "token-" + "a" * 24
     second_id = "token-" + "b" * 24
-    first = _context(call_id=first_id, tool="send_message")
-    second = _context(call_id=second_id, tool="send_message")
+    tool_name = "secret-" + "c" * 24
+    first = _context(call_id=first_id, tool=tool_name)
+    second = _context(call_id=second_id, tool=tool_name)
     first["tool_call"]["args"] = {"authorization": "Bearer " + "a" * 24}
     second["tool_call"]["args"] = {"authorization": "Bearer " + "b" * 24}
 
     ledger.mediate(first)
     ledger.mediate(second)
-    rows = ledger.drain()
+    batch = ledger.drain_batch()
+    rows = batch.rows
 
-    assert [row["id"] for row in rows] == [first_id, second_id]
+    assert [row["id"] for row in rows] == ["host-action-0", "host-action-1"]
+    assert len({claim.call_id_digest for claim in batch.claims}) == 2
+    assert len({claim.arguments_digest for claim in batch.claims}) == 2
+    assert [row["tool"] for row in rows] == ["[REDACTED]", "[REDACTED]"]
     assert rows[0]["args"] == {"authorization": "[REDACTED]"}
     assert rows[1]["args"] == {"authorization": "[REDACTED]"}
-    transitions = [json.loads(line) for line in ledger.ledger_path.read_text().splitlines()]
-    assert {row["id"] for row in transitions} == {first_id, second_id}
+    persisted = ledger.ledger_path.read_text()
+    assert first_id not in persisted
+    assert second_id not in persisted
+    assert tool_name not in persisted
+    assert "Bearer " not in persisted
+    for claim in batch.claims:
+        assert claim.call_id_digest not in persisted
+        assert claim.tool_digest not in persisted
+        assert claim.arguments_digest is not None
+        assert claim.arguments_digest not in persisted
 
 
 def test_endpoint_event_sanitization_preserves_action_identity():
     call_id = "token-" + "a" * 24
     tool_name = "secret-" + "b" * 24
-    sanitized = _sanitize_endpoint_events([{
-        "role": "tool_result",
-        "tool_call_id": call_id,
-        "tool_name": tool_name,
-        "tool_args": {"authorization": "Bearer " + "c" * 24},
-    }])
+    other_id = "token-" + "d" * 24
+    sanitized = _sanitize_endpoint_events([
+        {
+            "role": "tool_call",
+            "tool_call_id": call_id,
+            "tool_name": tool_name,
+            "tool_args": {"authorization": "Bearer " + "c" * 24},
+        },
+        {
+            "role": "tool_result",
+            "tool_call_id": call_id,
+            "tool_name": tool_name,
+            "tool_args": {"authorization": "Bearer " + "c" * 24},
+        },
+        {
+            "role": "tool_call",
+            "tool_call_id": other_id,
+            "tool_name": tool_name,
+            "tool_args": {},
+        },
+    ])
 
-    assert sanitized[0]["tool_call_id"] == call_id
-    assert sanitized[0]["tool_name"] == tool_name
+    assert [event["tool_call_id"] for event in sanitized] == [
+        "endpoint-action-0",
+        "endpoint-action-0",
+        "endpoint-action-1",
+    ]
+    assert sanitized[0]["tool_name"] == "[REDACTED]"
     assert sanitized[0]["tool_args"] == {"authorization": "[REDACTED]"}
+    assert call_id not in str(sanitized)
+    assert other_id not in str(sanitized)
+    assert tool_name not in str(sanitized)
+
+
+def test_private_claims_reconcile_before_sanitized_evidence(tmp_path: Path):
+    call_id = "token-" + "a" * 24
+    tool_name = "secret-" + "b" * 24
+    arguments = {"authorization": "Bearer " + "c" * 24}
+    context = _context(call_id=call_id, tool=tool_name)
+    context["tool_call"]["args"] = arguments
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(context)
+    batch = ledger.drain_batch()
+    session = _fake_sandbox_session(tmp_path)
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            result = TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "endpoint-action-0",
+                            "function": "[REDACTED]",
+                            "arguments": {"authorization": "[REDACTED]"},
+                        }],
+                    },
+                    {
+                        "role": "tool",
+                        "content": "blocked",
+                        "function": "[REDACTED]",
+                        "tool_call_id": "endpoint-action-0",
+                    },
+                    {"role": "assistant", "content": "done"},
+                ],
+            )
+            result.__dict__["_action_claims"] = [
+                make_action_claim(
+                    kind="call",
+                    call_id=call_id,
+                    tool=tool_name,
+                    arguments=arguments,
+                    arguments_supplied=True,
+                ),
+                make_action_claim(
+                    kind="result",
+                    call_id=call_id,
+                    tool=tool_name,
+                    arguments=None,
+                    arguments_supplied=False,
+                ),
+            ]
+            return result
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = _BatchHandle(batch)  # type: ignore[assignment]
+    result = asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+    rendered = str(result.interaction_messages)
+    assert call_id not in rendered
+    assert tool_name not in rendered
+    assert arguments["authorization"] not in rendered
+    assert "host-action-0" in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_private_claims_reject_redaction_collision_in_arguments(tmp_path: Path):
+    call_id = "shared-call"
+    host_arguments = {"authorization": "Bearer " + "a" * 24}
+    target_arguments = {"authorization": "Bearer " + "b" * 24}
+    context = _context(call_id=call_id, tool="send_message")
+    context["tool_call"]["args"] = host_arguments
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(context)
+    session = _fake_sandbox_session(tmp_path)
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            result = TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": call_id,
+                        "function": "send_message",
+                        "arguments": {"authorization": "[REDACTED]"},
+                    }],
+                }],
+            )
+            result.__dict__["_action_claims"] = [make_action_claim(
+                kind="call",
+                call_id=call_id,
+                tool="send_message",
+                arguments=target_arguments,
+                arguments_supplied=True,
+            )]
+            return result
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = _BatchHandle(ledger.drain_batch())  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="identity mismatch at action occurrences: 1") as exc:
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+    assert host_arguments["authorization"] not in str(exc.value)
+    assert target_arguments["authorization"] not in str(exc.value)
+
+
+def test_private_claims_reject_duplicate_identical_target_calls(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(_context(call_id="same-id", tool="send_message"))
+    session = _fake_sandbox_session(tmp_path)
+    claim = make_action_claim(
+        kind="call",
+        call_id="same-id",
+        tool="send_message",
+        arguments={"value": 1},
+        arguments_supplied=True,
+    )
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            call = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "same-id",
+                    "function": "send_message",
+                    "arguments": {"value": 1},
+                }],
+            }
+            result = TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[call, dict(call)],
+            )
+            result.__dict__["_action_claims"] = [claim, claim]
+            return result
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = _BatchHandle(ledger.drain_batch())  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="duplicate target tool-call occurrence"):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
 
 
 @pytest.mark.parametrize("bad_args", [[], "", 0, False, None])
@@ -707,7 +931,7 @@ def test_session_rejects_unmatched_target_action_even_with_unrelated_host_row(
     session._endpoint = FakeEndpoint()  # type: ignore[assignment]
     session._handle = FakeHandle()  # type: ignore[assignment]
 
-    with pytest.raises(RuntimeError, match="missing host call ids: unmediated"):
+    with pytest.raises(RuntimeError, match="missing host action occurrences: 1"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
 
     buffered = asyncio.run(session.drain_pending_interaction_messages())
@@ -760,7 +984,7 @@ def test_session_rejects_same_id_with_different_action_details(tmp_path: Path):
     session._endpoint = FakeEndpoint()  # type: ignore[assignment]
     session._handle = FakeHandle()  # type: ignore[assignment]
 
-    with pytest.raises(RuntimeError, match="tool or argument mismatch for: same-id"):
+    with pytest.raises(RuntimeError, match="identity mismatch at action occurrences: 1"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
 
 
@@ -858,7 +1082,7 @@ def test_session_buffers_egress_when_target_action_has_no_host_row(tmp_path: Pat
 
     session._endpoint = FakeEndpoint()  # type: ignore[assignment]
     session._handle = EmptyHostLedger()  # type: ignore[assignment]
-    with pytest.raises(RuntimeError, match="missing host call ids: unmediated"):
+    with pytest.raises(RuntimeError, match="missing host action occurrences: 1"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
     buffered = asyncio.run(session.drain_pending_interaction_messages())
     assert any(message.get("function") == "network_egress" for message in buffered)
@@ -995,6 +1219,6 @@ def test_fail_closed_gate_survives_evidence_format_change(tmp_path: Path):
             return []
 
     session._handle = EmptyLedgerHandle()  # type: ignore[assignment]
-    with pytest.raises(RuntimeError, match="missing host call ids: call-1"):
+    with pytest.raises(RuntimeError, match="missing host action occurrences: 1"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
     assert session._drained_host_action_rows == 0

@@ -49,7 +49,7 @@ import yaml
 
 from assert_ai.core.security import validate_endpoint_url
 
-from .host_mediator import HostMediationLedger, start_host_mediator
+from .host_mediator import HostActionBatch, HostMediationLedger, start_host_mediator
 
 log = logging.getLogger(__name__)
 
@@ -564,6 +564,11 @@ class SandboxHandle:
 
     def new_action_rows(self) -> list[dict[str, Any]]:
         return self.action_ledger.drain() if self.action_ledger is not None else []
+
+    def new_action_batch(self) -> HostActionBatch:
+        if self.action_ledger is None:
+            return HostActionBatch(rows=[], claims=[])
+        return self.action_ledger.drain_batch()
 
     def stop(self) -> None:
         commands = (
