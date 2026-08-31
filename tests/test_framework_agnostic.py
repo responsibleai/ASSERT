@@ -1277,6 +1277,185 @@ class TestOTelTracedSessionCollector(unittest.TestCase):
         )
         self.assertEqual(session.runtime_mode, "otel_traced")
 
+    def test_run_turn_consumes_collector_spans(self):
+        import sys
+        import types
+
+        from assert_ai.core.collector import ListCollector
+        from assert_ai.core.model_client import Message
+        from assert_ai.core.otel_session import OTelTracedSession
+
+        mod = types.ModuleType("_test_collector_target")
+        mod.target = lambda message: f"response to {message}"
+        sys.modules["_test_collector_target"] = mod
+
+        span = OTelSpan(
+            trace_id="t1", span_id="s1", parent_span_id=None,
+            name="llm_call", kind="LLM",
+            start_time_ns=0, end_time_ns=5_000_000,
+            attributes={
+                "session.id": "collected-session",
+                "output.value": "response",
+                "llm.model_name": "gpt-4o",
+                "llm.token_count.prompt": 5,
+                "llm.token_count.completion": 2,
+                "openinference.span.kind": "LLM",
+            },
+        )
+
+        try:
+            session = OTelTracedSession(
+                callable_ref="_test_collector_target:target",
+                collector=ListCollector([span]),
+            )
+
+            async def _run():
+                await session.open()
+                result = await session.run_turn([Message(role="user", content="test")])
+                await session.close()
+                return result
+
+            result = asyncio.run(_run())
+            self.assertTrue(result.raw["span_validation"]["valid"])
+            self.assertEqual(result.raw["trace_metadata"]["llm_call_count"], 1)
+            self.assertEqual(len(result.raw["trace_events"]), 1)
+        finally:
+            del sys.modules["_test_collector_target"]
+
+    def test_run_turn_persists_collector_validation_warnings(self):
+        import sys
+        import types
+
+        from assert_ai.core.collector import ListCollector
+        from assert_ai.core.model_client import Message
+        from assert_ai.core.otel_session import OTelTracedSession
+
+        class WarningCollector(ListCollector):
+            def validate(self, spans):
+                return ["backend-specific warning"]
+
+        mod = types.ModuleType("_test_collector_validation_target")
+        mod.target = lambda message: f"response to {message}"
+        sys.modules["_test_collector_validation_target"] = mod
+
+        span = OTelSpan(
+            trace_id="t1", span_id="s1", parent_span_id=None,
+            name="llm_call", kind="LLM",
+            start_time_ns=0, end_time_ns=5_000_000,
+            attributes={
+                "session.id": "collected-session",
+                "output.value": "response",
+                "llm.model_name": "gpt-4o",
+                "llm.token_count.prompt": 5,
+                "llm.token_count.completion": 2,
+                "openinference.span.kind": "LLM",
+            },
+        )
+
+        try:
+            session = OTelTracedSession(
+                callable_ref="_test_collector_validation_target:target",
+                collector=WarningCollector([span]),
+            )
+
+            async def _run():
+                await session.open()
+                result = await session.run_turn([Message(role="user", content="test")])
+                await session.close()
+                return result
+
+            result = asyncio.run(_run())
+            expected = {"valid": False, "warnings": ["backend-specific warning"]}
+            self.assertEqual(result.raw["span_validation"], expected)
+            self.assertEqual(
+                result.interaction_messages[-1]["raw"]["span_validation"],
+                expected,
+            )
+        finally:
+            del sys.modules["_test_collector_validation_target"]
+
+    def test_run_turn_does_not_replay_collector_spans(self):
+        import sys
+        import types
+
+        from assert_ai.core.collector import ListCollector
+        from assert_ai.core.model_client import Message
+        from assert_ai.core.otel_session import OTelTracedSession
+
+        mod = types.ModuleType("_test_collector_multi_turn_target")
+        mod.target = lambda message: f"response to {message}"
+        sys.modules["_test_collector_multi_turn_target"] = mod
+
+        span = OTelSpan(
+            trace_id="t1", span_id="s1", parent_span_id=None,
+            name="llm_call", kind="LLM",
+            start_time_ns=0, end_time_ns=5_000_000,
+            attributes={
+                "session.id": "collected-session",
+                "output.value": "response",
+                "llm.model_name": "gpt-4o",
+                "llm.token_count.prompt": 5,
+                "llm.token_count.completion": 2,
+                "openinference.span.kind": "LLM",
+            },
+        )
+
+        try:
+            session = OTelTracedSession(
+                callable_ref="_test_collector_multi_turn_target:target",
+                collector=ListCollector([span]),
+            )
+
+            async def _run():
+                await session.open()
+                first = await session.run_turn([Message(role="user", content="first")])
+                second = await session.run_turn([Message(role="user", content="second")])
+                await session.close()
+                return first, second
+
+            first, second = asyncio.run(_run())
+            self.assertEqual(len(first.raw["trace_events"]), 1)
+            self.assertEqual(second.raw["trace_events"], [])
+            self.assertFalse(second.raw["span_validation"]["valid"])
+        finally:
+            del sys.modules["_test_collector_multi_turn_target"]
+
+    def test_collector_cannot_be_shared_by_open_sessions(self):
+        import sys
+        import types
+
+        from assert_ai.core.collector import ListCollector
+        from assert_ai.core.otel_session import OTelTracedSession
+
+        mod = types.ModuleType("_test_shared_collector_target")
+        mod.target = lambda message: f"response to {message}"
+        sys.modules["_test_shared_collector_target"] = mod
+
+        collector = ListCollector([])
+        first = OTelTracedSession(
+            callable_ref="_test_shared_collector_target:target",
+            collector=collector,
+        )
+        second = OTelTracedSession(
+            callable_ref="_test_shared_collector_target:target",
+            collector=collector,
+        )
+
+        async def _run():
+            await first.open()
+            try:
+                with self.assertRaisesRegex(RuntimeError, "separate collector per session"):
+                    await second.open()
+            finally:
+                await first.close()
+            await second.open()
+            await second.close()
+
+        try:
+            asyncio.run(_run())
+        finally:
+            del sys.modules["_test_shared_collector_target"]
+
     def test_backward_compat_exporter_still_works(self):
         """Passing exporter= still works as before."""
         from assert_ai.core.otel_session import OTelTracedSession

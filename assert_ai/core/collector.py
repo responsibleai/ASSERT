@@ -41,7 +41,7 @@ class SpanCollector(Protocol):
 
     def get_spans(
         self,
-        project_name: str,
+        project_name: str | None = None,
         *,
         start_time: str | None = None,
         end_time: str | None = None,
