@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import socket
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,15 +24,17 @@ from .records import MediationDecision
 _MAX_REQUEST_BYTES = 1024 * 1024
 _DEFAULT_MAX_WORKERS = 16
 _DEFAULT_CONNECTION_TIMEOUT_S = 5.0
+_DEFAULT_MAX_ACTIONS = 64
 
 def _public_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize persisted evidence and alias a credential-shaped call ID."""
+    """Sanitize persisted evidence and assign a host-owned public call ID."""
     sanitized = sanitize_untrusted_value(row)
     if not isinstance(sanitized, dict):
         raise TypeError("host action row must be an object")
-    if sanitized.get("id") != row.get("id"):
-        sequence = row.get("sequence")
-        sanitized["id"] = f"host-action-{sequence}"
+    sequence = row.get("sequence")
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
+        raise ValueError("host action row requires a non-negative integer sequence")
+    sanitized["id"] = f"host-action-{sequence}"
     return sanitized
 
 
@@ -65,16 +68,21 @@ class HostMediationLedger:
         *,
         ledger_path: Path,
         expected_case_id: str | None = None,
+        max_actions: int = _DEFAULT_MAX_ACTIONS,
     ) -> None:
+        if max_actions < 1:
+            raise ValueError("max_actions must be at least 1")
         self._mediator = mediator
         self.ledger_path = ledger_path.resolve()
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         self.ledger_path.parent.chmod(0o700)
         self.expected_case_id = expected_case_id
+        self.max_actions = max_actions
         self._pending: dict[str, dict[str, Any]] = {}
         self._completed: dict[str, dict[str, Any]] = {}
         self._ready: list[dict[str, Any]] = []
         self._seen: set[str] = set()
+        self._claims: dict[str, ActionClaim] = {}
         self._next_sequence = 0
         self._registered = False
         self._lock = threading.Lock()
@@ -104,6 +112,13 @@ class HostMediationLedger:
         args = dict(raw_args)
         if not call_id or not tool:
             raise ValueError("host mediator requires tool_call.id and tool_call.name")
+        claim = make_action_claim(
+            kind="call",
+            call_id=call_id,
+            tool=tool,
+            arguments=args,
+            arguments_supplied=True,
+        )
 
         session = pre_context.get("session") or {}
         claimed_case_id = str(session.get("case_id") or "") or None
@@ -114,6 +129,10 @@ class HostMediationLedger:
         with self._lock:
             if call_id in self._seen:
                 raise ValueError(f"duplicate mediation call id {call_id!r}")
+            if self._next_sequence >= self.max_actions:
+                raise ValueError(
+                    f"host mediator action limit of {self.max_actions} was reached"
+                )
             sequence = self._next_sequence
             self._next_sequence += 1
             attempt = {
@@ -142,6 +161,7 @@ class HostMediationLedger:
             }
             self._append_transition({"phase": "attempt", **attempt})
             self._seen.add(call_id)
+            self._claims[call_id] = claim
             try:
                 decision = self._mediator.plan(pre_context)
             except Exception as exc:
@@ -248,19 +268,12 @@ class HostMediationLedger:
                 [*self._ready, *incomplete],
                 key=lambda row: int(row["sequence"]),
             )
-            claims = [
-                make_action_claim(
-                    kind="call",
-                    call_id=row.get("id"),
-                    tool=row.get("tool"),
-                    arguments=row.get("args"),
-                    arguments_supplied=True,
-                )
-                for row in rows
-            ]
+            claims = [self._claims[str(row["id"])] for row in rows]
             public_rows = [_public_ledger_row(row) for row in rows]
             self._ready.clear()
             self._pending.clear()
+            for row in rows:
+                self._claims.pop(str(row["id"]), None)
             return HostActionBatch(rows=public_rows, claims=claims)
 
     def drain(self) -> list[dict[str, Any]]:
@@ -294,23 +307,52 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self.max_workers = max_workers
         self.connection_timeout_s = connection_timeout_s
         self._worker_slots = threading.BoundedSemaphore(max_workers)
+        self._deadline_lock = threading.Lock()
+        self._deadline_timers: dict[int, threading.Timer] = {}
         super().__init__(server_address, request_handler_class)
 
     def process_request(self, request: Any, client_address: Any) -> None:
         if not self._worker_slots.acquire(blocking=False):
             self.shutdown_request(request)
             return
+        timer = threading.Timer(
+            self.connection_timeout_s,
+            self._expire_request,
+            args=(request,),
+        )
+        timer.daemon = True
+        with self._deadline_lock:
+            self._deadline_timers[id(request)] = timer
+        timer.start()
         try:
             super().process_request(request, client_address)
         except Exception:
+            with self._deadline_lock:
+                self._deadline_timers.pop(id(request), None)
+            timer.cancel()
             self._worker_slots.release()
             raise
+
+    @staticmethod
+    def _expire_request(request: Any) -> None:
+        try:
+            request.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            request.close()
+        except OSError:
+            pass
 
     def process_request_thread(self, request: Any, client_address: Any) -> None:
         try:
             request.settimeout(self.connection_timeout_s)
             super().process_request_thread(request, client_address)
         finally:
+            with self._deadline_lock:
+                timer = self._deadline_timers.pop(id(request), None)
+            if timer is not None:
+                timer.cancel()
             self._worker_slots.release()
 
 
@@ -367,12 +409,15 @@ class _HostMediatorHandler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
-        self.send_response(status)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(body)))
-        self.send_header("connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            self.close_connection = True
 
 
 def start_host_mediator(
@@ -385,6 +430,7 @@ def start_host_mediator(
     case_id: str | None = None,
     max_workers: int = _DEFAULT_MAX_WORKERS,
     connection_timeout_s: float = _DEFAULT_CONNECTION_TIMEOUT_S,
+    max_actions: int = _DEFAULT_MAX_ACTIONS,
 ) -> tuple[ThreadingHTTPServer, threading.Thread, int, HostMediationLedger]:
     policy = MediationPolicy.from_yaml(policy_path)
     mocks = MockLibrary.from_yaml(mocks_path) if mocks_path is not None else MockLibrary.empty()
@@ -395,6 +441,7 @@ def start_host_mediator(
         mediator,
         ledger_path=ledger_path,
         expected_case_id=case_id,
+        max_actions=max_actions,
     )
     handler = type(
         "SandboxHostMediatorHandler",

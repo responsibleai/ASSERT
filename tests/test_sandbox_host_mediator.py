@@ -7,6 +7,7 @@ import asyncio
 import http.client
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,7 +29,10 @@ from assert_ai.integrations.sandbox.mediator import ActionMediator
 from assert_ai.integrations.sandbox.mocks import MockLibrary
 from assert_ai.integrations.sandbox.policy import MediationPolicy
 from assert_ai.integrations.sandbox.remote_mediator import RemoteActionMediator
-from assert_ai.integrations.sandbox.session import SandboxedEndpointSession
+from assert_ai.integrations.sandbox.session import (
+    SandboxedEndpointSession,
+    _reconcile_action_claims,
+)
 
 
 def _context(*, call_id: str, tool: str, case_id: str = "case-1") -> dict:
@@ -96,10 +100,10 @@ def test_host_ledger_records_mock_before_returning_decision(tmp_path: Path):
     transitions = [json.loads(line) for line in ledger.ledger_path.read_text().splitlines()]
     assert [row["phase"] for row in transitions] == ["attempt", "decision"]
     attempt, transition = transitions
-    assert attempt["id"] == "call-mock"
+    assert attempt["id"] == "host-action-0"
     assert attempt["mode"] == "pending"
     assert transition["phase"] == "decision"
-    assert transition["id"] == "call-mock"
+    assert transition["id"] == "host-action-0"
     assert transition["tool"] == "send_message"
     assert transition["case_id"] == "case-1"
     assert transition["mode"] == "mock"
@@ -278,6 +282,61 @@ def test_host_server_bounds_workers_and_times_out_stalled_connections(tmp_path: 
         thread.join(timeout=5)
 
 
+def test_host_server_deadline_closes_slow_trickle_connections(tmp_path: Path):
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("interactions: []\ndefault: {mode: block}\n", encoding="utf-8")
+    server, thread, port, _ledger = start_host_mediator(
+        policy_path=policy,
+        mocks_path=None,
+        cassette_dir=None,
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        access_token="test-token",
+        max_workers=1,
+        connection_timeout_s=0.15,
+    )
+    slow = socket.create_connection(("127.0.0.1", port), timeout=1)
+    slow.sendall(
+        b"POST /register HTTP/1.1\r\nHost: localhost\r\n"
+        b"Authorization: Bearer test-token\r\nContent-Length: 100\r\n\r\n{"
+    )
+    trickle_stopped = threading.Event()
+
+    def trickle() -> None:
+        try:
+            deadline = time.monotonic() + 0.6
+            while time.monotonic() < deadline:
+                slow.sendall(b"x")
+                time.sleep(0.03)
+        except OSError:
+            pass
+        finally:
+            trickle_stopped.set()
+
+    trickle_thread = threading.Thread(target=trickle, daemon=True)
+    trickle_thread.start()
+    worker_slots = server.__dict__["_worker_slots"]
+    try:
+        accepted_deadline = time.monotonic() + 1
+        while worker_slots._value != 0 and time.monotonic() < accepted_deadline:
+            time.sleep(0.01)
+        assert worker_slots._value == 0
+        started = time.monotonic()
+        deadline = time.monotonic() + 1
+        while worker_slots._value != 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert worker_slots._value == 1
+        assert time.monotonic() - started < 0.4
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
+            assert response.status == 200
+    finally:
+        slow.close()
+        assert trickle_stopped.wait(timeout=1)
+        trickle_thread.join(timeout=1)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_remote_mediator_rejects_invalid_token(tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     policy.write_text("interactions: []\ndefault: {mode: block}\n", encoding="utf-8")
@@ -351,7 +410,7 @@ def test_drain_preserves_attempt_order_across_pending_and_complete_rows(tmp_path
 
     rows = ledger.drain()
 
-    assert [row["id"] for row in rows] == ["first", "second"]
+    assert [row["id"] for row in rows] == ["host-action-0", "host-action-1"]
     assert [row["sequence"] for row in rows] == [0, 1]
 
 
@@ -386,6 +445,97 @@ def test_private_identities_remain_distinct_while_public_rows_are_sanitized(tmp_
         assert claim.tool_digest not in persisted
         assert claim.arguments_digest is not None
         assert claim.arguments_digest not in persisted
+
+
+def test_public_host_ids_cannot_collide_with_target_chosen_ids(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(_context(call_id="host-action-1", tool="send_message"))
+    ledger.mediate(_context(call_id="token-" + "a" * 24, tool="send_message"))
+
+    rows = ledger.drain()
+
+    assert [row["id"] for row in rows] == ["host-action-0", "host-action-1"]
+    assert len({row["id"] for row in rows}) == 2
+
+
+def test_sensitive_argument_keys_are_aliased_without_collisions(tmp_path: Path):
+    sensitive_key = "token-" + "a" * 24
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    context = _context(call_id="key-probe", tool="send_message")
+    context["tool_call"]["args"] = {
+        "[REDACTED_KEY_0]": "preserved",
+        sensitive_key: "secret-key-name",
+    }
+    ledger.mediate(context)
+    row = ledger.drain()[0]
+    persisted = ledger.ledger_path.read_text()
+
+    assert row["args"] == {
+        "[REDACTED_KEY_0]": "preserved",
+        "[REDACTED_KEY_1]": "secret-key-name",
+    }
+    assert sensitive_key not in persisted
+
+
+def test_noncanonical_arguments_fail_before_policy_or_execution(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    context = _context(call_id="nan-probe", tool="lookup")
+    context["tool_call"]["args"] = {"value": float("nan")}
+
+    with pytest.raises(ValueError, match="non-canonical JSON value"):
+        ledger.mediate(context)
+
+    assert not ledger.ledger_path.exists()
+    decision = ledger.mediate(_context(call_id="valid", tool="send_message"))
+    assert decision.mode == "mock"
+    assert ledger.drain()[0]["sequence"] == 0
+
+
+def test_host_action_count_is_bounded_per_case(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        max_actions=1,
+    )
+    ledger.mediate(_context(call_id="first", tool="send_message"))
+
+    with pytest.raises(ValueError, match="action limit of 1"):
+        ledger.mediate(_context(call_id="second", tool="send_message"))
+
+    assert len(ledger.drain()) == 1
+
+
+def test_target_action_order_must_follow_host_sequence():
+    first = make_action_claim(
+        kind="call",
+        call_id="first",
+        tool="lookup",
+        arguments={"value": 1},
+        arguments_supplied=True,
+    )
+    second = make_action_claim(
+        kind="call",
+        call_id="second",
+        tool="lookup",
+        arguments={"value": 2},
+        arguments_supplied=True,
+    )
+
+    with pytest.raises(RuntimeError, match="order diverges from host sequence"):
+        _reconcile_action_claims(
+            [second, first],
+            [first, second],
+            ["host-action-0", "host-action-1"],
+        )
 
 
 def test_endpoint_event_sanitization_preserves_action_identity():
@@ -607,7 +757,7 @@ def test_policy_failure_is_recorded_after_the_attempt(tmp_path: Path):
     transitions = [json.loads(line) for line in ledger.ledger_path.read_text().splitlines()]
     assert [row["phase"] for row in transitions] == ["attempt", "decision_error"]
     row = ledger.drain()[0]
-    assert row["id"] == "policy-error"
+    assert row["id"] == "host-action-0"
     assert row["mode"] == "block"
     assert row["decision_status"] == "error"
     assert row["execution_status"] == "not_executed"

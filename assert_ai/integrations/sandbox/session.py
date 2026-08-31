@@ -27,6 +27,7 @@ from .runtime import (
 )
 
 log = logging.getLogger(__name__)
+_MAX_SANDBOX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 def _validate_target_action_case(
@@ -126,7 +127,7 @@ def _reconcile_action_claims(
     if len(host_claims) != len(host_public_ids):
         raise RuntimeError("host action claim and evidence counts disagree")
 
-    host_by_id: dict[str, tuple[ActionClaim, str]] = {}
+    host_by_id: dict[str, tuple[ActionClaim, str, int]] = {}
     for index, (claim, public_id) in enumerate(
         zip(host_claims, host_public_ids, strict=True),
         start=1,
@@ -135,7 +136,7 @@ def _reconcile_action_claims(
             raise RuntimeError(f"host action claim {index} is not a call")
         if claim.call_id_digest in host_by_id:
             raise RuntimeError("host action ledger returned a duplicate call ID")
-        host_by_id[claim.call_id_digest] = (claim, public_id)
+        host_by_id[claim.call_id_digest] = (claim, public_id, index)
 
     target_actions: dict[str, ActionClaim] = {}
     target_action_order: list[str] = []
@@ -182,20 +183,25 @@ def _reconcile_action_claims(
 
     missing_positions: list[str] = []
     mismatch_positions: list[str] = []
+    reordered_positions: list[str] = []
+    last_host_position = 0
     for position, call_id in enumerate(target_action_order, start=1):
         host_match = host_by_id.get(call_id)
         if host_match is None:
             missing_positions.append(str(position))
             continue
         target_claim = target_actions[call_id]
-        host_claim = host_match[0]
+        host_claim, _public_id, host_position = host_match
         if (
             target_claim.tool_digest != host_claim.tool_digest
             or target_claim.arguments_digest != host_claim.arguments_digest
         ):
             mismatch_positions.append(str(position))
+        if host_position <= last_host_position:
+            reordered_positions.append(str(position))
+        last_host_position = host_position
 
-    if missing_positions or mismatch_positions:
+    if missing_positions or mismatch_positions or reordered_positions:
         details: list[str] = []
         if missing_positions:
             details.append(
@@ -205,6 +211,11 @@ def _reconcile_action_claims(
             details.append(
                 "host/target identity mismatch at action occurrences: "
                 + ", ".join(mismatch_positions)
+            )
+        if reordered_positions:
+            details.append(
+                "target action order diverges from host sequence at occurrences: "
+                + ", ".join(reordered_positions)
             )
         raise RuntimeError(
             "host action mediation is enabled, but the target returned action events "
@@ -415,6 +426,7 @@ class SandboxedEndpointSession:
                 allow_private=True,
                 case_id=self.case_id,
                 capture_action_claims=target.host_action_mediation,
+                max_response_bytes=_MAX_SANDBOX_RESPONSE_BYTES,
             )
             await self._endpoint.open()
         except Exception:

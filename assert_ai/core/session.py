@@ -47,7 +47,7 @@ def _sanitize_endpoint_value(value: Any) -> Any:
 
 
 def _sanitize_endpoint_events(value: Any) -> Any:
-    """Redact event payloads and alias credential-shaped correlation IDs."""
+    """Redact event payloads and assign collision-free public call IDs."""
     sanitized = sanitize_untrusted_value(value)
     if not isinstance(value, list) or not isinstance(sanitized, list):
         return sanitized
@@ -56,8 +56,7 @@ def _sanitize_endpoint_events(value: Any) -> Any:
         if not isinstance(original, dict) or not isinstance(redacted, dict):
             continue
         original_id = original.get("tool_call_id")
-        redacted_id = redacted.get("tool_call_id")
-        if isinstance(original_id, str) and redacted_id != original_id:
+        if isinstance(original_id, str):
             alias = id_aliases.setdefault(
                 original_id,
                 f"endpoint-action-{len(id_aliases)}",
@@ -684,16 +683,20 @@ class HTTPEndpointSession:
         allow_private: bool = False,
         case_id: str | None = None,
         capture_action_claims: bool = False,
+        max_response_bytes: int | None = None,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
         validate_endpoint_url(endpoint, allow_private=allow_private)
+        if max_response_bytes is not None and max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be positive")
         self._endpoint = endpoint
         self._headers = headers or {}
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
         self._case_id = case_id
         self._capture_action_claims = capture_action_claims
+        self._max_response_bytes = max_response_bytes
         self._session = None  # aiohttp.ClientSession
         self._resolver = None
 
@@ -766,7 +769,33 @@ class HTTPEndpointSession:
                         f"HTTP endpoint {self._endpoint} returned a redirect, which is not allowed"
                     )
                 resp.raise_for_status()
-                data = await resp.json()
+                if self._max_response_bytes is None:
+                    data = await resp.json()
+                else:
+                    content_length = getattr(resp, "content_length", None)
+                    if (
+                        isinstance(content_length, int)
+                        and content_length > self._max_response_bytes
+                    ):
+                        raise RuntimeError(
+                            "HTTP endpoint response exceeds the configured size limit"
+                        )
+                    try:
+                        body = await resp.content.readexactly(
+                            self._max_response_bytes + 1
+                        )
+                    except asyncio.IncompleteReadError as exc:
+                        body = exc.partial
+                    else:
+                        raise RuntimeError(
+                            "HTTP endpoint response exceeds the configured size limit"
+                        )
+                    try:
+                        data = json.loads(body)
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError(
+                            f"HTTP endpoint {self._endpoint} returned invalid JSON"
+                        ) from exc
                 if not isinstance(data, dict):
                     raise RuntimeError(
                         f"HTTP endpoint {self._endpoint} returned a non-object JSON response"

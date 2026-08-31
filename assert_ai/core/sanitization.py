@@ -42,5 +42,19 @@ def sanitize_untrusted_value(value: Any) -> Any:
     if isinstance(value, list):
         return [sanitize_untrusted_value(item) for item in value]
     if isinstance(value, Mapping):
-        return {key: sanitize_untrusted_value(item) for key, item in value.items()}
+        sanitized: dict[Any, Any] = {}
+        original_keys = set(value.keys())
+        redacted_key_index = 0
+        for key, item in value.items():
+            safe_key = key
+            if isinstance(key, str):
+                redacted_key = sanitize_untrusted_text(key)
+                if redacted_key != key:
+                    while True:
+                        safe_key = f"[REDACTED_KEY_{redacted_key_index}]"
+                        redacted_key_index += 1
+                        if safe_key not in sanitized and safe_key not in original_keys:
+                            break
+            sanitized[safe_key] = sanitize_untrusted_value(item)
+        return sanitized
     return value

@@ -11,19 +11,33 @@ attempted action.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
 
 import aiohttp
+import pytest
 
 from assert_ai.core.action_claims import make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, _normalize_connector_response
 
 
+class _Content:
+    def __init__(self, payload):
+        self.body = json.dumps(payload).encode()
+
+    async def readexactly(self, size):
+        if len(self.body) < size:
+            raise asyncio.IncompleteReadError(self.body, size)
+        return self.body[:size]
+
+
 class _Response:
     def __init__(self, payload, *, status=200):
         self.payload = payload
         self.status = status
+        self.content = _Content(payload)
+        self.content_length = len(self.content.body)
 
     async def __aenter__(self):
         return self
@@ -50,11 +64,18 @@ class _Client:
         return _Response(self.payload)
 
 
-async def _run(payload, *, case_id=None, capture_action_claims=False):
+async def _run(
+    payload,
+    *,
+    case_id=None,
+    capture_action_claims=False,
+    max_response_bytes=None,
+):
     session = HTTPEndpointSession(
         endpoint="http://localhost:8080/chat",
         case_id=case_id,
         capture_action_claims=capture_action_claims,
+        max_response_bytes=max_response_bytes,
     )
     client = _Client(payload)
     setattr(session, "_aiohttp", aiohttp)
@@ -100,12 +121,12 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
     tool_call = result.interaction_messages[1]
     tool_result = result.interaction_messages[2]
     assert tool_call["tool_calls"] == [{
-        "id": "tc-1",
+        "id": "endpoint-action-0",
         "function": "resume_line",
         "arguments": {"line_id": "L1002"},
     }]
     assert tool_result["function"] == "resume_line"
-    assert tool_result["tool_call_id"] == "tc-1"
+    assert tool_result["tool_call_id"] == "endpoint-action-0"
     assert tool_result["raw"] == {
         "endpoint": "http://localhost:8080/chat",
         "action_mediation": {
@@ -248,6 +269,20 @@ def test_endpoint_without_events_keeps_black_box_behavior():
         ("user", "restore the line"),
         ("assistant", "Plain answer."),
     ]
+
+
+def test_endpoint_response_size_is_bounded_before_json_parsing():
+    with pytest.raises(RuntimeError, match="response exceeds the configured size limit"):
+        asyncio.run(_run(
+            {"response": "x" * 256},
+            max_response_bytes=64,
+        ))
+
+    result, _ = asyncio.run(_run(
+        {"response": "bounded"},
+        max_response_bytes=256,
+    ))
+    assert result.text == "bounded"
 
 
 def test_endpoint_rejects_non_object_json():
