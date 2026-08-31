@@ -18,7 +18,7 @@ from assert_ai.viewer_read_model import ViewerReadModelBuildError
 
 
 class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
-    async def test_run_inference_persists_span_validation_from_interaction_messages(self) -> None:
+    async def test_run_inference_persists_span_validation_for_empty_response(self) -> None:
         warning = (
             "No OpenTelemetry spans were captured. Install the matching "
             "openinference-instrumentation-* package."
@@ -36,13 +36,13 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             async def run_turn(self, initial_messages):
                 validation = {"valid": False, "warnings": [warning]}
                 return TurnResult(
-                    text="model response",
-                    state_messages=list(initial_messages) + [Message(role="assistant", content="model response")],
+                    text="",
+                    state_messages=list(initial_messages) + [Message(role="assistant", content="")],
                     interaction_messages=[
                         {"role": "user", "content": "seed prompt"},
                         {
                             "role": "assistant",
-                            "content": "model response",
+                            "content": "",
                             "raw": {
                                 "trace_events": [],
                                 "trace_metadata": {},
