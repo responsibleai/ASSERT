@@ -276,9 +276,12 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
   `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
 - **Non-ACS fixes are the user's call, outside this skill**: troubleshooting may lead a coding agent to a
   non-ACS fix — upgrading or swapping the target model, rewriting the system prompt, or otherwise changing the
-  agent. These are *agent changes*, not ACS governance (ACS can only restrict an output, never add a missing
-  capability). Keep the label honest — don't record such a run under `acs-governed`; name it for what produced
-  the numbers (e.g. `model-upgrade`) so metrics aren't misattributed to ACS.
+  agent. These are *agent changes*, not ACS governance (ACS can constrain inputs, outputs, and tool calls, but
+  cannot add a capability the agent lacks). **Never fold one into the ACS-governed run** — the A/B is readable
+  only because the governed run differs from the baseline in nothing but `run:` and `target.callable`, so a
+  model or prompt change inside it moves two variables at once and the delta is attributable to neither;
+  relabelling does not recover it. Measure an agent change as its own arm: branch from the same baseline, reuse
+  its exact test set, and name that run for the change (e.g. `model-upgrade`).
 
 ### Authoritative references
 
