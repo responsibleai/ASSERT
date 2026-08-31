@@ -45,6 +45,20 @@ def _sanitize_endpoint_value(value: Any) -> Any:
     return sanitize_untrusted_value(value)
 
 
+def _sanitize_endpoint_events(value: Any) -> Any:
+    """Redact event payloads while preserving correlation identities."""
+    sanitized = sanitize_untrusted_value(value)
+    if not isinstance(value, list) or not isinstance(sanitized, list):
+        return sanitized
+    for original, redacted in zip(value, sanitized, strict=True):
+        if not isinstance(original, dict) or not isinstance(redacted, dict):
+            continue
+        for structural_field in ("tool_name", "tool_call_id"):
+            if structural_field in original:
+                redacted[structural_field] = original[structural_field]
+    return sanitized
+
+
 # ── Adapter types and helpers ──────────────────────────────────
 
 @dataclass
@@ -764,7 +778,7 @@ class HTTPEndpointSession:
                     # run artifacts, so it needs the same redaction as the
                     # response text.
                     "text": _sanitize_response_text(raw_text),
-                    "events": _sanitize_endpoint_value(data.get("events")),
+                    "events": _sanitize_endpoint_events(data.get("events")),
                     # Do not persist the complete endpoint payload: it may carry
                     # backend diagnostics or sensitive data. Preserve only the
                     # endpoint identity; normalized event content is retained
@@ -1030,16 +1044,16 @@ def _serialize_connector_interaction_messages(
                     }
                 )
             elif event.role == "tool_result":
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": event.content,
-                        "function": event.tool_name or "tool",
-                        "arguments": event.tool_args or {},
-                        "tool_call_id": event.tool_call_id,
-                        "raw": persisted_raw,
-                    }
-                )
+                tool_result = {
+                    "role": "tool",
+                    "content": event.content,
+                    "function": event.tool_name or "tool",
+                    "tool_call_id": event.tool_call_id,
+                    "raw": persisted_raw,
+                }
+                if event.tool_args is not None:
+                    tool_result["arguments"] = event.tool_args
+                messages.append(tool_result)
         # Tool-evidence endpoints commonly return only tool_call/tool_result
         # events plus a top-level final response. Preserve that final response
         # exactly once so evidence enrichment never removes the answer itself.

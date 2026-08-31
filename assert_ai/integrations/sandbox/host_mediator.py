@@ -19,6 +19,33 @@ from .policy import MediationPolicy
 from .records import MediationDecision
 
 _MAX_REQUEST_BYTES = 1024 * 1024
+_DEFAULT_MAX_WORKERS = 16
+_DEFAULT_CONNECTION_TIMEOUT_S = 5.0
+
+_STRUCTURAL_LEDGER_FIELDS = frozenset({
+    "id",
+    "sequence",
+    "tool",
+    "case_id",
+    "mode",
+    "flagged",
+    "is_error",
+    "real_executed",
+    "execution_status",
+    "evidence_source",
+    "decision_source",
+    "result_source",
+    "completion_status",
+    "decision_status",
+})
+
+
+def _public_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize payloads without changing reconciliation identities."""
+    return {
+        key: value if key in _STRUCTURAL_LEDGER_FIELDS else sanitize_untrusted_value(value)
+        for key, value in row.items()
+    }
 
 
 def decision_payload(decision: MediationDecision) -> dict[str, Any]:
@@ -50,6 +77,7 @@ class HostMediationLedger:
         self.ledger_path.parent.chmod(0o700)
         self.expected_case_id = expected_case_id
         self._pending: dict[str, dict[str, Any]] = {}
+        self._completed: dict[str, dict[str, Any]] = {}
         self._ready: list[dict[str, Any]] = []
         self._seen: set[str] = set()
         self._next_sequence = 0
@@ -70,12 +98,17 @@ class HostMediationLedger:
             self._registered = True
 
     def mediate(self, pre_context: dict[str, Any]) -> MediationDecision:
-        tool_call = pre_context.get("tool_call") or {}
+        tool_call = pre_context.get("tool_call")
+        if not isinstance(tool_call, dict):
+            raise TypeError("host mediator requires an object tool_call")
         call_id = str(tool_call.get("id") or "").strip()
         tool = str(tool_call.get("name") or "").strip()
-        args = tool_call.get("args") or {}
-        if not call_id or not tool or not isinstance(args, dict):
-            raise ValueError("host mediator requires tool_call.id, tool_call.name, and object args")
+        raw_args = tool_call.get("args") if "args" in tool_call else {}
+        if not isinstance(raw_args, dict):
+            raise TypeError("host mediator requires object tool_call.args")
+        args = dict(raw_args)
+        if not call_id or not tool:
+            raise ValueError("host mediator requires tool_call.id and tool_call.name")
 
         session = pre_context.get("session") or {}
         claimed_case_id = str(session.get("case_id") or "") or None
@@ -86,15 +119,59 @@ class HostMediationLedger:
         with self._lock:
             if call_id in self._seen:
                 raise ValueError(f"duplicate mediation call id {call_id!r}")
-            decision = self._mediator.plan(pre_context)
             sequence = self._next_sequence
             self._next_sequence += 1
-            row = sanitize_untrusted_value({
+            attempt = {
                 "id": call_id,
                 "sequence": sequence,
                 "tool": tool,
-                "args": dict(args),
+                "args": args,
                 "case_id": self.expected_case_id or claimed_case_id,
+                "mode": "pending",
+                "matched": "",
+                "reason": "",
+                "decision_reason": "",
+                "policy_note": None,
+                "flagged": False,
+                "returned": None,
+                "is_error": False,
+                "real_executed": False,
+                "execution_status": "not_executed",
+                "mock_source": None,
+                "replay": None,
+                "evidence_source": "host_mediator",
+                "decision_source": "host_mediator",
+                "result_source": None,
+                "completion_status": "pending",
+                "decision_status": "pending",
+            }
+            self._append_transition({"phase": "attempt", **attempt})
+            self._seen.add(call_id)
+            try:
+                decision = self._mediator.plan(pre_context)
+            except Exception as exc:
+                reason = f"policy evaluation failed: {type(exc).__name__}: {exc}"
+                failed = {
+                    **attempt,
+                    "mode": "block",
+                    "flagged": True,
+                    "returned": {
+                        "status": "error",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    "is_error": True,
+                    "reason": reason,
+                    "decision_reason": reason,
+                    "result_source": "host_mediator",
+                    "completion_status": "complete",
+                    "decision_status": "error",
+                }
+                self._append_transition({"phase": "decision_error", **failed})
+                self._ready.append(failed)
+                raise ValueError(reason) from exc
+            row = {
+                **attempt,
                 "mode": decision.mode,
                 "matched": decision.matched,
                 "reason": decision.reason,
@@ -109,12 +186,10 @@ class HostMediationLedger:
                 ),
                 "mock_source": decision.mock_source,
                 "replay": decision.replay,
-                "evidence_source": "host_mediator",
-                "decision_source": "host_mediator",
                 "result_source": "host_mediator" if decision.mode != "pass" else None,
                 "completion_status": "complete" if decision.mode != "pass" else "pending",
-            })
-            self._seen.add(call_id)
+                "decision_status": "complete",
+            }
             self._append_transition({"phase": "decision", **row})
             if decision.mode == "pass":
                 self._pending[call_id] = row
@@ -131,10 +206,19 @@ class HostMediationLedger:
         real_executed: bool,
     ) -> None:
         with self._lock:
-            row = self._pending.pop(call_id, None)
+            completed_before = self._completed.get(call_id)
+            if completed_before is not None:
+                if (
+                    completed_before.get("returned") == returned
+                    and completed_before.get("is_error") == bool(is_error)
+                    and completed_before.get("real_executed") == bool(real_executed)
+                ):
+                    return
+                raise ValueError(f"conflicting completion for mediation call {call_id!r}")
+            row = self._pending.get(call_id)
             if row is None:
                 raise ValueError(f"unknown or already-completed mediation call {call_id!r}")
-            completed = sanitize_untrusted_value({
+            completed = {
                 **row,
                 "returned": returned,
                 "is_error": bool(is_error),
@@ -142,8 +226,10 @@ class HostMediationLedger:
                 "execution_status": "executed" if real_executed else "not_executed",
                 "result_source": "target_reported",
                 "completion_status": "complete",
-            })
+            }
             self._append_transition({"phase": "completion", **completed})
+            self._pending.pop(call_id, None)
+            self._completed[call_id] = completed
             self._ready.append(completed)
 
     def drain(self) -> list[dict[str, Any]]:
@@ -169,12 +255,53 @@ class HostMediationLedger:
             )
             self._ready.clear()
             self._pending.clear()
-            return rows
+            return [_public_ledger_row(row) for row in rows]
 
     def _append_transition(self, row: dict[str, Any]) -> None:
+        public_row = _public_ledger_row(row)
         with self.ledger_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.write(json.dumps(public_row, ensure_ascii=False, sort_keys=True) + "\n")
         self.ledger_path.chmod(0o600)
+
+
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Limit target-controlled host threads and stalled connection lifetime."""
+
+    daemon_threads = True
+
+    def __init__(
+        self,
+        server_address,
+        request_handler_class,
+        *,
+        max_workers: int,
+        connection_timeout_s: float,
+    ) -> None:
+        if max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
+        if connection_timeout_s <= 0:
+            raise ValueError("connection_timeout_s must be positive")
+        self.max_workers = max_workers
+        self.connection_timeout_s = connection_timeout_s
+        self._worker_slots = threading.BoundedSemaphore(max_workers)
+        super().__init__(server_address, request_handler_class)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._worker_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            request.settimeout(self.connection_timeout_s)
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
 
 
 class _HostMediatorHandler(BaseHTTPRequestHandler):
@@ -246,6 +373,8 @@ def start_host_mediator(
     ledger_path: Path,
     access_token: str,
     case_id: str | None = None,
+    max_workers: int = _DEFAULT_MAX_WORKERS,
+    connection_timeout_s: float = _DEFAULT_CONNECTION_TIMEOUT_S,
 ) -> tuple[ThreadingHTTPServer, threading.Thread, int, HostMediationLedger]:
     policy = MediationPolicy.from_yaml(policy_path)
     mocks = MockLibrary.from_yaml(mocks_path) if mocks_path is not None else MockLibrary.empty()
@@ -262,7 +391,12 @@ def start_host_mediator(
         (_HostMediatorHandler,),
         {"ledger": ledger, "access_token": access_token},
     )
-    server = ThreadingHTTPServer(("0.0.0.0", 0), handler)
+    server = _BoundedThreadingHTTPServer(
+        ("0.0.0.0", 0),
+        handler,
+        max_workers=max_workers,
+        connection_timeout_s=connection_timeout_s,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread, int(server.server_port), ledger

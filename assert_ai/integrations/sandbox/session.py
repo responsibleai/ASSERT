@@ -96,10 +96,28 @@ def _target_action_claims(
                     source="target-reported",
                 )
         if message.get("role") == "tool":
+            call_id = message.get("tool_call_id")
+            tool = message.get("function")
+            if "arguments" not in message:
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise RuntimeError(
+                        "target-reported action is missing a non-empty tool_call_id"
+                    )
+                existing = claims.get(call_id)
+                if existing is None:
+                    raise RuntimeError(
+                        f"target-reported tool result {call_id!r} omits arguments "
+                        "without a matching tool call"
+                    )
+                if not isinstance(tool, str) or tool.strip() != existing[0]:
+                    raise RuntimeError(
+                        f"target-reported action {call_id!r} has conflicting tool claims"
+                    )
+                continue
             _record_action_claim(
                 claims,
-                call_id=message.get("tool_call_id"),
-                tool=message.get("function"),
+                call_id=call_id,
+                tool=tool,
                 args=message.get("arguments"),
                 source="target-reported",
             )
@@ -122,6 +140,87 @@ def _host_action_claims(
             source="host-ledger",
         )
     return claims
+
+
+def _replace_target_actions_with_host_evidence(
+    messages: list[dict[str, Any]],
+    additions: list[dict[str, Any]],
+    host_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Replace matching target actions in place and retain host-only evidence."""
+    host_messages: dict[str, dict[str, dict[str, Any]]] = {}
+    host_order: list[str] = []
+    passthrough: list[dict[str, Any]] = []
+    for message in additions:
+        call_id: Any = None
+        kind: str | None = None
+        tool_calls = message.get("tool_calls")
+        if message.get("role") == "assistant" and isinstance(tool_calls, list) and tool_calls:
+            call = tool_calls[0]
+            if isinstance(call, dict):
+                call_id = call.get("id")
+                kind = "call"
+        elif message.get("role") == "tool":
+            call_id = message.get("tool_call_id")
+            kind = "result"
+        if isinstance(call_id, str) and call_id in host_ids and kind is not None:
+            if call_id not in host_messages:
+                host_messages[call_id] = {}
+                host_order.append(call_id)
+            host_messages[call_id][kind] = message
+        else:
+            passthrough.append(message)
+
+    rebuilt: list[dict[str, Any]] = []
+    inserted: set[tuple[str, str]] = set()
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            if message.get("content"):
+                prose = dict(message)
+                prose.pop("tool_calls", None)
+                rebuilt.append(prose)
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                call_id = call.get("id")
+                if not isinstance(call_id, str):
+                    continue
+                host_call = host_messages.get(call_id, {}).get("call")
+                if host_call is not None and (call_id, "call") not in inserted:
+                    rebuilt.append(host_call)
+                    inserted.add((call_id, "call"))
+            continue
+        if message.get("role") == "tool":
+            call_id = message.get("tool_call_id")
+            if isinstance(call_id, str) and call_id in host_messages:
+                host_call = host_messages[call_id].get("call")
+                if host_call is not None and (call_id, "call") not in inserted:
+                    rebuilt.append(host_call)
+                    inserted.add((call_id, "call"))
+                host_result = host_messages[call_id].get("result")
+                if host_result is not None and (call_id, "result") not in inserted:
+                    rebuilt.append(host_result)
+                    inserted.add((call_id, "result"))
+                continue
+        rebuilt.append(message)
+
+    remaining: list[dict[str, Any]] = []
+    for call_id in host_order:
+        for kind in ("call", "result"):
+            host_message = host_messages[call_id].get(kind)
+            if host_message is not None and (call_id, kind) not in inserted:
+                remaining.append(host_message)
+    remaining.extend(passthrough)
+    if not remaining:
+        return rebuilt
+    final_assistant = [
+        index
+        for index, message in enumerate(rebuilt)
+        if message.get("role") == "assistant" and message.get("content")
+    ]
+    insert_at = final_assistant[-1] if final_assistant else len(rebuilt)
+    return [*rebuilt[:insert_at], *remaining, *rebuilt[insert_at:]]
 
 
 class SandboxedEndpointSession:
@@ -300,26 +399,15 @@ class SandboxedEndpointSession:
                     "host action mediation is enabled, but the target returned tool events "
                     "not accounted for by the host mediator (" + "; ".join(details) + ")"
                 )
-            # The evaluated target controls endpoint events. In host-mediated
-            # mode, keep its prose but replace every target-supplied tool event
-            # with the trusted host ledger so omitted or forged events cannot
-            # change the authoritative action transcript.
-            filtered = [
-                message
-                for message in result.interaction_messages
-                if message.get("role") != "tool" and not message.get("tool_calls")
-            ]
-            final_assistant = [
-                index
-                for index, message in enumerate(filtered)
-                if message.get("role") == "assistant" and message.get("content")
-            ]
-            insert_at = final_assistant[-1] if final_assistant else len(filtered)
-            result.interaction_messages = [
-                *filtered[:insert_at],
-                *additions,
-                *filtered[insert_at:],
-            ]
+            # The evaluated target controls endpoint events. Replace each
+            # target action at its original position so trusted evidence does
+            # not reorder intermediate assistant text. Host-only rows remain
+            # visible immediately before the final response.
+            result.interaction_messages = _replace_target_actions_with_host_evidence(
+                result.interaction_messages,
+                additions,
+                set(self._drained_host_action_claims),
+            )
         else:
             try:
                 _validate_target_action_case(result.interaction_messages, self.case_id)

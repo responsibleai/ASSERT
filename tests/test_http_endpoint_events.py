@@ -145,6 +145,32 @@ def test_endpoint_does_not_duplicate_final_assistant_event():
     assert [m["content"] for m in assistants] == ["Done."]
 
 
+def test_endpoint_preserves_omitted_tool_result_arguments():
+    result, _ = asyncio.run(_run({
+        "response": "Done.",
+        "events": [
+            {
+                "role": "tool_call",
+                "tool_name": "lookup",
+                "tool_args": {"customer_id": "C1001"},
+                "tool_call_id": "lookup-1",
+                "content": "",
+            },
+            {
+                "role": "tool_result",
+                "tool_name": "lookup",
+                "tool_call_id": "lookup-1",
+                "content": '{"status":"ok"}',
+            },
+        ],
+    }))
+
+    tool_result = next(
+        message for message in result.interaction_messages if message["role"] == "tool"
+    )
+    assert "arguments" not in tool_result
+
+
 def test_structured_event_raw_is_sanitized_before_it_can_be_persisted():
     response = _normalize_connector_response({
         "text": "Done.",

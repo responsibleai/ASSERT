@@ -4,6 +4,7 @@
 """Target-side client for ASSERT's trusted host mediation service."""
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -12,6 +13,29 @@ from dataclasses import replace
 from typing import Any
 
 from .records import MediationDecision
+
+_MAX_COMPLETION_RESULT_BYTES = 512 * 1024
+_MAX_COMPLETION_PREVIEW_BYTES = 64 * 1024
+
+
+def _bounded_completion_value(value: Any) -> Any:
+    """Keep an honest completion report below the mediator request limit."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, default=str).encode()
+    except (TypeError, ValueError, RecursionError) as exc:
+        return {
+            "_assert_result_unserializable": True,
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        }
+    if len(encoded) <= _MAX_COMPLETION_RESULT_BYTES:
+        return value
+    return {
+        "_assert_result_truncated": True,
+        "original_size_bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "preview": encoded[:_MAX_COMPLETION_PREVIEW_BYTES].decode(errors="replace"),
+    }
 
 
 class _HostMediatorTransportError(RuntimeError):
@@ -105,11 +129,11 @@ class RemoteActionMediator:
             real_executed = _executed()
             self._post("/complete", {
                 "call_id": call_id,
-                "returned": {
+                "returned": _bounded_completion_value({
                     "status": "error",
                     "error_type": type(exc).__name__,
                     "message": str(exc),
-                },
+                }),
                 "is_error": True,
                 "real_executed": real_executed,
             })
@@ -119,7 +143,7 @@ class RemoteActionMediator:
         is_error = not real_executed
         self._post("/complete", {
             "call_id": call_id,
-            "returned": returned,
+            "returned": _bounded_completion_value(returned),
             "is_error": is_error,
             "real_executed": real_executed,
         })
