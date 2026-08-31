@@ -110,6 +110,7 @@ class MediationSetup:
         tools: Mapping[str, Any],
         agent_id: str,
         session_id: str,
+        case_id: str | None = None,
         framework: str = "openclaw-mcp-sandbox",
     ) -> AgentHooksToolHost:
         """The provided job-B wiring: tools -> mediator -> evidence."""
@@ -118,6 +119,7 @@ class MediationSetup:
             mediator=self.mediator(),
             agent_id=agent_id,
             session_id=session_id,
+            case_id=case_id,
             framework=framework,
         )
 

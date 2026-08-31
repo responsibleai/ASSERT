@@ -248,12 +248,14 @@ def test_inference_builds_owned_sandbox_session_relative_to_config(tmp_path):
     session = _build_target_session(
         target=TargetConfig(sandbox="setup.yaml"),
         test_case_payload={},
+        test_case_id="prompt-case-007",
         inference=InferenceConfig(),
         max_tokens=100,
         config_path=config,
     )
     assert isinstance(session, SandboxedEndpointSession)
     assert session.setup.source_path == setup
+    assert session.case_id == "prompt-case-007"
 
 
 def test_policy_or_mock_change_invalidates_inference_cache(tmp_path):
@@ -528,6 +530,7 @@ def test_secret_like_container_env_is_rejected_before_docker(tmp_path, monkeypat
         "ACTION_MEDIATION_MOCKS",
         "ACTION_MEDIATION_CASSETTES",
         "ACTION_MEDIATION_LEDGER",
+        "ASSERT_SANDBOX_CASE_ID",
         "ASSERT_SANDBOX_OUTPUT",
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -613,11 +616,13 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         def shutdown(self): pass
         def server_close(self): pass
 
-    monkeypatch.setattr(
-        sandbox_runtime,
-        "_start_egress_proxy",
-        lambda **kwargs: (Server(), SimpleNamespace(), 9100),
-    )
+    egress_proxy_args = {}
+
+    def fake_start_egress_proxy(**kwargs):
+        egress_proxy_args.update(kwargs)
+        return Server(), SimpleNamespace(), 9100
+
+    monkeypatch.setattr(sandbox_runtime, "_start_egress_proxy", fake_start_egress_proxy)
     monkeypatch.setattr(
         sandbox_runtime,
         "_start_model_proxy",
@@ -641,6 +646,7 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         ContainerSpec(
             image="example",
             container_port=8080,
+            case_id="prompt-case-007",
             model_proxy=ModelProxySpec(
                 upstream_url="https://provider.invalid/chat",
                 credential_env="PRIVATE_PROVIDER_KEY",
@@ -663,11 +669,29 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
     )
     target_command = " ".join(target_run)
     relay_command = " ".join(relay_run)
+    audit_log = egress_proxy_args["audit_log"]
+    assert audit_log == (tmp_path / "audit" / "egress.jsonl").resolve()
+    assert not audit_log.is_relative_to(handle.output_dir)
+    assert str(audit_log) not in target_command
+    # The ledger must sit outside *every* directory handed to the target, not
+    # just outside output_dir. Parse the real -v arguments so a future mount
+    # that happens to contain the audit directory fails here, on the ungated
+    # unit path, rather than only in the ASSERT_RUN_DOCKER_TESTS suite.
+    host_mount_sources = [
+        Path(value.split(":", 1)[0]).resolve()
+        for flag, value in zip(target_run, target_run[1:])
+        if flag == "-v"
+    ]
+    assert host_mount_sources, "expected the target container to receive host mounts"
+    assert not any(audit_log.is_relative_to(source) for source in host_mount_sources), (
+        f"egress ledger {audit_log} is inside a target mount: {host_mount_sources}"
+    )
     assert "--read-only" in target_run
     assert "--user" in target_run and "65534:65534" in target_run
     assert "--cap-drop" in target_run and "ALL" in target_run
     assert "no-new-privileges" in target_run
     assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" in target_run
+    assert "ASSERT_SANDBOX_CASE_ID=prompt-case-007" in target_run
     assert "ACTION_MEDIATION_CASSETTES=/sandbox/cassettes" in target_run
     assert f"{cassettes.resolve()}:/sandbox/cassettes:ro" in target_run
     network_commands = " ".join(" ".join(call) for call in calls if call[:2] == ("network", "create"))
@@ -977,7 +1001,7 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
         "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
         encoding="utf-8",
     )
-    session = SandboxedEndpointSession(setup_path=setup)
+    session = SandboxedEndpointSession(setup_path=setup, case_id="prompt-case-007")
 
     class FakeEndpoint:
         async def run_turn(self, messages):
@@ -1003,6 +1027,48 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
         for message in result.interaction_messages
     )
     assert "bad.example" in json.dumps(result.interaction_messages)
+    assert "prompt-case-007" in json.dumps(result.interaction_messages)
+
+
+@pytest.mark.parametrize(
+    "action_evidence,error_match",
+    [
+        ({"case_id": "case-b", "mode": "mock"}, "does not match"),
+        ({"mode": "mock"}, "missing the ASSERT case_id"),
+    ],
+)
+def test_target_action_evidence_must_match_the_assert_case(
+    tmp_path, action_evidence, error_match
+):
+    _, _, setup = _files(tmp_path)
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-a")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            from assert_ai.core.session import TurnResult
+
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "{}",
+                    "function": "lookup",
+                    "arguments": {},
+                    "tool_call_id": "call-1",
+                    "raw": {"action_mediation": action_evidence},
+                }],
+            )
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match=error_match):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
 
 
 def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):

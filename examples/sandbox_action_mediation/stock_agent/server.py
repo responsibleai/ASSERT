@@ -27,6 +27,7 @@ PORT = int(os.environ.get("PORT", "8080"))
 POLICY_PATH = os.environ.get("ACTION_MEDIATION_POLICY", "/sandbox/policy.json")
 MOCKS_PATH = os.environ.get("ACTION_MEDIATION_MOCKS", "/sandbox/mocks.json")
 CASSETTE_DIR = os.environ.get("ACTION_MEDIATION_CASSETTES")
+CASE_ID = os.environ.get("ASSERT_SANDBOX_CASE_ID")
 
 
 def lookup_customer(args: dict) -> dict:
@@ -54,16 +55,20 @@ MOCKS = MockLibrary.from_yaml(MOCKS_PATH)
 # the same files as ActionMediator and host-mode setup validation.
 MOCKS = MockLibrary(MOCKS.rules, cassette_dir=CASSETTE_DIR or MOCKS.cassette_dir)
 MEDIATOR = ActionMediator(POLICY, mocks=MOCKS, cassette_dir=CASSETTE_DIR)
-TOOL_HOST = AgentHooksToolHost(
-    tools={
-        "lookup_customer": lookup_customer,
-        "send_message": send_message,
-    },
-    mediator=MEDIATOR,
-    agent_id="stock-sandbox-agent",
-    session_id="stock-sandbox-case",
-    framework="assert-stock-http",
-)
+
+
+def _tool_host(case_id: str | None) -> AgentHooksToolHost:
+    return AgentHooksToolHost(
+        tools={
+            "lookup_customer": lookup_customer,
+            "send_message": send_message,
+        },
+        mediator=MEDIATOR,
+        agent_id="stock-sandbox-agent",
+        session_id="stock-sandbox-case",
+        case_id=case_id,
+        framework="assert-stock-http",
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -80,10 +85,19 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0") or 0)
         request = json.loads(self.rfile.read(length) or b"{}")
         user_message = str(request.get("message") or "")
+        request_case_id = request.get("case_id")
+        if request_case_id is not None:
+            if not isinstance(request_case_id, str) or not request_case_id.strip():
+                self._json(400, {"error": "case_id must be a non-empty string"})
+                return
+            request_case_id = request_case_id.strip()
+        if CASE_ID and request_case_id and request_case_id != CASE_ID:
+            self._json(400, {"error": "request case_id does not match sandbox case"})
+            return
+        tool_host = _tool_host(CASE_ID or request_case_id)
 
-        first_new_record = len(TOOL_HOST.records)
-        customer = TOOL_HOST.call_tool("lookup_customer", {"customer_id": "C1001"})
-        delivery = TOOL_HOST.call_tool(
+        customer = tool_host.call_tool("lookup_customer", {"customer_id": "C1001"})
+        delivery = tool_host.call_tool(
             "send_message",
             {
                 "recipient": "555-000-9999",
@@ -91,8 +105,7 @@ class Handler(BaseHTTPRequestHandler):
                 "body": f"Account C1001 balance: ${customer['balance']:.2f}",
             },
         )
-        records = TOOL_HOST.records[first_new_record:]
-        events = [assert_tool_event(record) for record in records]
+        events = [assert_tool_event(record) for record in tool_host.records]
 
         # Deliberately attempt one harmless request so the network deny-and-audit
         # path is visible beside the tool mediation evidence.

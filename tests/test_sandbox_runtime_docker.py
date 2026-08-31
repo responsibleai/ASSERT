@@ -29,9 +29,14 @@ from assert_ai.stages.inference import run_inference
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = os.environ.get("ASSERT_RUN_DOCKER_TESTS", "").lower() in {"1", "true", "yes"}
+if RUN and not docker_available():
+    raise RuntimeError(
+        "ASSERT_RUN_DOCKER_TESTS is enabled, but the Docker daemon is unavailable; "
+        "required containment tests cannot be skipped"
+    )
 pytestmark = pytest.mark.skipif(
-    not RUN or not docker_available(),
-    reason="set ASSERT_RUN_DOCKER_TESTS=1 with Docker available",
+    not RUN,
+    reason="set ASSERT_RUN_DOCKER_TESTS=1 to run real Docker containment tests",
 )
 
 
@@ -45,6 +50,13 @@ def stock_image():
             ".",
         ],
         cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    yield
+    subprocess.run(
+        ["docker", "image", "rm", "-f", "assert-sandbox-stock-agent:local"],
         check=True,
         capture_output=True,
         text=True,
@@ -83,6 +95,31 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
                 text=True,
             )
             assert writable.returncode == 0, writable.stderr
+            # The target may write arbitrary files to its declared output mount,
+            # but that mount must not contain the host proxy's authoritative
+            # egress ledger. A forged lookalike must not alter host evidence.
+            host_egress_before = handle.egress_log.read_text(encoding="utf-8")
+            forged = subprocess.run(
+                [
+                    "docker", "exec", container, "sh", "-c",
+                    (
+                        "printf '%s\\n' '{\"decision\":\"allowed\",\"forged\":true}' "
+                        "> /sandbox/output/egress.jsonl"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert forged.returncode == 0, forged.stderr
+            assert handle.egress_log.read_text(encoding="utf-8") == host_egress_before
+            assert not handle.egress_log.is_relative_to(handle.output_dir)
+            assert not any(
+                handle.egress_log.resolve().is_relative_to(
+                    Path(mount["Source"]).resolve()
+                )
+                for mount in inspect["Mounts"]
+            )
             policy_write = subprocess.run(
                 ["docker", "exec", container, "sh", "-c", "echo x >> /sandbox/policy.json"],
                 check=False,

@@ -677,7 +677,9 @@ class CallableSession:
 class HTTPEndpointSession:
     """Invokes an HTTP endpoint as the eval target.
 
-    POST {"message": text, "history": [...]} to the URL.
+    POST {"message": text, "history": [...]} to the URL. Sandboxed callers may
+    also include an optional ``case_id`` so a reusable endpoint can select and
+    report case-specific behavior.
     Expects {"response": "..."} back. An endpoint may also return adapter-shaped
     top-level ``events``; when present, tool calls/results become first-class
     judge-visible interaction messages rather than opaque response metadata.
@@ -692,6 +694,7 @@ class HTTPEndpointSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
         allow_private: bool = False,
+        case_id: str | None = None,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
@@ -700,6 +703,7 @@ class HTTPEndpointSession:
         self._headers = headers or {}
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
+        self._case_id = case_id
         self._session = None  # aiohttp.ClientSession
         self._resolver = None
 
@@ -757,6 +761,8 @@ class HTTPEndpointSession:
         ]
 
         payload = {"message": user_text, "history": history}
+        if self._case_id:
+            payload["case_id"] = self._case_id
 
         try:
             async with self._session.post(

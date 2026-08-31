@@ -11,7 +11,8 @@ complementary process and network boundary for everything else:
 * a private Docker network with no gateway, so neither the host nor public
   internet is directly reachable;
 * a deny-by-default HTTP(S) proxy that records every proxy-aware egress attempt;
-* policy and mock files mounted read-only, with a separate writable output mount;
+* policy and mock files mounted read-only, with a separate writable target-output
+  mount and a host-only network-evidence ledger;
 * optional host-side model proxy, so a real provider credential never enters the
   container.
 
@@ -487,6 +488,7 @@ class ContainerSpec:
     cpus: float = 1.0
     pids_limit: int = 256
     user: str = "65534:65534"
+    case_id: str | None = None
 
 
 _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
@@ -494,6 +496,7 @@ _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
     "ACTION_MEDIATION_MOCKS",
     "ACTION_MEDIATION_CASSETTES",
     "ACTION_MEDIATION_LEDGER",
+    "ASSERT_SANDBOX_CASE_ID",
     "ASSERT_SANDBOX_OUTPUT",
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -619,7 +622,13 @@ def start_container(
     # output, so make the mount writable without weakening any source/policy
     # mount. It is removed with the owning session.
     output_dir.chmod(0o777)
-    egress_log = output_dir / "egress.jsonl"
+    # The evaluated target may control every byte under its writable output
+    # mount. Keep proxy-generated evidence in a sibling host-only directory so
+    # the target cannot rewrite or delete the ledger ASSERT later consumes.
+    audit_dir = output_dir.parent / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_dir.chmod(0o700)
+    egress_log = audit_dir / "egress.jsonl"
     config_dir = output_dir.parent / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_dir.chmod(0o755)
@@ -778,6 +787,8 @@ def start_container(
             "-e",
             f"https_proxy=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
         ]
+        if spec.case_id:
+            args += ["-e", f"ASSERT_SANDBOX_CASE_ID={spec.case_id}"]
         if cassette_dir is not None:
             args += [
                 "-v", f"{cassette_dir.resolve()}:/sandbox/cassettes:ro",
@@ -851,7 +862,7 @@ def start_container(
         raise
 
 
-def egress_event(row: dict[str, Any]) -> dict[str, Any]:
+def egress_event(row: dict[str, Any], *, case_id: str | None = None) -> dict[str, Any]:
     evidence = {
         "channel": "egress",
         "ts": row.get("ts"),
@@ -861,6 +872,8 @@ def egress_event(row: dict[str, Any]) -> dict[str, Any]:
         "path": str(row.get("path") or ""),
         "decision": str(row.get("decision") or ""),
     }
+    if case_id:
+        evidence["case_id"] = case_id
     return {
         "role": "tool_result",
         "tool_name": "network_egress",

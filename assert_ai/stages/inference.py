@@ -560,6 +560,7 @@ def _build_target_session(
     *,
     target: TargetConfig,
     test_case_payload: dict[str, Any],
+    test_case_id: str | None = None,
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
@@ -573,6 +574,7 @@ def _build_target_session(
 
         return SandboxedEndpointSession(
             setup_path=target.sandbox,
+            case_id=test_case_id,
             config_path=config_path,
             message_timeout_s=inference.tool_timeout_s,
             startup_timeout_s=inference.startup_timeout_s,
@@ -664,6 +666,7 @@ async def _run_prompt_test_case(
     runtime = _build_target_session(
         target=target,
         test_case_payload=test_case_payload,
+        test_case_id=test_case_id,
         inference=inference,
         max_tokens=max_tokens,
         config_path=config_path,
@@ -1005,6 +1008,7 @@ async def _run_scenario_test_case(
     runtime = _build_target_session(
         target=target,
         test_case_payload=test_case_data,
+        test_case_id=test_case_id,
         inference=evaluation.inference,
         max_tokens=max_tokens,
         config_path=config_path,
