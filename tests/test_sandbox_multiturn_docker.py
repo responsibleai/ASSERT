@@ -66,6 +66,15 @@ def _stock_image():
             capture_output=True,
             text=True,
         )
+    yield
+    # CI asserts that no sandbox image survives the job, so remove it here the
+    # same way the single-turn Docker module does.
+    subprocess.run(
+        ["docker", "image", "rm", "-f", "assert-sandbox-stock-agent:local"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _actions(response):
