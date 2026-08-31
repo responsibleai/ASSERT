@@ -426,6 +426,17 @@ def _make_split_run(
     )
 
 
+def _set_systematize_artifact(run_dir: Path, path: str) -> None:
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_versions"] = {
+        "systematize": {
+            "version": "v0001",
+            "path": path,
+        }
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def test_matrix_defaults_to_the_impermissible_half_when_every_run_has_the_split(tmp_path: Path) -> None:
     results_root = tmp_path / "results"
     # 1 of 4 impermissible, 3 of 4 permissible: the union would rank this high
@@ -444,6 +455,151 @@ def test_matrix_defaults_to_the_impermissible_half_when_every_run_has_the_split(
     assert payload["metric"] == "policy_violation_not_permissible"
     assert payload["cells"]["beh"]["baseline"] == 0.25
     assert payload["cells"]["beh"]["governed"] == 0.0
+
+
+def test_matrix_falls_back_to_union_for_all_permissible_taxonomy(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_split_run(
+        results_root,
+        "beh",
+        "beh-baseline",
+        "allowed_behavior",
+        [(False, True), (False, False)],
+    )
+    _make_split_run(
+        results_root,
+        "beh",
+        "beh-governed",
+        "allowed_behavior",
+        [(False, False), (False, False)],
+    )
+    (results_root / "beh" / "taxonomy.json").write_text(
+        json.dumps({
+            "behavior_categories": [
+                {"name": "allowed", "permissible": True},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation"
+    assert payload["cells"]["allowed_behavior"] == {
+        "baseline": 0.5,
+        "governed": 0.0,
+    }
+
+
+def test_matrix_uses_each_runs_versioned_taxonomy_after_suite_reordering(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    for run_id, violated in (("beh-baseline", True), ("beh-governed", False)):
+        _make_split_run(results_root, "beh", run_id, "beh", [(violated, False)])
+
+    suite_dir = results_root / "beh"
+    versioned_path = suite_dir / "artifacts" / "systematize" / "v0001" / "taxonomy.json"
+    versioned_path.parent.mkdir(parents=True)
+    versioned_path.write_text(
+        json.dumps({
+            "behavior_categories": [
+                {"name": "must never", "permissible": False},
+                {"name": "allowed", "permissible": True},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    for run_id in ("beh-baseline", "beh-governed"):
+        _set_systematize_artifact(
+            suite_dir / run_id,
+            "artifacts/systematize/v0001/taxonomy.json",
+        )
+
+    (suite_dir / "taxonomy.json").write_text(
+        json.dumps({
+            "behavior_categories": [
+                {"name": "allowed", "permissible": True},
+                {"name": "must never", "permissible": False},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation_not_permissible"
+    assert payload["cells"]["beh"] == {
+        "baseline": 1.0,
+        "governed": 0.0,
+    }
+
+
+def test_matrix_uses_valid_node_name_over_stale_node_index(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    for run_id, violated in (("beh-baseline", True), ("beh-governed", False)):
+        _make_split_run(results_root, "beh", run_id, "beh", [(violated, False)])
+        scores_path = results_root / "beh" / run_id / "scores.jsonl"
+        row = _split_score_row(impermissible=violated, permissible=False)
+        row["verdict"]["node_judgments"][0]["node_index"] = 1
+        row["verdict"]["node_judgments"][1]["node_index"] = 0
+        _write_jsonl(scores_path, [row])
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation_not_permissible"
+    assert payload["cells"]["beh"]["baseline"] == 1.0
+
+
+def test_matrix_rejects_versioned_taxonomy_path_outside_suite(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    outside_taxonomy = results_root / "outside-taxonomy.json"
+    outside_taxonomy.parent.mkdir(parents=True)
+    outside_taxonomy.write_text(
+        json.dumps({
+            "behavior_categories": [
+                {"name": "must never", "permissible": False},
+                {"name": "allowed", "permissible": True},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    for run_id, violated in (("beh-baseline", True), ("beh-governed", False)):
+        _make_split_run(
+            results_root,
+            "beh",
+            run_id,
+            "beh",
+            [(violated, False)],
+            with_taxonomy=False,
+        )
+        _set_systematize_artifact(
+            results_root / "beh" / run_id,
+            "../outside-taxonomy.json",
+        )
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation"
+    assert payload["cells"]["beh"]["baseline"] == 1.0
 
 
 def test_matrix_split_cells_are_populated_not_dashes(tmp_path: Path) -> None:

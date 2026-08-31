@@ -222,18 +222,21 @@ def compute_policy_violation_by_permissibility(
                 if not isinstance(violated, bool):
                     continue
 
-                node_index = node.get("node_index")
-                if (
-                    isinstance(node_index, int)
-                    and not isinstance(node_index, bool)
-                    and node_index in permissible_by_index
-                ):
-                    permissible = permissible_by_index[node_index]
-                else:
-                    node_name = str(node.get("node_name") or "").strip()
+                raw_node_name = node.get("node_name")
+                node_name = raw_node_name.strip() if isinstance(raw_node_name, str) else ""
+                if node_name:
                     if node_name not in permissible_by_name:
                         continue
                     permissible = permissible_by_name[node_name]
+                else:
+                    node_index = node.get("node_index")
+                    if (
+                        not isinstance(node_index, int)
+                        or isinstance(node_index, bool)
+                        or node_index not in permissible_by_index
+                    ):
+                        continue
+                    permissible = permissible_by_index[node_index]
 
                 row_applicable[permissible] = True
                 row_violated[permissible] = row_violated[permissible] or violated

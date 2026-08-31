@@ -520,6 +520,37 @@ class ResultsCliTest(unittest.TestCase):
         self.assertEqual(permissible_result.exit_code, 0, permissible_result.output)
         self.assertIn("Run Comparison (metrics-suite, Permissible behavior violated)", permissible_result.output)
 
+    def test_compare_falls_back_to_union_when_impermissible_bucket_is_empty(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            results_root = Path(tmp_dir) / "results"
+            _write_split_results(results_root)
+            (results_root / "metrics-suite" / "taxonomy.json").write_text(
+                json.dumps({
+                    "behavior_categories": [
+                        {"name": "allowed", "permissible": True},
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            result = self.runner.invoke(
+                cli,
+                [
+                    "results",
+                    "compare",
+                    "metrics-suite",
+                    "run-1",
+                    "run-2",
+                    "--results-dir",
+                    str(results_root),
+                    "--no-color",
+                ],
+                terminal_width=180,
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Run Comparison (metrics-suite, Policy violation)", result.output)
+
     def test_compare_falls_back_when_any_run_lacks_current_split_data(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             results_root = Path(tmp_dir) / "results"

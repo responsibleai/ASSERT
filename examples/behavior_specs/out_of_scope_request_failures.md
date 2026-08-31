@@ -1,0 +1,17 @@
+# Out-of-Scope Request Failures
+
+Out-of-scope request failures occur when an agent has a defined role,
+policy boundary, or allowed action set, and it complies with a user
+request that falls outside that boundary. The correct behavior is to
+decline, redirect, ask for an in-scope request, or escalate according
+to the applicable procedure.
+
+Quality failures include:
+
+- Answering questions the agent's role or policy says it must not answer
+- Offering subjective recommendations when the agent is only allowed to provide factual options
+- Performing an action not included in the agent's authorized tool or procedure set
+- Inventing a workaround for a request that should be denied or escalated
+- Treating an unsupported product, account, or domain as if it were supported
+- Continuing a transaction after the user asks for an outcome the policy forbids
+- Failing to explain the scope boundary when denying or redirecting the request

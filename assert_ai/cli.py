@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import sys
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from rich.table import Table
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
 from assert_ai.results import (
@@ -344,6 +346,14 @@ def _print_acs_validation_totals(report: Any) -> None:
         f"(reacted, incl. warn); strongly blocked {report.strong_blocked}/{report.total} "
         f"(deny/escalate); handled_rate {_fmt_percent(report.handled_rate)}"
     )
+    if getattr(report, "annotator_dependent", False) and report.not_blocked > 0:
+        click.echo(
+            "  Note: this policy conditions on LLM annotators (input.annotations.*), "
+            "which offline validation does not populate — annotator rules cannot fire "
+            "here, so an unblocked/0-handled result for them is EXPECTED, not a policy "
+            "defect. Verify these gates via a guarded remeasure run (assert-ai run with "
+            "the governed config and check the violation-rate drop), not offline validate."
+        )
 
 
 def _enforce_acs_validation_gate(report: Any, *, fail_on_allow: bool, require_block: bool) -> None:
@@ -498,10 +508,7 @@ def _resolve_compare_metric(metric: str | None, run_summaries: Iterable[dict[str
         return metric
     summaries = list(run_summaries)
     if summaries and all(
-        has_permissibility_split_data(
-            run_summary.get("prompt_metrics") or {},
-            run_summary.get("scenario_metrics") or {},
-        )
+        _run_dimension_rate(run_summary, _POLICY_VIOLATION_NOT_PERMISSIBLE) is not None
         for run_summary in summaries
     ):
         return _POLICY_VIOLATION_NOT_PERMISSIBLE
@@ -668,8 +675,46 @@ def _compute_scenario_metrics(
     return metrics
 
 
-def _load_behavior_categories(suite_dir: Path) -> list[dict[str, Any]]:
-    taxonomy = load_json(suite_dir / "taxonomy.json")
+def _manifest_artifact_path(
+    suite_dir: Path,
+    manifest: dict[str, Any] | None,
+    stage_name: str,
+) -> tuple[bool, Path | None]:
+    """Resolve a run's versioned artifact path without leaving its suite."""
+    artifact_versions = manifest.get("artifact_versions") if isinstance(manifest, dict) else None
+    stage_ref = artifact_versions.get(stage_name) if isinstance(artifact_versions, dict) else None
+    if not isinstance(stage_ref, dict):
+        return False, None
+
+    raw_path = stage_ref.get("path") or stage_ref.get("relative_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return True, None
+
+    suite_root = suite_dir.resolve()
+    candidate = Path(raw_path)
+    try:
+        resolved = (candidate if candidate.is_absolute() else suite_dir / candidate).resolve()
+        resolved.relative_to(suite_root)
+    except (OSError, RuntimeError, ValueError):
+        return True, None
+    return True, resolved
+
+
+def _load_behavior_categories(
+    suite_dir: Path,
+    manifest: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    has_versioned_ref, versioned_path = _manifest_artifact_path(
+        suite_dir,
+        manifest,
+        "systematize",
+    )
+    if has_versioned_ref:
+        if versioned_path is None or not versioned_path.is_file():
+            return []
+        taxonomy = load_json(versioned_path)
+    else:
+        taxonomy = load_json(suite_dir / "taxonomy.json")
     behavior_categories = (taxonomy or {}).get("behavior_categories")
     if not isinstance(behavior_categories, list):
         return []
@@ -679,7 +724,7 @@ def _load_behavior_categories(suite_dir: Path) -> list[dict[str, Any]]:
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    behavior_categories = _load_behavior_categories(run_dir.parent)
+    behavior_categories = _load_behavior_categories(run_dir.parent, manifest)
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -702,6 +747,7 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "ended_at": (manifest or {}).get("ended_at"),
         "prompt_metrics": _compute_prompt_metrics(prompt_rows, behavior_categories),
         "scenario_metrics": _compute_scenario_metrics(scenario_rows, behavior_categories),
+        "behavior_categories": behavior_categories,
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }
@@ -973,7 +1019,7 @@ def _behavior_category_metric_map(
         "  assert-ai results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"
     ),
 )
-@click.version_option(version="0.1.0", prog_name="assert-ai")
+@click.version_option(package_name="assert-ai", prog_name="assert-ai")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -1484,16 +1530,15 @@ def _run_within_suite_compare(
 
     behavior_category_deltas: list[dict[str, Any]] = []
     if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
-        behavior_categories = _load_behavior_categories(suite_dir)
         first_map = _behavior_category_metric_map(
             run_summaries[0]["prompt_rows"],
             metric,
-            behavior_categories,
+            run_summaries[0].get("behavior_categories") or [],
         )
         last_map = _behavior_category_metric_map(
             run_summaries[-1]["prompt_rows"],
             metric,
-            behavior_categories,
+            run_summaries[-1].get("behavior_categories") or [],
         )
         for behavior_category in sorted(set(first_map) | set(last_map)):
             first = first_map.get(behavior_category)
@@ -1702,16 +1747,12 @@ def results_matrix(
         loaded.append((behavior, arm, matrix_summary))
 
     split_by_run = [
-        any(
-            _run_dimension_rate(run_summary, split_metric) is not None
-            for split_metric in _DERIVED_PERMISSIBILITY_RATE_KEYS
-        )
+        _run_dimension_rate(run_summary, _MATRIX_SPLIT_METRIC) is not None
         for run_summary in run_summaries
     ]
 
-    # Requiring every run to have usable split data keeps the matrix from mixing
-    # an impermissible-only rate with the legacy union. Split-shaped summaries
-    # whose taxonomy no longer matches their judgments do not count as usable.
+    # Require the exact default bucket to have a denominator in every run.
+    # A populated permissible bucket does not make the impermissible rate usable.
     if metric is None:
         metric = (
             _MATRIX_SPLIT_METRIC
@@ -1969,6 +2010,18 @@ def acs():
 
     Runtime guarding is available from Python via the ``guard_target(...)`` API.
     """
+    # `acs generate` makes provider LLM calls for policy authoring, but the ACS
+    # subcommands do not import the runner, so the project `.env` is never
+    # loaded and Azure credentials go unresolved (the `run` pipeline loads them
+    # in runner.py). Load `.env` walking up from cwd and resolve the Azure auth
+    # mode here so `assert-ai acs …` picks up credentials exactly like
+    # `assert-ai run`, with no manual environment export.
+    from dotenv import find_dotenv, load_dotenv
+
+    from assert_ai.core.azure_auth import refresh_azure_auth_mode
+
+    load_dotenv(find_dotenv(usecwd=True))
+    refresh_azure_auth_mode(force=True)
 
 
 @acs.command("generate", short_help="Generate a deployable ACS policy from an ASSERT run")
@@ -2245,7 +2298,10 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
-@cli.group(cls=SuggestingGroup, short_help="Browse built-in behavior and judge presets")
+@cli.group(
+    cls=SuggestingGroup,
+    short_help="Browse built-in behavior, scenario, and judge presets",
+)
 def library():
     """Discover and inspect the built-in preset library."""
 
@@ -2253,7 +2309,7 @@ def library():
 @library.command("list", short_help="List available presets")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Filter by preset kind.",
 )
@@ -2288,27 +2344,29 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.argument("name")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Preset kind (auto-detected if omitted).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit raw YAML content as JSON.")
 def library_show(name: str, kind: str | None, as_json: bool):
     """Show the full content of a preset by name."""
-    from assert_ai.library.loader import VALID_KINDS, load_preset
+    from assert_ai.library.loader import discover, load_preset
 
     # Auto-detect kind if not specified
     if kind is None:
-        for k in sorted(VALID_KINDS):
-            try:
-                data = load_preset(k, name)
-                kind = k
-                break
-            except ValueError:
-                continue
-        else:
+        matches = [entry["kind"] for entry in discover() if entry["name"] == name]
+        if not matches:
             _error(f"Preset {name!r} not found in any kind. Use --kind to be explicit.")
             return  # unreachable but satisfies type checker
+        if len(matches) > 1:
+            _error(
+                f"Preset {name!r} exists in multiple kinds: {', '.join(matches)}. "
+                "Use --kind to be explicit."
+            )
+            return  # unreachable but satisfies type checker
+        kind = matches[0]
+        data = load_preset(kind, name)
     else:
         data = load_preset(kind, name)
 
@@ -2316,7 +2374,29 @@ def library_show(name: str, kind: str | None, as_json: bool):
         _echo_json(data)
         return
 
-    click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+    _write_stdout_utf8(dump_yaml(data))
+
+
+def _write_stdout_utf8(payload: str) -> None:
+    """Write ``payload`` to stdout as UTF-8 bytes.
+
+    ``click.echo`` re-encodes the payload with ``sys.stdout.encoding``, which
+    on Windows defaults to the ANSI code page (usually cp1252) for redirected
+    stdout. Non-ASCII characters like ``日本語`` then raise
+    ``UnicodeEncodeError``. Writing bytes directly through ``sys.stdout.buffer``
+    bypasses that re-encoding so a preset's on-disk YAML matches what
+    ``assert-ai init`` writes on any platform.
+
+    Falls back to ``click.echo`` when ``sys.stdout`` has no ``buffer`` (for
+    example under ``pytest``'s ``capsys`` fixture, which wraps stdout in a
+    ``TextIO`` without a binary layer).
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        click.echo(payload, nl=False)
+        return
+    buffer.write(payload.encode("utf-8"))
+    buffer.flush()
 
 
 if __name__ == "__main__":

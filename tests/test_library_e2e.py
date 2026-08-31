@@ -4,7 +4,7 @@
 """End-to-end tests for the preset library feature.
 
 Covers:
-- YAML schema validation for all 32 preset files
+- YAML schema validation for every preset file
 - CLI ``library list`` and ``library show`` commands
 - Config.py round-trip for every behavior and judge preset
 - Override / merge semantics (inline values override preset values)
@@ -43,8 +43,13 @@ ALL_JUDGE_NAMES = sorted(
     p.stem for p in (LIBRARY_ROOT / "judges").glob("*.yaml")
 )
 
+ALL_SCENARIO_NAMES = sorted(
+    p.stem for p in (LIBRARY_ROOT / "scenarios").glob("*.yaml")
+)
+
 BEHAVIOR_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description"}
 JUDGE_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description", "dimensions"}
+SCENARIO_REQUIRED_KEYS = {"kind", "name", "version", "tags", "context", "behaviors"}
 
 
 def _base_config(**overrides):
@@ -172,6 +177,37 @@ class JudgeYamlSchemaTest(unittest.TestCase):
                     self.assertIsInstance(tag, str)
 
 
+class ScenarioYamlSchemaTest(unittest.TestCase):
+    """Validate scenario YAML files stay context-only and behavior-linked."""
+
+    def test_all_scenario_files_have_required_keys(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                for key in SCENARIO_REQUIRED_KEYS:
+                    self.assertIn(key, data, f"scenario {name!r} missing key {key!r}")
+
+    def test_scenarios_are_context_not_behavior_specs(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                self.assertEqual(data["kind"], "scenario")
+                self.assertNotIn("description", data)
+                self.assertIsInstance(data["context"], str)
+                self.assertGreater(len(data["context"].strip()), 0)
+
+    def test_scenario_behavior_references_exist(self):
+        behavior_names = set(ALL_BEHAVIOR_NAMES)
+        for name in ALL_SCENARIO_NAMES:
+            data = load_preset("scenario", name)
+            self.assertIsInstance(data["behaviors"], list)
+            self.assertGreater(len(data["behaviors"]), 0)
+            for behavior in data["behaviors"]:
+                with self.subTest(scenario=name, behavior=behavior):
+                    self.assertIsInstance(behavior, str)
+                    self.assertIn(behavior, behavior_names)
+
+
 # ===================================================================
 # 2. CLI ``library list`` — table & JSON output, kind filtering, counts
 # ===================================================================
@@ -188,7 +224,7 @@ class CliLibraryListTest(unittest.TestCase):
 
     def test_list_all_presets_shows_every_name(self):
         result = self.runner.invoke(cli, ["library", "list", "--no-color"])
-        for name in ALL_BEHAVIOR_NAMES + ALL_JUDGE_NAMES:
+        for name in ALL_BEHAVIOR_NAMES + ALL_JUDGE_NAMES + ALL_SCENARIO_NAMES:
             with self.subTest(name=name):
                 self.assertIn(name, result.output)
 
@@ -198,7 +234,9 @@ class CliLibraryListTest(unittest.TestCase):
         # Table should contain no judge_preset kind rows
         self.assertNotIn("judge_preset", result.output)
         # Should contain at least some behavior names
-        self.assertIn("travel_planner", result.output)
+        self.assertIn("prompt_injection", result.output)
+        # travel_planner is a scenario now, not an atomic behavior
+        self.assertNotIn("travel_planner", result.output)
 
     def test_list_filter_judge_only(self):
         result = self.runner.invoke(cli, ["library", "list", "--kind", "judge_preset"])
@@ -217,7 +255,7 @@ class CliLibraryListTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         data = json.loads(result.output)
         self.assertIsInstance(data, list)
-        self.assertEqual(len(data), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES))
+        self.assertEqual(len(data), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES) + len(ALL_SCENARIO_NAMES))
 
     def test_list_json_entries_have_required_keys(self):
         result = self.runner.invoke(cli, ["library", "list", "--json"])
@@ -240,6 +278,12 @@ class CliLibraryListTest(unittest.TestCase):
         self.assertEqual(len(data), len(ALL_JUDGE_NAMES))
         self.assertTrue(all(e["kind"] == "judge_preset" for e in data))
 
+    def test_list_json_filter_scenario(self):
+        result = self.runner.invoke(cli, ["library", "list", "--json", "--kind", "scenario"])
+        data = json.loads(result.output)
+        self.assertEqual(len(data), len(ALL_SCENARIO_NAMES))
+        self.assertTrue(all(e["kind"] == "scenario" for e in data))
+
 
 # ===================================================================
 # 3. CLI ``library show`` — detail view, auto-detect kind, JSON output
@@ -252,10 +296,24 @@ class CliLibraryShowTest(unittest.TestCase):
         self.runner = CliRunner()
 
     def test_show_behavior_by_name(self):
-        result = self.runner.invoke(cli, ["library", "show", "travel_planner"])
+        result = self.runner.invoke(cli, ["library", "show", "prompt_injection"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("prompt_injection", result.output)
+        self.assertIn("kind: behavior", result.output)
+
+    def test_show_scenario_by_name(self):
+        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--kind", "scenario"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("travel_planner", result.output)
-        self.assertIn("kind: behavior", result.output)
+        self.assertIn("kind: scenario", result.output)
+
+    def test_show_scenario_auto_detects_real_kind(self):
+        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--json"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        data = json.loads(result.output)
+        self.assertEqual(data["kind"], "scenario")
+        self.assertIn("context", data)
+        self.assertNotIn("description", data)
 
     def test_show_judge_by_name(self):
         result = self.runner.invoke(cli, ["library", "show", "safety-core"])
@@ -264,9 +322,10 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertIn("kind: judge_preset", result.output)
 
     def test_show_with_explicit_kind_behavior(self):
-        result = self.runner.invoke(
-            cli, ["library", "show", "travel_planner", "--kind", "behavior"]
-        )
+        with self.assertWarns(FutureWarning):
+            result = self.runner.invoke(
+                cli, ["library", "show", "travel_planner", "--kind", "behavior"]
+            )
         self.assertEqual(result.exit_code, 0)
 
     def test_show_with_explicit_kind_judge(self):
@@ -276,7 +335,7 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
 
     def test_show_wrong_kind_fails(self):
-        # travel_planner is a behavior, not a judge_preset
+        # travel_planner is a scenario, not a judge_preset
         result = self.runner.invoke(
             cli, ["library", "show", "travel_planner", "--kind", "judge_preset"]
         )
@@ -287,11 +346,11 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
 
     def test_show_json_output_behavior(self):
-        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--json"])
+        result = self.runner.invoke(cli, ["library", "show", "prompt_injection", "--json"])
         self.assertEqual(result.exit_code, 0)
         data = json.loads(result.output)
         self.assertEqual(data["kind"], "behavior")
-        self.assertEqual(data["name"], "travel_planner")
+        self.assertEqual(data["name"], "prompt_injection")
         self.assertIn("description", data)
 
     def test_show_json_output_judge(self):
@@ -334,10 +393,16 @@ class ConfigBehaviorPresetRoundTripTest(unittest.TestCase):
 
     def test_preset_populates_description_from_yaml(self):
         # Verify the description comes from the YAML file, not empty
-        preset_data = load_preset("behavior", "travel_planner")
-        ctx = _load_ctx(behavior_dict={"preset": "travel_planner"})
+        preset_data = load_preset("behavior", "prompt_injection")
+        ctx = _load_ctx(behavior_dict={"preset": "prompt_injection"})
         # Config may strip trailing whitespace from YAML block scalars
         self.assertEqual(ctx["behavior"].strip(), preset_data["description"].strip())
+
+    def test_moved_scenario_alias_still_loads_with_warning(self):
+        with self.assertWarns(FutureWarning):
+            ctx = _load_ctx(behavior_dict={"preset": "travel_planner"})
+        self.assertEqual(ctx["behavior_name"], "travel_planner")
+        self.assertGreater(len(ctx["behavior"]), 0)
 
 
 # ===================================================================
@@ -386,12 +451,12 @@ class OverrideSemanticsTest(unittest.TestCase):
     """Inline values override preset values (last-write-wins)."""
 
     def test_inline_name_overrides_behavior_preset(self):
-        ctx = _load_ctx(behavior_dict={"preset": "travel_planner", "name": "custom_name"})
+        ctx = _load_ctx(behavior_dict={"preset": "prompt_injection", "name": "custom_name"})
         self.assertEqual(ctx["behavior_name"], "custom_name")
 
     def test_inline_description_overrides_behavior_preset(self):
         ctx = _load_ctx(
-            behavior_dict={"preset": "travel_planner", "description": "Custom description."}
+            behavior_dict={"preset": "prompt_injection", "description": "Custom description."}
         )
         self.assertEqual(ctx["behavior"], "Custom description.")
 
@@ -611,7 +676,10 @@ class DiscoverCompletenessTest(unittest.TestCase):
 
     def test_discover_all_count(self):
         results = discover()
-        self.assertEqual(len(results), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES))
+        self.assertEqual(
+            len(results),
+            len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES) + len(ALL_SCENARIO_NAMES),
+        )
 
 
 # ===================================================================
@@ -622,9 +690,13 @@ class ExampleConfigTest(unittest.TestCase):
     """The example eval_config.yaml that uses presets loads correctly."""
 
     def test_example_travel_planner_config_loads(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
@@ -635,9 +707,13 @@ class ExampleConfigTest(unittest.TestCase):
         self.assertIn("overrefusal", dim_names)
 
     def test_example_config_inline_overrides_preset(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
