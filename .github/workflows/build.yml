@@ -10,10 +10,7 @@ on:
       - 'uv.lock'
       - 'pytest.ini'
       - 'README.md'
-      - 'examples/**/requirements.txt'
-      - 'examples/**/agent.py'
-      - 'examples/**/auto_trace.py'
-      - 'examples/**/tests/**'
+      - 'examples/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   pull_request:
@@ -25,10 +22,7 @@ on:
       - 'uv.lock'
       - 'pytest.ini'
       - 'README.md'
-      - 'examples/**/requirements.txt'
-      - 'examples/**/agent.py'
-      - 'examples/**/auto_trace.py'
-      - 'examples/**/tests/**'
+      - 'examples/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -120,6 +114,14 @@ jobs:
             assert_extras: phoenix
             requirements: examples/phoenix_auto_trace/requirements.txt
             import: examples.phoenix_auto_trace.travel_openai
+          - example: phoenix-auto-trace-langgraph
+            assert_extras: phoenix
+            requirements: examples/phoenix_auto_trace/requirements-langgraph.txt
+            import: examples.phoenix_auto_trace.travel_langgraph
+          - example: science-research-agent
+            assert_extras: ''
+            requirements: examples/science_research_agent/requirements.txt
+            import: examples.science_research_agent.tools
           - example: bank-manager-agent-control
             assert_extras: acs
             requirements: examples/bank_manager_agent_control/requirements.txt
@@ -149,6 +151,8 @@ jobs:
         working-directory: source
         env:
           OPENAI_API_KEY: test-key
+          AZURE_API_KEY: test-key
+          AZURE_API_BASE: https://example.openai.azure.com/
           PHOENIX_DISABLE_AUTO_INSTRUMENT: '1'
         run: python -c "import ${{ matrix.import }}"
       - name: Test Bank Manager model routing
@@ -157,6 +161,10 @@ jobs:
         env:
           PYTHONPATH: examples/bank_manager_agent_control/tests
         run: python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+      - name: Test Science Research Agent tools
+        if: matrix.example == 'science-research-agent'
+        working-directory: source
+        run: python -m unittest discover -s examples/science_research_agent/tests -p 'test_tools.py' -v
 
   test-foundry-host-install:
     name: "Example install: langgraph-foundry-hosted server"

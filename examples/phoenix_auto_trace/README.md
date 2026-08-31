@@ -104,6 +104,8 @@ The `evals/` folder contains exactly two independently runnable behavior configs
 for the auto-instrumented LangGraph target:
 
 ```bash
+python -m pip install -r examples/phoenix_auto_trace/requirements-langgraph.txt
+
 assert-ai run --config examples/phoenix_auto_trace/evals/fabricated_travel_details.yaml
 assert-ai run --config examples/phoenix_auto_trace/evals/budget_overrun.yaml
 ```
