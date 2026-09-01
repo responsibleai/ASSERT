@@ -11,6 +11,44 @@ import click
 log = logging.getLogger(__name__)
 
 
+def _confirm_web_search(console, non_interactive: bool) -> bool:
+    """Disclose the external search and get consent. Returns the final setting.
+
+    Live research is on by default because the methodology's value is grounding
+    dimensions in real literature rather than recall. That default still sends
+    terms derived from the user's product description to a third-party search
+    provider, which the user cannot consent to without being told.
+
+    Passing ``--web-search`` explicitly is itself the affirmative act, so it is
+    only disclosed. When the flag was merely defaulted on, an interactive run
+    asks. A non-interactive run cannot ask, so it discloses and proceeds; the
+    caller can set ``--no-web-search`` to opt out.
+    """
+
+    explicit = False
+    try:
+        ctx = click.get_current_context()
+        source = ctx.get_parameter_source("web_search")
+        explicit = source is not None and source.name != "DEFAULT"
+    except RuntimeError:
+        pass
+
+    console.print(
+        "[dim]Live web research is enabled. Search terms derived from your "
+        "description are sent to an external search provider (OpenAI/Azure "
+        "web_search), and retrieved pages are read to ground the config. "
+        "Use --no-web-search to disable.[/dim]"
+    )
+
+    if explicit or non_interactive:
+        return True
+
+    if not click.confirm("Continue with live web research?", default=True):
+        console.print("[dim]Continuing without live web research.[/dim]")
+        return False
+    return True
+
+
 @click.command(short_help="Design an eval config with an LLM assistant")
 @click.option(
     "--output", "-o",
@@ -223,6 +261,9 @@ def init(
             "unavailable. Continuing without live web research."
         )
         effective_web_search = False
+
+    if effective_web_search:
+        effective_web_search = _confirm_web_search(console, non_interactive)
 
     # Load seed config if provided
     seed_yaml: str | None = None
