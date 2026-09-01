@@ -22,7 +22,7 @@ questions about Azure AI Foundry documentation. It showcases:
 | `docs/` | The fictional public + internal document corpus the agent retrieves from. |
 | `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `IMPROVEMENT_JOURNEY.md` | The eval-driven-development log — what each round of failures changed in the agent. |
-| `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT installs the instrumentors itself when `target.trace` is set. |
+| `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT activates the instrumentors installed by this example's requirements when `target.trace` is set. |
 | `README.md` | This file. |
 
 ## Architecture
@@ -59,7 +59,8 @@ Each risk gets its own suite under `evals/`, so the two are measured independent
 
 ```bash
 # From the repo root
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e .
+python -m pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)

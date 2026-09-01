@@ -48,8 +48,11 @@ class _Client:
         return _Response(self.payload)
 
 
-async def _run(payload):
-    session = HTTPEndpointSession(endpoint="http://localhost:8080/chat")
+async def _run(payload, *, case_id=None):
+    session = HTTPEndpointSession(
+        endpoint="http://localhost:8080/chat",
+        case_id=case_id,
+    )
     client = _Client(payload)
     setattr(session, "_aiohttp", aiohttp)
     setattr(session, "_session", client)
@@ -116,6 +119,21 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
         "history": [{"role": "user", "content": "restore the line"}],
     }
     assert client.post_allow_redirects == [False]
+
+
+def test_endpoint_includes_case_id_only_when_configured():
+    _, ordinary = asyncio.run(_run({"response": "ok"}))
+    _, correlated = asyncio.run(_run({"response": "ok"}, case_id="case-007"))
+
+    assert ordinary.posts[0][1] == {
+        "message": "restore the line",
+        "history": [{"role": "user", "content": "restore the line"}],
+    }
+    assert correlated.posts[0][1] == {
+        "message": "restore the line",
+        "history": [{"role": "user", "content": "restore the line"}],
+        "case_id": "case-007",
+    }
 
 
 def test_endpoint_does_not_duplicate_final_assistant_event():

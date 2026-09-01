@@ -21,7 +21,7 @@ Mock tools are defined inline in `agent.py`, so there is no separate `tools.py`.
 generated test case
       |
       v
-assert-ai inference loop  (installs OTel instrumentors)
+assert-ai inference loop  (activates installed OTel instrumentors)
       |
       v
 chat(message)
@@ -109,7 +109,8 @@ From the repo root:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 phoenix serve  # optional trace UI

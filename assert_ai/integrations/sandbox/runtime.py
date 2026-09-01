@@ -488,6 +488,7 @@ class ContainerSpec:
     cpus: float = 1.0
     pids_limit: int = 256
     user: str = "65534:65534"
+    case_id: str | None = None
 
 
 _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
@@ -495,6 +496,7 @@ _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
     "ACTION_MEDIATION_MOCKS",
     "ACTION_MEDIATION_CASSETTES",
     "ACTION_MEDIATION_LEDGER",
+    "ASSERT_SANDBOX_CASE_ID",
     "ASSERT_SANDBOX_OUTPUT",
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -785,6 +787,8 @@ def start_container(
             "-e",
             f"https_proxy=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
         ]
+        if spec.case_id:
+            args += ["-e", f"ASSERT_SANDBOX_CASE_ID={spec.case_id}"]
         if cassette_dir is not None:
             args += [
                 "-v", f"{cassette_dir.resolve()}:/sandbox/cassettes:ro",
@@ -858,7 +862,7 @@ def start_container(
         raise
 
 
-def egress_event(row: dict[str, Any]) -> dict[str, Any]:
+def egress_event(row: dict[str, Any], *, case_id: str | None = None) -> dict[str, Any]:
     evidence = {
         "channel": "egress",
         "ts": row.get("ts"),
@@ -868,6 +872,8 @@ def egress_event(row: dict[str, Any]) -> dict[str, Any]:
         "path": str(row.get("path") or ""),
         "decision": str(row.get("decision") or ""),
     }
+    if case_id:
+        evidence["case_id"] = case_id
     return {
         "role": "tool_result",
         "tool_name": "network_egress",

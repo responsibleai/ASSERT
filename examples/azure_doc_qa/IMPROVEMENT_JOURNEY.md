@@ -430,7 +430,8 @@ resistance in multi-step conversations).
 ```bash
 # Install
 cd /path/to/ASSERT
-pip install -e ".[otel,langgraph]"
+pip install -e .
+pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
 # Run eval (one config per risk; this is the grounding suite)

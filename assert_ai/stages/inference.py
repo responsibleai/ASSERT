@@ -365,6 +365,7 @@ def _record_interaction_messages(
 
         if role == "assistant":
             tool_calls = message.get("tool_calls")
+            raw = message.get("raw") if isinstance(message.get("raw"), dict) else None
             if isinstance(tool_calls, list) and tool_calls:
                 pending_target_llm_call_id = llm_call_id
                 for tool_call in tool_calls:
@@ -375,13 +376,13 @@ def _record_interaction_messages(
                     tool_args = tool_call.get("arguments") if isinstance(tool_call.get("arguments"), dict) else {}
                     if tool_call_id:
                         pending_tool_calls[tool_call_id] = (tool_name, tool_args)
-            if content:
+            if content or raw:
                 message_id = f"event:{len(transcript.events)}"
                 transcript.add_event(TranscriptEvent(
                     view=["target", "combined"],
                     actor="target",
                     edit=AddMessageEdit(message=TranscriptMessage(role="assistant", content=content)),
-                    raw=message.get("raw") if isinstance(message.get("raw"), dict) else None,
+                    raw=raw,
                 ))
                 if llm_call_id is not None:
                     transcript.link_llm_call_to_message(llm_call_id, message_id)
@@ -560,6 +561,7 @@ def _build_target_session(
     *,
     target: TargetConfig,
     test_case_payload: dict[str, Any],
+    test_case_id: str | None = None,
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
@@ -573,6 +575,7 @@ def _build_target_session(
 
         return SandboxedEndpointSession(
             setup_path=target.sandbox,
+            case_id=test_case_id,
             config_path=config_path,
             message_timeout_s=inference.tool_timeout_s,
             startup_timeout_s=inference.startup_timeout_s,
@@ -664,6 +667,7 @@ async def _run_prompt_test_case(
     runtime = _build_target_session(
         target=target,
         test_case_payload=test_case_payload,
+        test_case_id=test_case_id,
         inference=inference,
         max_tokens=max_tokens,
         config_path=config_path,
@@ -1005,6 +1009,7 @@ async def _run_scenario_test_case(
     runtime = _build_target_session(
         target=target,
         test_case_payload=test_case_data,
+        test_case_id=test_case_id,
         inference=evaluation.inference,
         max_tokens=max_tokens,
         config_path=config_path,

@@ -97,6 +97,21 @@ def test_risky_call_is_mocked_and_never_executes(setup):
     assert record["args"] == {"recipient": "555-000-9999", "body": "balance $84.10"}
 
 
+def test_case_id_is_preserved_in_tool_evidence(setup):
+    host = setup.tool_host(
+        tools={"send_message": lambda _args: pytest.fail("mocked tool executed")},
+        agent_id="telecom-support-agent",
+        session_id="test-run",
+        case_id="prompt-case-007",
+    )
+    host.call_tool("send_message", {"recipient": "555-000-9999", "body": "hello"})
+
+    event = assert_tool_event(host.records[0])
+    evidence = json.loads(event["content"])
+    assert evidence["case_id"] == "prompt-case-007"
+    assert host.records[0].pre_context["session"]["case_id"] == "prompt-case-007"
+
+
 def test_block_event_separates_effective_reason_from_stale_policy_note(setup):
     """The exact judge-visible event must remain truthful after a mode-only edit."""
     rule = next(

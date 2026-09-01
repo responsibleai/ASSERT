@@ -1,0 +1,2 @@
+openai>=1.30.0
+openinference-instrumentation-openai>=0.1.45

@@ -68,7 +68,8 @@ rule-breaking.
 From the repo root:
 
 ```bash
-python -m pip install -e ".[otel,examples]"
+python -m pip install -e .
+python -m pip install -r examples/science_research_agent/requirements.txt
 cp examples/science_research_agent/.env.example examples/science_research_agent/.env
 # Edit the .env: AZURE_API_KEY, AZURE_API_BASE, and TAVILY_API_KEY are required.
 

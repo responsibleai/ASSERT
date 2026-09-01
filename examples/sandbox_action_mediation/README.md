@@ -12,6 +12,30 @@ Two files answer separate questions:
 Mock content cannot change an enforcement decision. It is consulted only after
 policy has selected `mock`.
 
+An optional `case_id:` on a mock rule binds that response to one ASSERT test
+case (prefix/suffix `*` globs are supported). ASSERT propagates the stable test
+case ID into the container, mediation context, scenario state, evidence, and the
+JSON request sent to an already-running sandbox endpoint. A sandbox endpoint
+receives `{"message": ..., "history": [...], "case_id": "..."}`; ordinary
+`target.endpoint` requests retain the existing message/history shape. Two cases
+with identical tool arguments can therefore exercise different outcomes.
+
+Case precedence is explicit: exact case ID, then a matching case glob, then a
+rule with no case binding. Within each tier, the existing
+most-specific-first-then-file-order rules still apply. So a case-bound rule
+matching any arguments *will* outrank a generic rule matching two exact arguments —
+that is deliberate, since the whole point is letting one case diverge from
+otherwise-identical traffic. Keep it in mind when adding a broad `case_id:`
+rule to a file that already has narrow argument rules for the same tool.
+
+To see which rule a given case actually selects, pass the case ID to the
+diagnostic; without it, case-bound rules cannot match:
+
+```bash
+python -m assert_ai.integrations.sandbox.cli resolve assert-setup.yaml \
+    charge_card --args '{"amount": 500}' --case-id case-a
+```
+
 ## Target choices
 
 `pipeline.inference.target.sandbox` points to one setup file. The setup supports:

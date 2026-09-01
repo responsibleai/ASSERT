@@ -16,16 +16,19 @@ calls the policy already decided to mock, and can never change that decision.
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Lock
 
 import pytest
 
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
 from assert_ai.integrations.sandbox.cassettes import CassettePathError
+from assert_ai.integrations.sandbox.evidence import assert_tool_event
 from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 from assert_ai.integrations.sandbox.mediator import ActionMediator
 from assert_ai.integrations.sandbox.mocks import (
+    InlineBackend,
     MockBackendError,
     MockCall,
     MockConfigError,
@@ -35,6 +38,7 @@ from assert_ai.integrations.sandbox.mocks import (
 from assert_ai.integrations.sandbox.mocks.matching import MatcherError, match_value
 from assert_ai.integrations.sandbox.policy import MediationPolicy
 from assert_ai.integrations.sandbox.records import MediationDecision
+from assert_ai.integrations.sandbox.tool_host import AgentHooksToolHost
 
 
 def _pre(name, args=None):
@@ -112,6 +116,110 @@ def test_most_specific_rule_wins_regardless_of_file_order():
     assert unverified is not None and unverified.value["id"] == "unverified"
     on_file = library.resolve(MockCall("send_message", {"recipient": "555-123-2002"}))
     assert on_file is not None and on_file.value["id"] == "fallback"
+
+
+def test_case_id_selects_different_mock_for_identical_tool_arguments():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "charge_card", "case_id": "case-success", "response": {"status": "paid"}},
+            {"tool": "charge_card", "case_id": "case-failure", "error": {"code": "DECLINED"}},
+        ]
+    })
+    args = {"amount": 25, "card": "same-token"}
+
+    success = library.resolve(MockCall("charge_card", args, case_id="case-success"))
+    failure = library.resolve(MockCall("charge_card", args, case_id="case-failure"))
+
+    assert success is not None and success.value == {"status": "paid"}
+    assert failure is not None and failure.value == {"code": "DECLINED"}
+    assert failure.is_error is True
+
+
+def test_case_id_selector_must_be_a_non_empty_string():
+    with pytest.raises(MockConfigError, match="case_id must be a non-empty string"):
+        MockLibrary.from_dict({"mocks": [{"tool": "charge_card", "case_id": 7}]})
+
+
+def test_case_specific_rule_beats_a_more_argument_specific_generic_rule():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "when": {"amount": 25, "card": "same-token"},
+                "response": {"picked": "generic-args"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-failure",
+                "response": {"picked": "case"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall(
+        "charge_card",
+        {"amount": 25, "card": "same-token"},
+        case_id="case-failure",
+    ))
+
+    assert resolved is not None and resolved.value == {"picked": "case"}
+
+
+def test_exact_case_rule_beats_matching_case_glob_regardless_of_file_order():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "case_id": "case-*",
+                "response": {"picked": "glob"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-007",
+                "response": {"picked": "exact"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {}, case_id="case-007"))
+
+    assert resolved is not None and resolved.value == {"picked": "exact"}
+
+
+def test_case_glob_beats_generic_rule_regardless_of_argument_specificity():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "when": {"amount": 25},
+                "response": {"picked": "generic"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-*",
+                "response": {"picked": "glob"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {"amount": 25}, case_id="case-007"))
+
+    assert resolved is not None and resolved.value == {"picked": "glob"}
+
+
+@pytest.mark.parametrize("case_selector", ["case-*", "*"])
+@pytest.mark.parametrize("call_case_id", [None, ""])
+def test_case_bound_rules_do_not_match_an_uncorrelated_call(case_selector, call_case_id):
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "charge_card", "case_id": case_selector, "response": {"picked": "case"}},
+            {"tool": "charge_card", "response": {"picked": "generic"}},
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {}, case_id=call_case_id))
+
+    assert resolved is not None and resolved.value == {"picked": "generic"}
 
 
 @pytest.mark.parametrize(
@@ -221,6 +329,54 @@ def test_concurrent_hosts_each_start_at_the_first_scenario_step():
     assert statuses == ["resumed", "resumed"]
 
 
+def test_one_library_serializes_parallel_scenario_resolution():
+    class TrackingScenarioBackend(ScenarioBackend):
+        def __init__(self):
+            super().__init__()
+            self._activity_lock = Lock()
+            self._active = 0
+            self.overlapped = False
+
+        def resolve(self, rule, call):
+            with self._activity_lock:
+                self._active += 1
+                self.overlapped = self.overlapped or self._active > 1
+            try:
+                time.sleep(0.02)
+                return super().resolve(rule, call)
+            finally:
+                with self._activity_lock:
+                    self._active -= 1
+
+    backend = TrackingScenarioBackend()
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [{
+                "tool": "retry",
+                "scenario": "payment",
+                "responses": [
+                    {"response": {"step": 0}},
+                    {"response": {"step": 1}},
+                ],
+            }]
+        },
+        backends={"scenario": backend},
+    )
+    barrier = Barrier(2)
+
+    def resolve_once(_index):
+        barrier.wait()
+        result = library.resolve(MockCall("retry", {}, case_id="case-a"))
+        assert result is not None
+        return result.value["step"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        steps = sorted(executor.map(resolve_once, range(2)))
+
+    assert steps == [0, 1]
+    assert backend.overlapped is False
+
+
 def test_later_read_reflects_a_mocked_write():
     """If a state-changing call is mocked, a later read must agree with it."""
     library = MockLibrary.from_dict({
@@ -242,6 +398,227 @@ def test_later_read_reflects_a_mocked_write():
     after = library.resolve(MockCall("get_line_status", {"line_id": "L1002"}))
     assert after is not None
     assert after.value["suspended"] is False, "a read after a mocked write must see the write"
+
+
+def test_scenario_state_is_partitioned_by_case_id():
+    library = MockLibrary.from_dict({
+        "mocks": [{
+            "tool": "retry_payment",
+            "scenario": "payment",
+            "responses": [
+                {"error": {"code": "TIMEOUT"}},
+                {"response": {"status": "paid"}},
+            ],
+        }]
+    })
+
+    first_a = library.resolve(MockCall("retry_payment", {}, case_id="case-a"))
+    second_a = library.resolve(MockCall("retry_payment", {}, case_id="case-a"))
+    first_b = library.resolve(MockCall("retry_payment", {}, case_id="case-b"))
+
+    assert first_a is not None and first_a.value == {"code": "TIMEOUT"}
+    assert second_a is not None and second_a.value == {"status": "paid"}
+    assert first_b is not None and first_b.value == {"code": "TIMEOUT"}
+
+
+def test_scenario_state_transitions_are_partitioned_by_case_id():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "payment_status",
+                "scenario": "payment",
+                "when_state": "paid",
+                "response": {"status": "paid"},
+            },
+            {"tool": "payment_status", "response": {"status": "pending"}},
+            {
+                "tool": "authorize_payment",
+                "scenario": "payment",
+                "response": {"status": "authorized"},
+                "sets_state": "paid",
+            },
+        ]
+    })
+
+    authorized = library.resolve(MockCall("authorize_payment", {}, case_id="case-a"))
+    status_a = library.resolve(MockCall("payment_status", {}, case_id="case-a"))
+    status_b = library.resolve(MockCall("payment_status", {}, case_id="case-b"))
+
+    assert authorized is not None and authorized.value == {"status": "authorized"}
+    assert status_a is not None and status_a.value == {"status": "paid"}
+    assert status_b is not None and status_b.value == {"status": "pending"}
+
+
+def test_legacy_scenario_backend_state_match_override_still_works():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def matches_state(self, rule):
+            return True
+
+    library = MockLibrary.from_dict(
+        {"mocks": [{"tool": "lookup", "scenario": "legacy", "response": {"ok": True}}]},
+        backends={"scenario": LegacyScenarioBackend()},
+    )
+
+    resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
+
+    assert resolved is not None and resolved.value == {"ok": True}
+
+
+def test_legacy_scenario_backend_current_state_override_still_works():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def current_state(self, scenario):
+            return "ready"
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [{
+                "tool": "lookup",
+                "scenario": "legacy",
+                "when_state": "ready",
+                "response": {"ok": True},
+            }]
+        },
+        backends={"scenario": LegacyScenarioBackend()},
+    )
+
+    resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
+
+    assert resolved is not None and resolved.value == {"ok": True}
+
+
+def test_legacy_current_state_override_observes_its_own_transition():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def current_state(self, scenario):
+            return super().current_state(scenario)
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [
+                {
+                    "tool": "authorize",
+                    "scenario": "legacy",
+                    "response": {"status": "authorized"},
+                    "sets_state": "done",
+                },
+                {
+                    "tool": "status",
+                    "scenario": "legacy",
+                    "when_state": "done",
+                    "response": {"state": "done"},
+                },
+                {"tool": "status", "response": {"state": "fallback"}},
+            ]
+        },
+        backends={
+            "inline": InlineBackend(),
+            "scenario": LegacyScenarioBackend(),
+        },
+    )
+
+    library.resolve(MockCall("authorize", {}, case_id="case-a"))
+    status = library.resolve(MockCall("status", {}, case_id="case-a"))
+
+    assert status is not None and status.value == {"state": "done"}
+
+
+def test_legacy_matches_state_override_observes_its_own_transition():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def matches_state(self, rule):
+            return super().matches_state(rule)
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [
+                {
+                    "tool": "authorize",
+                    "scenario": "legacy",
+                    "response": {"status": "authorized"},
+                    "sets_state": "done",
+                },
+                {
+                    "tool": "status",
+                    "scenario": "legacy",
+                    "when_state": "done",
+                    "response": {"state": "done"},
+                },
+                {"tool": "status", "response": {"state": "fallback"}},
+            ]
+        },
+        backends={
+            "inline": InlineBackend(),
+            "scenario": LegacyScenarioBackend(),
+        },
+    )
+
+    library.resolve(MockCall("authorize", {}, case_id="case-a"))
+    status = library.resolve(MockCall("status", {}, case_id="case-a"))
+
+    assert status is not None and status.value == {"state": "done"}
+
+
+def test_judge_visible_evidence_names_the_matched_case_rule():
+    library = MockLibrary.from_dict({
+        "mocks": [{
+            "tool": "lookup",
+            "case_id": "case-a",
+            "response": {"branch": "case-a"},
+        }]
+    })
+    host = AgentHooksToolHost(
+        tools={"lookup": _never_executes},
+        mediator=ActionMediator(
+            MediationPolicy({"interactions": [{"match": "lookup", "mode": "mock"}]}),
+            mocks=library,
+        ),
+        agent_id="agent",
+        session_id="session",
+        case_id="case-a",
+    )
+
+    host.call_tool("lookup", {})
+    evidence = json.loads(assert_tool_event(host.records[0])["content"])
+
+    assert evidence["case_id"] == "case-a"
+    assert evidence["mock_source"] == "inline"
+    assert evidence["replay"]["matched_case_id"] == "case-a"
+
+
+def test_conflicting_context_case_ids_fail_before_mock_resolution():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "lookup", "case_id": "session-case", "response": {"picked": "session"}},
+            {"tool": "lookup", "case_id": "legacy-case", "response": {"picked": "legacy"}},
+        ]
+    })
+    mediator = ActionMediator(
+        MediationPolicy({"interactions": [{"match": "lookup", "mode": "mock"}]}),
+        mocks=library,
+    )
+    pre = _pre("lookup", {})
+    pre["case_id"] = "legacy-case"
+    pre["session"] = {"id": "session", "case_id": "session-case"}
+
+    with pytest.raises(ValueError, match="conflicting case_id"):
+        mediator.mediate(pre, _never_executes)
+
+
+def test_conflicting_context_case_ids_fail_before_pass_execution():
+    mediator = ActionMediator(
+        MediationPolicy({"interactions": [{"match": "lookup", "mode": "pass"}]})
+    )
+    pre = _pre("lookup", {})
+    pre["case_id"] = "legacy-case"
+    pre["session"] = {"id": "session", "case_id": "session-case"}
+    invoked = False
+
+    def execute(_args):
+        nonlocal invoked
+        invoked = True
+        return {"ok": True}
+
+    with pytest.raises(ValueError, match="conflicting case_id"):
+        mediator.mediate(pre, execute)
+    assert invoked is False
 
 
 def test_scenario_sequence_advances_then_holds():
@@ -554,3 +931,65 @@ def test_scenario_backend_state_is_observable():
     assert backend.current_state("s") == "done"
     backend.reset()
     assert backend.current_state("s") == "start"
+
+
+def test_resolve_cli_reports_the_rule_the_named_case_will_actually_get(tmp_path, capsys):
+    """The diagnostic must answer for a case, not for an uncorrelated run.
+
+    Without --case-id the CLI resolves as a run with no case ID would, which is
+    a different rule than any real ASSERT case selects once case-bound mocks
+    exist. Reporting that silently makes the tool actively misleading.
+    """
+    from assert_ai.integrations.sandbox import cli
+
+    (tmp_path / "policy.yaml").write_text(
+        "interactions:\n"
+        "  - match: charge_card\n"
+        "    mode: mock\n"
+        "default:\n"
+        "  mode: block\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mocks.yaml").write_text(
+        "version: 1\n"
+        "mocks:\n"
+        "  - tool: charge_card\n"
+        "    case_id: case-a\n"
+        "    response: {branch: case-a-only}\n"
+        "  - tool: charge_card\n"
+        "    case_id: '*'\n"
+        "    response: {branch: any-correlated-case}\n"
+        "  - tool: charge_card\n"
+        "    response: {branch: uncorrelated-default}\n",
+        encoding="utf-8",
+    )
+    setup = tmp_path / "assert-setup.yaml"
+    setup.write_text(
+        "target:\n"
+        "  kind: endpoint\n"
+        "  url: http://127.0.0.1:9/chat\n"
+        "policy: policy.yaml\n"
+        "mocks: mocks.yaml\n",
+        encoding="utf-8",
+    )
+
+    rc = cli.main(["resolve", str(setup), "charge_card", "--case-id", "case-a"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "case-a-only" in out, out
+    assert "any-correlated-case" not in out, out
+    assert "uncorrelated-default" not in out, out
+
+    rc = cli.main(["resolve", str(setup), "charge_card", "--case-id", "case-b"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "any-correlated-case" in out, out
+    assert "uncorrelated-default" not in out, out
+
+    # And without a case, it must not silently pass off the default branch as
+    # the answer while case-bound rules exist for this tool.
+    rc = cli.main(["resolve", str(setup), "charge_card"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "uncorrelated-default" in out, out
+    assert "--case-id" in out, "expected a warning that case-bound rules exist"

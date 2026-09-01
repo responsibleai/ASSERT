@@ -60,14 +60,12 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
-        # The `otel` extra is required because tests/test_incident_triage_smoke.py
-        # imports examples/incident_triage_agent/agent.py, which imports
-        # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface, so the
-        # CI install set has to include the demo's optional extras even though
-        # core ASSERT doesn't need them.
+        # The dev extra includes the test runner plus analysis and ACS
+        # dependencies exercised by the full unit-test suite. OpenTelemetry's
+        # API and SDK are base ASSERT dependencies, so the Phoenix server extra
+        # is not needed here.
         run: |
-          python -m pip install -e ".[dev,otel]"
+          python -m pip install -e ".[dev]"
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:

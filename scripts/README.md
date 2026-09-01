@@ -2,6 +2,12 @@
 
 Run scripts in this directory with `python ...` from the repo root so they see the project package and pinned dependencies.
 
+Install the optional script dependencies before using chart, Excel export, or failure-prediction commands:
+
+```bash
+python -m pip install -r scripts/requirements.txt
+```
+
 ## Seed sampling
 
 Test-set stratification and generation run through `assert-ai run` now. Start from
@@ -58,7 +64,7 @@ python scripts/turn_checkpoint_judge.py \
 
 ## `export_suite_results.py`
 
-This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `inference_set.jsonl`, and `scores.jsonl`, then derives the relevant-node summary directly from `scores.jsonl` and the suite `taxonomy.json`. `--format csv` writes `runs.csv`, `test_set.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export requires `python -m pip install openpyxl`.
+This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `inference_set.jsonl`, and `scores.jsonl`, then derives the relevant-node summary directly from `scores.jsonl` and the suite `taxonomy.json`. `--format csv` writes `runs.csv`, `test_set.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export uses OpenPyXL from `scripts/requirements.txt`.
 
 ```bash
 python scripts/export_suite_results.py \

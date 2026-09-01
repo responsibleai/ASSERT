@@ -1295,6 +1295,13 @@ def validate_spans(spans: list[OTelSpan]) -> SpanValidationResult:
     """
     warnings: list[str] = []
 
+    if not spans:
+        warnings.append(
+            "No OpenTelemetry spans were captured. For an auto-instrumented agent, "
+            "install the matching openinference-instrumentation-* package in the "
+            "target environment; for a custom agent, verify that it emits OTel spans."
+        )
+
     for span in spans:
         if span.convention == "gen_ai":
             warnings.extend(_validate_genai_span(span))
