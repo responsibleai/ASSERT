@@ -882,7 +882,18 @@ def _normalize_item_name(name: str) -> str:
 
 
 def _config_dimension_names(config: dict, *, judge: bool) -> list[str]:
-    """Pull judge or test-set dimension names out of a written config."""
+    """Pull the *effective* judge or test-set dimension names from a config.
+
+    For the judge namespace, effective means preset-contributed plus inline. A
+    preset is a real declaration of dimensions: `safety-extended` contributes
+    `harm_actionability` and `pii_leakage` exactly as writing them inline would.
+    Reading only the inline block reports an approved, preset-supplied dimension
+    as missing and rejects a correct config.
+
+    Built-in dimensions are excluded. The engine always adds them and the review
+    never approves them, so counting them would report every config as carrying
+    dimensions nobody approved.
+    """
 
     pipeline = config.get("pipeline")
     if not isinstance(pipeline, dict):
@@ -891,7 +902,11 @@ def _config_dimension_names(config: dict, *, judge: bool) -> list[str]:
         section = pipeline.get("judge")
         if not isinstance(section, dict):
             return []
-        return _dimension_names(section.get("dimensions"))
+        names = list(_dimension_names(section.get("dimensions")))
+        for preset_names in _preset_dimension_names(section).values():
+            names.extend(preset_names)
+        builtin = {_normalize_item_name(name) for name in BUILT_IN_JUDGE_DIMENSIONS}
+        return [name for name in names if _normalize_item_name(name) not in builtin]
     test_set = pipeline.get("test_set")
     if not isinstance(test_set, dict):
         return []
@@ -1007,12 +1022,14 @@ def _validate_retained_dimensions(
     ``behavior_categories`` are deliberately not compared: the config carries
     ``behavior_category_count`` and the categories themselves are generated at
     run time, so there are no names in the config to compare against.
+
+    An empty approved set is compared, not skipped. "The review approved no
+    judge dimensions" means the config may declare none, so skipping the
+    comparison would let an empty approval authorize an arbitrary set.
     """
 
     for namespace, judge in (("judge_dimensions", True), ("test_dimensions", False)):
         approved = _approved_canonical_names(review, namespace)
-        if not approved:
-            continue
         written = _config_dimension_names(config, judge=judge)
         approved_keys = {_normalize_item_name(name) for name in approved}
         written_keys = {_normalize_item_name(name) for name in written}

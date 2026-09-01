@@ -412,8 +412,74 @@ def test_post_write_rejects_dropping_an_approved_dimension(tmp_path):
         _post_write_with(tmp_path, drop_the_test_dimension)
 
 
+def test_post_write_accepts_dimensions_supplied_by_a_preset(tmp_path):
+    """A preset declares dimensions as surely as an inline block does.
+
+    `safety-extended` contributes `harm_actionability` and `pii_leakage`. When
+    the review approves exactly those, a config that reuses the shipped preset
+    instead of restating them inline is correct, and reading only the inline
+    block reports both as missing and rejects it.
+    """
+    ledger = _valid_ledger(approved=True)
+    namespaces = ledger["cycles"][0]["deduplication"]["namespaces"]
+    namespaces["judge_dimensions"] = [
+        _canonical(
+            item_id="jd-1",
+            name="harm_actionability",
+            source_items=["j1"],
+            citation_tags=["[1]", "[2]"],
+        ),
+        _canonical(
+            item_id="jd-2",
+            name="pii_leakage",
+            source_items=["j2"],
+            citation_tags=["[1]", "[2]"],
+        ),
+    ]
+    # j1 came from pass 1 and j2 from pass 2, so each canonical derives from the
+    # single pass that produced its source candidate.
+    namespaces["judge_dimensions"][0]["source_passes"] = [1]
+    namespaces["judge_dimensions"][1]["source_passes"] = [2]
+    review = _review_path(tmp_path, ledger)
+    config = tmp_path / "config.yaml"
+    stamp = tmp_path / "stamp.json"
+    vdr.pre_write(review, config, stamp)
+
+    data = yaml.safe_load(VALID_CONFIG)
+    del data["pipeline"]["judge"]["dimensions"]
+    data["pipeline"]["judge"]["preset"] = "safety-extended"
+    config.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    vdr.post_write(review, config, stamp)
+
+
+def test_post_write_rejects_dimensions_after_an_empty_approval(tmp_path):
+    """An empty approved set authorizes nothing, so it cannot authorize anything.
+
+    Skipping the comparison when the review approved no judge dimensions turns
+    the emptiest possible approval into a blanket one.
+    """
+    ledger = _valid_ledger(approved=True)
+    cycle = ledger["cycles"][0]
+    # A ledger where research produced no custom judge dimensions at all: no
+    # candidates generated, so none retained. Built-ins alone would cover it.
+    cycle["deduplication"]["namespaces"]["judge_dimensions"] = []
+    for pass_record in cycle["passes"]:
+        pass_record["candidates"]["judge_dimensions"] = []
+    review = _review_path(tmp_path, ledger)
+    config = tmp_path / "config.yaml"
+    stamp = tmp_path / "stamp.json"
+    vdr.pre_write(review, config, stamp)
+
+    # The config still carries its inline custom dimension, which nothing in
+    # this review approved.
+    config.write_text(VALID_CONFIG, encoding="utf-8")
+
+    with pytest.raises(vdr.ReviewValidationError, match="never approved"):
+        vdr.post_write(review, config, stamp)
+
+
 def test_post_write_rejects_more_than_one_risk(tmp_path):
-    """One risk per suite: a shared violation rate is attributable to neither."""
 
     def add_a_second_behavior(data):
         data["behavior"] = [{"name": "checkout_risk"}, {"name": "second_risk"}]
