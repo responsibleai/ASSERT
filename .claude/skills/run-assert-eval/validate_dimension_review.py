@@ -734,8 +734,9 @@ def _preset_dimension_names(judge: dict) -> dict[str, list[str]]:
 
     Presets expand into the same merged dimension list as inline `dimensions`
     (assert_ai/config.py), so a preset can shadow a built-in exactly as an inline
-    dimension can. Resolution is best-effort: this script is runnable standalone,
-    so a preset that cannot be located is skipped rather than failing the run.
+    dimension can. A named preset that cannot be resolved or parsed raises: this
+    check exists to prove no built-in is shadowed, and skipping an unreadable
+    preset would report "checked and clean" for something never read.
     """
 
     raw = judge.get("preset")
@@ -750,33 +751,68 @@ def _preset_dimension_names(judge: dict) -> dict[str, list[str]]:
     for preset_name in preset_names:
         if not preset_name:
             continue
-        preset_file = _find_judge_preset_file(preset_name)
-        if preset_file is None:
-            continue
+        text = _read_judge_preset_text(preset_name)
+        if text is None:
+            raise ReviewValidationError(
+                f"judge preset {preset_name!r} is named by the config but could not "
+                "be resolved, so its dimensions cannot be checked for shadowing of "
+                f"the built-ins ({', '.join(sorted(BUILT_IN_JUDGE_DIMENSIONS))}). "
+                "Install ASSERT into this environment (`pip install -e .`) or run "
+                "this validator from a source checkout, then re-run. Passing "
+                "without reading the preset would report a check that never "
+                "happened."
+            )
         try:
-            preset = yaml.safe_load(preset_file.read_text(encoding="utf-8"))
-        except (yaml.YAMLError, OSError):
-            continue
+            preset = yaml.safe_load(text)
+        except yaml.YAMLError as error:
+            raise ReviewValidationError(
+                f"judge preset {preset_name!r} is not valid YAML, so its dimensions "
+                "cannot be checked for shadowing of the built-ins."
+            ) from error
         if not isinstance(preset, dict):
-            continue
+            raise ReviewValidationError(
+                f"judge preset {preset_name!r} does not contain a top-level mapping, "
+                "so its dimensions cannot be checked for shadowing of the built-ins."
+            )
         names = [name for name in _dimension_names(preset.get("dimensions")) if name]
         if names:
             resolved[preset_name] = names
     return resolved
 
 
-def _find_judge_preset_file(preset_name: str) -> Path | None:
-    """Locate `assert_ai/library/judges/<preset_name>.yaml` by walking up from here."""
+def _read_judge_preset_text(preset_name: str) -> str | None:
+    """Return the YAML text of a judge preset, or ``None`` if it cannot be found.
+
+    Resolution starts with the installed package. ``assert_ai.library.judges``
+    ships in the wheel (`pyproject.toml` package-data), so `importlib.resources`
+    finds it wherever ASSERT is installed. The filesystem walk that follows only
+    ever succeeds inside a source checkout, which is why it cannot be the sole
+    strategy: under a wheel install every preset would resolve to ``None`` and
+    the anti-shadowing check would pass without reading anything.
+    """
 
     if "/" in preset_name or "\\" in preset_name or preset_name.startswith("."):
         return None
+
+    try:
+        from importlib.resources import files as _resource_files
+
+        resource = _resource_files("assert_ai.library.judges") / f"{preset_name}.yaml"
+        if resource.is_file():
+            return resource.read_text(encoding="utf-8")
+    except (ImportError, ModuleNotFoundError, FileNotFoundError, OSError, TypeError):
+        pass
+
     for base in (Path(__file__).resolve(), Path.cwd().resolve() / "_"):
         for parent in base.parents:
             candidate = (
                 parent / "assert_ai" / "library" / "judges" / f"{preset_name}.yaml"
             )
             if candidate.is_file():
-                return candidate
+                try:
+                    return candidate.read_text(encoding="utf-8")
+                except OSError:
+                    return None
     return None
 
 
@@ -832,8 +868,213 @@ def _reject_shadowing_judge_dimensions(config: dict, config_path: Path) -> None:
         )
 
 
+def _normalize_item_name(name: str) -> str:
+    """Fold a dimension name to a comparison key.
+
+    The review ledger and the config are written by different steps, so a name
+    may legitimately differ in case or separator (``Task Framing`` vs
+    ``task_framing``). Folding those keeps the gate from failing on cosmetics
+    while still catching a config whose dimension set is genuinely not the one
+    that was approved.
+    """
+
+    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+
+
+def _config_dimension_names(config: dict, *, judge: bool) -> list[str]:
+    """Pull judge or test-set dimension names out of a written config."""
+
+    pipeline = config.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return []
+    if judge:
+        section = pipeline.get("judge")
+        if not isinstance(section, dict):
+            return []
+        return _dimension_names(section.get("dimensions"))
+    test_set = pipeline.get("test_set")
+    if not isinstance(test_set, dict):
+        return []
+    stratify = test_set.get("stratify")
+    if not isinstance(stratify, dict):
+        return []
+    return _dimension_names(stratify.get("dimensions"))
+
+
+def _approved_canonical_names(review: dict[str, Any], namespace: str) -> list[str]:
+    """Canonical item names the active cycle approved for one namespace."""
+
+    cycles = review.get("cycles")
+    if not isinstance(cycles, list) or not cycles:
+        return []
+    active_id = review.get("active_cycle")
+    cycle = next(
+        (
+            item
+            for item in cycles
+            if isinstance(item, dict) and item.get("id") == active_id
+        ),
+        None,
+    )
+    if cycle is None:
+        return []
+    deduplication = cycle.get("deduplication")
+    if not isinstance(deduplication, dict):
+        return []
+    namespaces = deduplication.get("namespaces")
+    if not isinstance(namespaces, dict):
+        return []
+    items = namespaces.get(namespace)
+    if not isinstance(items, list):
+        return []
+    return [
+        str(item["name"]).strip()
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+
+
+def _validate_runtime_schema(config_path: Path) -> None:
+    """Load the config through the engine's own path, as ``assert-ai run`` does.
+
+    Parsing as YAML proves only that the file is YAML. A config can be a valid
+    mapping and still be rejected by the runtime for an unknown key, a missing
+    stage, or a malformed target, in which case this gate stamped an artifact
+    that cannot run. Validating through the same entry point the runner uses
+    keeps the gate from drifting away from execution.
+    """
+
+    try:
+        from assert_ai.config import load_config, load_runtime_context
+        from assert_ai.runner import STAGES
+    except Exception as error:
+        raise ReviewValidationError(
+            "assert_ai is not importable, so the written config cannot be checked "
+            "against the runtime schema. Install ASSERT into this environment "
+            "(`pip install -e .`) and re-run. Skipping this check would stamp a "
+            "config as approved without knowing whether it can run."
+        ) from error
+
+    try:
+        raw = load_config(config_path)
+        load_runtime_context(raw, config_path.resolve(), stage_modules=STAGES)
+    except ReviewValidationError:
+        raise
+    except Exception as error:
+        raise ReviewValidationError(
+            f"config {config_path} is not valid against the ASSERT runtime schema: "
+            f"{error}. This is the same check `assert-ai run` performs, so the "
+            "config would fail at run time."
+        ) from error
+
+
+def _validate_behavior_identity(
+    config: dict, review: dict[str, Any], config_path: Path
+) -> None:
+    """Require the config to describe the harm the review approved."""
+
+    approved = str(review.get("harm_name", "")).strip()
+    behavior = config.get("behavior")
+    if not isinstance(behavior, dict):
+        raise ReviewValidationError(
+            f"config {config_path} has no `behavior` mapping, so it cannot be "
+            f"matched against the approved harm {approved!r}."
+        )
+    written = str(behavior.get("name", "")).strip()
+    if not written:
+        raise ReviewValidationError(
+            f"config {config_path} has no `behavior.name`, so it cannot be matched "
+            f"against the approved harm {approved!r}."
+        )
+    if _normalize_item_name(written) != _normalize_item_name(approved):
+        raise ReviewValidationError(
+            f"config {config_path} declares behavior.name {written!r} but the "
+            f"approved review is for {approved!r}. The approval covers one named "
+            "harm; writing a config for a different one carries an approval that "
+            "was never given for it."
+        )
+
+
+def _validate_retained_dimensions(
+    config: dict, review: dict[str, Any], config_path: Path
+) -> None:
+    """Require the written dimensions to be the ones the user approved.
+
+    The approval gate is the product claim of this workflow. If the config can
+    carry a dimension set other than the reviewed one, the approval attests to a
+    document rather than to the artifact that actually runs.
+
+    ``behavior_categories`` are deliberately not compared: the config carries
+    ``behavior_category_count`` and the categories themselves are generated at
+    run time, so there are no names in the config to compare against.
+    """
+
+    for namespace, judge in (("judge_dimensions", True), ("test_dimensions", False)):
+        approved = _approved_canonical_names(review, namespace)
+        if not approved:
+            continue
+        written = _config_dimension_names(config, judge=judge)
+        approved_keys = {_normalize_item_name(name) for name in approved}
+        written_keys = {_normalize_item_name(name) for name in written}
+        missing = sorted(approved_keys - written_keys)
+        extra = sorted(written_keys - approved_keys)
+        if not missing and not extra:
+            continue
+        problems = []
+        if missing:
+            problems.append(
+                "approved but absent from the config: "
+                + ", ".join(repr(name) for name in missing)
+            )
+        if extra:
+            problems.append(
+                "present in the config but never approved: "
+                + ", ".join(repr(name) for name in extra)
+            )
+        raise ReviewValidationError(
+            f"config {config_path} does not carry the approved {namespace} - "
+            + "; ".join(problems)
+            + ". The review approves a specific dimension set, so the config must "
+            "contain exactly that set. Re-run the review cycle if the set needs "
+            "to change."
+        )
+
+
+def _validate_single_risk(config: dict, config_path: Path) -> None:
+    """Require one risk per suite, which the methodology treats as invariant.
+
+    One-risk-per-suite is what makes a violation rate attributable: a suite
+    covering two harms reports one number that belongs to neither.
+    """
+
+    behavior = config.get("behavior")
+    if isinstance(behavior, list):
+        raise ReviewValidationError(
+            f"config {config_path} declares a list of behaviors. This methodology "
+            "emits one risk per suite, because a suite covering several harms "
+            "produces a violation rate that cannot be attributed to any one of "
+            "them. Split it into one config per risk."
+        )
+    if not isinstance(behavior, dict):
+        return
+    for plural_key in ("behaviors", "risks", "harms"):
+        if plural_key in config:
+            raise ReviewValidationError(
+                f"config {config_path} declares a top-level {plural_key!r} key. "
+                "This methodology emits one risk per suite; split it into one "
+                "config per risk."
+            )
+    name = behavior.get("name")
+    if isinstance(name, list):
+        raise ReviewValidationError(
+            f"config {config_path} declares multiple behavior names. This "
+            "methodology emits one risk per suite; split it into one config "
+            "per risk."
+        )
+
+
 def post_write(review_path: Path, config_path: Path, stamp_path: Path) -> None:
-    _validate_review_file(review_path, require_approval=True)
+    review = _validate_review_file(review_path, require_approval=True)
     if not stamp_path.is_file():
         raise ReviewValidationError(f"pre-write stamp not found: {stamp_path}")
     try:
@@ -859,6 +1100,13 @@ def post_write(review_path: Path, config_path: Path, stamp_path: Path) -> None:
     if not isinstance(config, dict):
         raise ReviewValidationError("config YAML must contain a top-level mapping")
     _reject_shadowing_judge_dimensions(config, config_path)
+    # Everything above proves the file is well-formed YAML. These four prove it
+    # is the artifact the review approved and that it can actually run, which is
+    # what the approval is taken to mean downstream.
+    _validate_single_risk(config, config_path)
+    _validate_behavior_identity(config, review, config_path)
+    _validate_retained_dimensions(config, review, config_path)
+    _validate_runtime_schema(config_path)
 
     stamp["config_after_sha256"] = config_hash
     stamp["post_write_verified_at"] = datetime.now(timezone.utc).isoformat()

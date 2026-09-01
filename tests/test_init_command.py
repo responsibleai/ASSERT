@@ -11,7 +11,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
-from assert_ai.init._context import _resolve_harm_skill_path, build_system_message
+from assert_ai.init._context import _load_harm_skill_text, build_system_message
 
 
 _MINIMAL_VALID_YAML = (
@@ -199,26 +199,88 @@ class InitPromptContentTest(unittest.TestCase):
         self.assertIn("Harm Eval Template Skill", prompt)
         # Adaptation preamble reconciling the skill with the init runtime.
         self.assertIn("do **not** have live web-browsing tools", prompt)
-        skill_path = _resolve_harm_skill_path()
-        self.assertIsNotNone(skill_path, "no harm methodology doc was found to inject")
-        assert skill_path is not None
-        heading = skill_path.read_text(encoding="utf-8").splitlines()[0].strip()
+        skill_text = _load_harm_skill_text()
+        self.assertIsNotNone(skill_text, "no harm methodology doc was found to inject")
+        assert skill_text is not None
+        heading = skill_text.splitlines()[0].strip()
         self.assertIn(heading, prompt)
 
     def test_prompt_web_capability_toggles_with_web_search(self) -> None:
         """Web-capability wording flips with the ``web_search`` flag.
 
-        With web search on, the prompt advertises the live tool and tells
-        the harm flow to research for real. With it off (the default), it
-        keeps the knowledge-only, no-fabricated-URLs guidance.
+        With web search on the prompt advertises the tool and still directs the
+        harm flow to do the literature review, which is the methodology's main
+        value: it is what produces researched dimensions instead of recalled
+        ones. With it off, the knowledge-only, no-fabricated-URLs guidance
+        stands in. Neither branch may promise a retrieval it cannot perform.
         """
         with_web = build_system_message(web_search=True)
         self.assertIn("Live Web Research", with_web)
-        self.assertIn("Do the skill's research for real", with_web)
+        # The research imperative survives: naming the frameworks to search is
+        # what makes this a literature review rather than a recall exercise.
+        self.assertIn("Attempt the skill's research", with_web)
+        self.assertIn("MLCommons AILuminate", with_web)
+        self.assertIn("Never emit a URL you did not retrieve", with_web)
 
         without_web = build_system_message(web_search=False)
         self.assertNotIn("Live Web Research", without_web)
         self.assertIn("do **not** have live web-browsing tools", without_web)
+
+    def test_web_search_is_dropped_when_the_fallback_is_already_active(self) -> None:
+        """A prompt must never promise research the runtime cannot perform.
+
+        When the process has already fallen back to Chat Completions there is no
+        Responses-API `web_search` tool to hand the model, but the flag the user
+        passed is still True. Composing the prompt from the requested flag then
+        advertises live research that cannot happen, and the model answers by
+        inventing citations. The default stays True; only this genuinely
+        toolless state drops it.
+        """
+        with patch(
+            "assert_ai.core.model_client.chat_completions_fallback_active",
+            return_value=True,
+        ), patch(
+            "assert_ai.init._design_agent.run_design_loop", return_value=None
+        ) as loop:
+            runner = CliRunner()
+            with runner.isolated_filesystem():
+                runner.invoke(cli, [
+                    "init",
+                    "--describe", "A chatbot",
+                    "--non-interactive",
+                    "--web-search",
+                ])
+
+        self.assertTrue(loop.called, "design loop was never reached")
+        self.assertFalse(
+            loop.call_args.kwargs["web_search"],
+            "web search must be dropped when the Responses API is unavailable",
+        )
+
+    def test_web_search_survives_when_the_fallback_is_inactive(self) -> None:
+        """Guards the fix against over-reach: normal runs keep live research."""
+        with patch(
+            "assert_ai.core.model_client.chat_completions_fallback_active",
+            return_value=False,
+        ), patch(
+            "assert_ai.init._llm.web_search_available", return_value=True
+        ), patch(
+            "assert_ai.init._design_agent.run_design_loop", return_value=None
+        ) as loop:
+            runner = CliRunner()
+            with runner.isolated_filesystem():
+                runner.invoke(cli, [
+                    "init",
+                    "--describe", "A chatbot",
+                    "--non-interactive",
+                    "--web-search",
+                ])
+
+        self.assertTrue(loop.called, "design loop was never reached")
+        self.assertTrue(
+            loop.call_args.kwargs["web_search"],
+            "web search must survive when the Responses API is available",
+        )
 
     def test_prompt_includes_default_model_hint_when_provided(self) -> None:
         prompt = build_system_message(default_model_hint="azure/gpt-5.4")

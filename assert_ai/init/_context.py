@@ -20,21 +20,37 @@ log = logging.getLogger(__name__)
 
 _PROMPT_FILENAME = "init_system.md"
 _CONFIG_REF_PATH = Path(__file__).resolve().parents[2] / "docs" / "config" / "schema.md"
-# The harm methodology is looked up in preference order: this repo keeps it as a
-# workflow inside run-assert-eval, while upstream ships it as a standalone skill.
-# Both are checked so the automatic flow never silently degrades to no skill.
+# The methodology ships inside the package so a pip-installed assert-ai carries
+# it. `.claude/` keeps its own copy because Claude Code reads workflows from
+# there; `tests/test_init_context.py` asserts the two stay byte-identical.
+_HARM_SKILL_RESOURCE = "research_eval_dimensions.md"
+# Source-checkout fallbacks, kept so an edit under `.claude/` is picked up in dev
+# without reinstalling. Never the only source: resolution starts at the package.
 _HARM_SKILL_CANDIDATES = (
     Path(".claude") / "skills" / "run-assert-eval" / "workflows" / "research-eval-dimensions.md",
     Path(".github") / "skills" / "assert-add-harm-eval-template" / "SKILL.md",
 )
 
 
-def _resolve_harm_skill_path() -> Path | None:
+def _load_harm_skill_text() -> str | None:
+    """Return the harm methodology, or ``None`` when it cannot be found.
+
+    Resolution starts with the packaged resource, which is the only path that
+    works under a wheel install. ``Path(__file__).parents[2]`` is the repo root
+    in a checkout but ``site-packages`` in an installed environment, so a
+    filesystem-only lookup silently yields nothing for every pip user. Callers
+    must treat ``None`` as "this mode is unavailable" and stop advertising it,
+    never as "proceed without the instructions".
+    """
+    try:
+        return load_prompt_text(_HARM_SKILL_RESOURCE)
+    except (FileNotFoundError, OSError, ModuleNotFoundError):
+        pass
     root = Path(__file__).resolve().parents[2]
     for relative in _HARM_SKILL_CANDIDATES:
         candidate = root / relative
         if candidate.is_file():
-            return candidate
+            return candidate.read_text(encoding="utf-8")
     return None
 
 # Token budget thresholds (fraction of model context window).
@@ -106,27 +122,41 @@ def _build_harm_skill_section(web_search: bool) -> str:
     pages; with it off the model grounds in framework knowledge and does
     not fabricate URLs.
     """
-    skill_path = _resolve_harm_skill_path()
-    if skill_path is None:
+    skill_text = _load_harm_skill_text()
+    if skill_text is None:
         log.warning(
-            "Harm eval template skill not found; looked for %s under %s",
+            "Harm eval template methodology not found; looked for packaged "
+            "resource %s and for %s under %s. The Automatic harm-template flow "
+            "will not be offered this session.",
+            _HARM_SKILL_RESOURCE,
             ", ".join(str(candidate) for candidate in _HARM_SKILL_CANDIDATES),
             Path(__file__).resolve().parents[2],
         )
         return ""
-    skill_text = skill_path.read_text(encoding="utf-8")
     if web_search:
         research_bullet = (
-            "- You have a live `web_search` tool this session (OpenAI/Azure "
-            "Responses API `web_search_preview`). **Do the skill's research for "
-            "real**: search the recognized frameworks it names (MLCommons "
-            "AILuminate, NIST AI RMF, Microsoft Responsible AI, OWASP LLM Top "
-            "10) and primary sources, read the results, and cite the actual "
-            "pages you retrieve (title + URL + access date) exactly as the "
-            "skill's citation rules require. Never fabricate a URL; if you "
-            "cannot find a real source for an item, tag it `# source: repo "
-            "spec` or `# source: uncited — needs review`. Still reuse the repo "
-            "behavior/judge presets from the preset catalog above.\n"
+            "- You *may* have a live `web_search` tool this session "
+            "(OpenAI/Azure Responses API `web_search_preview`). It can also be "
+            "withdrawn mid-session when the runtime falls back to Chat "
+            "Completions, so **treat its availability as something you observe, "
+            "not something you were promised**. Attempt the skill's research: "
+            "search the recognized frameworks it names (MLCommons AILuminate, "
+            "NIST AI RMF, Microsoft Responsible AI, OWASP LLM Top 10) and "
+            "primary sources.\n"
+            "  - **If a search actually returns results**, read them and cite "
+            "only the pages you genuinely retrieved (title + URL + access date) "
+            "exactly as the skill's citation rules require.\n"
+            "  - **If you have no search tool, a call fails, or it returns "
+            "nothing**, say so plainly, ground the item in your knowledge of "
+            "the frameworks above, and tag it `# source: <framework> (model "
+            "knowledge)`. Then skip the `# References` URL list.\n"
+            "  - **Never emit a URL you did not retrieve this session**, and "
+            "never describe a page you did not read. An item tagged as model "
+            "knowledge is a good outcome; an invented citation is worse than no "
+            "config, because the entire value of this methodology is that its "
+            "sources can be checked.\n"
+            "  Still reuse the repo behavior/judge presets from the preset "
+            "catalog above.\n"
         )
     else:
         research_bullet = (
@@ -160,6 +190,30 @@ def _build_harm_skill_section(web_search: bool) -> str:
     )
 
 
+def _build_harm_unavailable_section() -> str:
+    """Withdraw the Automatic harm-template option when its methodology is absent.
+
+    ``init_system.md`` is a static template that offers the Automatic flow
+    unconditionally. When the methodology cannot be loaded the flow has no
+    instructions to follow, so advertising it invites the model to improvise a
+    research-grounded config with no research behind it. This section is
+    appended after the template, so it overrides the menu the template printed.
+    """
+    return (
+        "## Automatic harm-template flow is UNAVAILABLE this session\n\n"
+        "The Harm Eval Template Skill could not be loaded, so its methodology is "
+        "not present in this prompt. Override the template's menu accordingly:\n\n"
+        "- Do **not** offer the Automatic (harm template) option, and do not "
+        "number it as a choice.\n"
+        "- Present only the guided flow, and run its six sections in full.\n"
+        "- If the user explicitly asks for the automatic or template flow, tell "
+        "them it is unavailable in this installation and continue with the "
+        "guided flow. Do not reconstruct the methodology from memory: a config "
+        "that claims to be research-grounded without the research is worse than "
+        "one that never made the claim.\n"
+    )
+
+
 def _build_web_capability_section(web_search: bool) -> str:
     """State whether the design agent has live web research this session.
 
@@ -172,13 +226,18 @@ def _build_web_capability_section(web_search: bool) -> str:
         return ""
     return (
         "## Live Web Research\n\n"
-        "You have a live `web_search` tool this session (OpenAI/Azure "
-        "`web_search_preview` via the Responses API). Use it to ground behavior "
-        "specs, taxonomies, and judge rubrics in current, authoritative "
-        "sources — search before relying on memory for factual or fast-moving "
-        "topics, prefer recognized frameworks and primary sources, and when you "
-        "cite something, cite the real page you actually retrieved (title + "
-        "URL). Never invent a URL.\n"
+        "You *may* have a live `web_search` tool this session (OpenAI/Azure "
+        "`web_search_preview` via the Responses API). The runtime can withdraw "
+        "it mid-session by falling back to Chat Completions, so confirm it "
+        "works by using it rather than assuming it is there. Use it to ground "
+        "behavior specs, taxonomies, and judge rubrics in current, "
+        "authoritative sources: search before relying on memory for factual or "
+        "fast-moving topics, and prefer recognized frameworks and primary "
+        "sources. Cite only the real page you actually retrieved (title + URL). "
+        "**Never invent a URL, and never cite a page you did not read this "
+        "session.** If the tool is unavailable or returns nothing, say so and "
+        "fall back to framework knowledge tagged `# source: <framework> (model "
+        "knowledge)`.\n"
     )
 
 
@@ -307,6 +366,9 @@ def build_system_message(
     # live web search is available this session.
     harm_skill = _build_harm_skill_section(web_search)
     web_capability = _build_web_capability_section(web_search)
+    # The menu in the template is static, so when the methodology is missing the
+    # option has to be withdrawn explicitly rather than left dangling.
+    harm_unavailable = "" if harm_skill else _build_harm_unavailable_section()
 
     # Build optional sections.
     sections = [
@@ -314,6 +376,7 @@ def build_system_message(
         _build_preset_catalog(),
         web_capability,
         harm_skill,
+        harm_unavailable,
         _build_seed_section(seed_path),
         _build_behavior_section(behavior),
         _build_judge_section(judge_preset),
@@ -339,6 +402,7 @@ def build_system_message(
         trimmed_sections = [
             web_capability,
             harm_skill,
+            harm_unavailable,
             _build_seed_section(seed_path),
             _build_behavior_section(behavior),
             _build_judge_section(judge_preset),

@@ -157,6 +157,7 @@ def init(
     from assert_ai.init._design_agent import run_design_loop
     from assert_ai.init._emit import emit_config
     from assert_ai.init._llm import web_search_available
+    from assert_ai.core.model_client import chat_completions_fallback_active
 
     # Load env vars for LLM credentials
     if env_file.exists():
@@ -209,6 +210,17 @@ def init(
             "it (needs an OpenAI/Azure model via the Responses API). Continuing "
             "without live web research.",
             model,
+        )
+        effective_web_search = False
+    if effective_web_search and chat_completions_fallback_active():
+        # Already off the Responses API for this process (ASSERT_PREFER_CHAT_
+        # COMPLETIONS, or an earlier region error). There is no web_search tool
+        # to hand the model, so promising one in the prompt would only invite
+        # fabricated citations.
+        log.warning(
+            "Web search requested but the Chat Completions fallback is already "
+            "active for this process, so the Responses API web_search tool is "
+            "unavailable. Continuing without live web research."
         )
         effective_web_search = False
 

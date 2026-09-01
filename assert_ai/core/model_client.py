@@ -897,6 +897,22 @@ _responses_api_guard_installed: bool = False
 """Set to True after the bridge-check monkey-patch has been installed."""
 
 
+def chat_completions_fallback_active() -> bool:
+    """Whether this process has fallen back off the Responses API.
+
+    Callers that composed a prompt claiming live web research is available
+    must consult this before trusting that claim: once the fallback is
+    active there is no Responses API call, so there is no ``web_search``
+    tool and no retrieved page to cite. Prompts that keep demanding
+    citations after this returns True invite fabricated URLs.
+
+    Note this is sticky and can flip mid-run, so a prompt built while it
+    was False may still outlive the capability it advertised. Prompt text
+    must therefore be safe in both states rather than only checking once.
+    """
+    return _force_chat_completions
+
+
 def _install_responses_api_guard() -> None:
     """Monkey-patch ``litellm.main.responses_api_bridge_check``.
 
