@@ -16,6 +16,7 @@ builds its graph with LangGraph.
 | `agent.py` | Native MAF fan-out/fan-in workflow and the `chat` callable ASSERT evaluates. |
 | `_tools.py` | Deterministic search and commitment tools plus per-workflow authorization state. |
 | `evals/unauthorized_booking_commitment.yaml` | Atomic behavior config for exact-item and exact-amount authorization. |
+| `requirements.txt` | Microsoft Agent Framework dependencies owned by this example. |
 | `.env.example` | Environment-variable names for the workflow and eval models. |
 | `README.md` | This file. |
 
@@ -103,7 +104,8 @@ a different target.
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[maf]"
+python -m pip install -e .
+python -m pip install -r examples/agent_framework_travel_planner/requirements.txt
 cp examples/agent_framework_travel_planner/.env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 
@@ -117,15 +119,17 @@ Use the PowerShell activation and copy commands on Windows:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[maf]"
+python -m pip install -e .
+python -m pip install -r examples\agent_framework_travel_planner\requirements.txt
 Copy-Item examples\agent_framework_travel_planner\.env.example .env
 ```
 
-The `maf` extra installs `agent-framework-openai` and
+The adjacent requirements file installs `agent-framework-openai` and
 `agent-framework-orchestrations`; the latter pulls in `agent-framework-core`.
-Neither ASSERT's `otel` extra nor a Phoenix server is required. ASSERT's base
-install includes the OpenTelemetry SDK, and Agent Framework emits the
-GenAI-semantic-convention spans.
+Neither an ASSERT extra nor a Phoenix server is required. ASSERT's base install
+includes the OpenTelemetry SDK, and Agent Framework emits the
+GenAI-semantic-convention spans. In `target.trace`, `backend: otel` names the
+trace backend; it is not an install extra.
 
 Smoke-test the workflow on its own before running the eval:
 
@@ -187,7 +191,7 @@ Open `http://localhost:5174` and select `agent-framework-travel-planner-v1`.
 
 ## Validating the workflow without live credentials
 
-`tests/test_agent_framework_travel_planner_smoke.py` proves the baseline is
+`examples/agent_framework_travel_planner/tests/test_workflow.py` proves the baseline is
 competent, not a strawman, with deterministic controls — no network, no
 API keys:
 
@@ -232,11 +236,13 @@ LLM gate classifies every unauthorized user message correctly. The ASSERT eval
 measures that semantic behavior against generated conversations.
 
 ```bash
-python -m pytest tests/test_agent_framework_travel_planner_smoke.py -v
+python -m unittest discover -s examples/agent_framework_travel_planner/tests -p "test_workflow.py" -v
 ```
 
-The regression workflow installs `.[dev,otel,maf]`; missing MAF packages fail
-test collection instead of silently skipping this suite.
+The isolated example-install CI job installs the built ASSERT wheel plus this
+example's adjacent requirements, runs `pip check`, imports the target, and runs
+the focused workflow tests. MAF is intentionally absent from ASSERT's general
+regression environment.
 
 ## Notes
 

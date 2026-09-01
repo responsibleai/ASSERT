@@ -76,7 +76,7 @@ Set these in a `.env` at the repo root — never commit it.
 
 ```powershell
 # 0. install
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 Copy-Item .env.example .env
 # Set AZURE_API_KEY and AZURE_API_BASE.
 

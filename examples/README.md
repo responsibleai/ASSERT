@@ -10,7 +10,8 @@ can inspect tool calls, routing, and intermediate decisions.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY.
 
@@ -41,6 +42,13 @@ bias/fairness, and agentic failure modes. Browse the full catalog with:
 ```powershell
 assert-ai library list --kind behavior
 assert-ai library show <preset-name>
+```
+
+Use the selected preset directly in a config:
+
+```yaml
+behavior:
+  preset: prompt_injection
 ```
 
 Pair a preset with application context from the **[Scenario Library](../assert_ai/library/scenarios/README.md)**
@@ -81,6 +89,7 @@ scenario, setup, run commands, and artifact paths.
 | [`acs_guardrails/`](acs_guardrails/) | Offline ASSERT-to-ACS guardrail generation demo. |
 | [`bank_manager_agent_control/`](bank_manager_agent_control/) | Multi-variant agent-control evaluation. |
 | [`benchmark/`](benchmark/) | Benchmark configuration and scripts. |
+| [`sandbox_action_mediation/`](sandbox_action_mediation/) | Stock Docker sandbox with pass/mock/block policy, deny-by-default audited egress, and judge-visible action evidence. |
 | [`behavior_specs/`](behavior_specs/) | Reusable behavior specifications. |
 | [`agents/`](agents/) | Shared tool modules, schemas, and connector fixtures used by other examples. |
 

@@ -2,8 +2,9 @@
 
 Take a developer from **"I don't know my risks"** to a **measured violation rate
 per risk** — without leaving the coding assistant. Risk discovery is owned by
-**Clarity** (microsoft/clarity-agent); measurement is owned by **ASSERT**
-(responsibleai/ASSERT). This skill wires the two together.
+**Clarity** (microsoft/clarity-agent) when the user wants it; measurement is owned
+by **ASSERT** (responsibleai/ASSERT). This skill wires the two together, and also
+measures risks the user names directly when discovery isn't what they need.
 
 ## Files
 
@@ -16,7 +17,8 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `workflows/govern-and-remeasure.md` | The ACS governance workflow: turn a measured failure into a deployable ACS policy (`assert-ai acs generate`), wrap the agent, and re-run the same eval to prove the failure rate dropped. |
 | `workflows/diagnose-acs-delta.md` | Fallback reference manual for when a governed run's delta comes out wrong (no drop, or over-gating rose) — symptom-indexed, 15 rules. Most are prevented by the pre-flight classification in `govern-and-remeasure.md` Step 1a. |
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
-| `tests/` | Pytest suite + real Clarity fixtures for the parser. |
+| `smoke_slice.py` | Slices N real rows out of a generated test set so a config can be validated before the full suite. |
+| `tests/` | Pytest suite + real Clarity fixtures for the parser and the slicer. |
 | `SETUP-CHECKLIST.md` | One-time in-IDE MCP setup + end-to-end verification. |
 
 Keep the three skill surfaces (`SKILL.md`, the Copilot prompt, the Cursor rule)
@@ -24,11 +26,14 @@ methodologically aligned when changing the flow.
 
 ## Architecture
 
-1. **Discovery (Clarity, shipped):** the Clarity **MCP server** exposes tools —
+1. **Discovery (Clarity, shipped — recommended, not required):** the Clarity **MCP server** exposes tools —
    `run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`,
    and others. `run_clarity` returns Clarity's real process guide inlined; the host
    agent conducts the clarifying conversation and persists findings. See
-   `SETUP-CHECKLIST.md` to wire it up.
+   `SETUP-CHECKLIST.md` to wire it up. When the user would rather name the risk
+   themselves — or Clarity isn't set up — the skill takes a user-supplied risk
+   (prose, PRD, design doc, threat model) through a structured intake instead
+   (`SKILL.md` Step 1b) and everything downstream is identical.
 2. **Handoff (files, not JSON):** Clarity writes `.clarity-protocol/`. The
    measurement side reads `failures/failures.md` (index) and `failure-NN-*.md`
    (individual docs). Those files are the **source of truth**; the parser's JSON is
@@ -76,6 +81,41 @@ Run the tests:
 python -m pytest .claude/skills/run-assert-eval/tests/test_clarity_intake.py
 ```
 
+## The smoke slicer (`smoke_slice.py`)
+
+```
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>.yaml --count 3
+```
+
+Carves the first N rows of a given kind out of a suite's **already generated**
+test set and writes them to `artifacts/smoke/<suite>-<kind>-<n>.jsonl`, so
+`pipeline.inference.test_set_path` can point at a handful of real cases. Emits a
+JSON summary (`source`, `resolved_via`, `out`, `written`, `available`,
+`test_case_ids`). Use `--suite` instead of `--config` to skip the PyYAML import.
+
+- **Resolves through `latest.json`**, the pointer ASSERT itself maintains.
+  Version dirs (`v0001`, `v0002`, …) are allocated fresh on every cache miss, so
+  they are never assumed; a stale published copy is only a fallback.
+- **Copies raw lines**, so the slice is byte-identical to the source rows —
+  the smoke run scores cases the full run will also score.
+- **Refuses to write inside the suite root**, which could clobber the published
+  `test_set.jsonl` and invalidate the cache the smoke run exists to protect.
+- **Treats `--suite` as an identifier, not a path** — same slug rule ASSERT
+  applies to `suite`, and the resolved suite root must stay under the results
+  directory. `--config` resolves `results_dir` exactly as `assert_ai.config`
+  does, artifact-root prefix included, so both flags read the tree ASSERT wrote.
+- **Why not just lower `sample_size`**: that block feeds the test_set stage's
+  `config_hash`, so changing it invalidates the cached test set and cascades
+  downstream — and under `pairwise` sampling it yields a different design, not a
+  subset. See `workflows/measure-clarity-failures.md` Step 5a.
+
+Run the tests:
+
+```
+python -m pytest .claude/skills/run-assert-eval/tests/test_smoke_slice.py
+```
+
 ## Worked example
 
 A full end-to-end walkthrough (one P1 — `user_disengagement` — from parse through
@@ -102,6 +142,9 @@ silently degrades multi-turn to single-turn), and module resolution falls back
 - The triage gate and the pre-run confirmation are **human** decisions; declining
   writes nothing and runs nothing.
 - `.clarity-protocol/` files are authoritative; derived JSON is a cache.
-- Discovery goes through Clarity's real MCP tools — no plain-language fallback, no
-  shelling out to a `clarity cli` process, no separate app.
+- Clarity discovery is **recommended, never a gate** — the user picks the risk
+  source, and a missing `.clarity-protocol/` never blocks a measurement.
+- When the user chooses Clarity, discovery goes through its real MCP tools — never
+  an imitation of Clarity's interview, no shelling out to a `clarity cli` process,
+  no separate app.
 - Never read/print/commit `.env`, credential values, or `artifacts/`.

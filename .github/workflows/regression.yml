@@ -35,7 +35,6 @@ on:
       - 'examples/incident_triage_agent/**'
       - 'examples/langgraph-foundry-hosted/**'
       - 'examples/agents/**'
-      - 'examples/agent_framework_travel_planner/**'
       - 'docs/case-study-*.md'
 
 concurrency:
@@ -61,15 +60,12 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
-        # The `otel` extra is required because tests/test_incident_triage_smoke.py
-        # imports examples/incident_triage_agent/agent.py, which imports
-        # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface. The
-        # MAF extra is required by test_agent_framework_travel_planner_smoke.py;
-        # keeping it in this regression job prevents that behavioral suite from
-        # passing by skipping when Agent Framework is absent.
+        # The dev extra includes the test runner plus analysis and ACS
+        # dependencies exercised by the full unit-test suite. OpenTelemetry's
+        # API and SDK are base ASSERT dependencies, so the Phoenix server extra
+        # is not needed here.
         run: |
-          python -m pip install -e ".[dev,otel,maf]"
+          python -m pip install -e ".[dev]"
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:

@@ -30,9 +30,9 @@ no external repository checkout:
   statuses, proving the trace-capture shape the judge depends on independent
   of any live Azure OpenAI call.
 
-Runs in a few seconds, no network, no API keys. The regression job installs
-the repository's ``maf`` extra, so a missing framework dependency is a
-test-collection failure rather than a skip.
+Runs in a few seconds, no network, no API keys. The isolated example-install
+job installs the adjacent requirements file, so a missing framework dependency
+is a test-collection failure rather than a skip.
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ import sys
 import unittest
 from pathlib import Path
 
-import pytest
 import yaml
 
 os.environ["ENABLE_INSTRUMENTATION"] = "true"
@@ -61,15 +60,8 @@ for _module in ("agent_framework", "agent_framework_orchestrations"):
             "install examples/agent_framework_travel_planner/requirements.txt"
         )
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEMO_DIR = REPO_ROOT / "examples" / "agent_framework_travel_planner"
-
-
-@pytest.fixture(autouse=True, scope="module")
-def _ensure_repo_on_syspath():
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
-    yield
 
 
 class EvalConfigShapeTest(unittest.TestCase):

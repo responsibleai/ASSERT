@@ -57,7 +57,8 @@ When helping a developer choose a target:
 1. If they have any agent or multi-agent system with a Python entry function (frameworks like LangGraph / CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen / MAF, or custom orchestration), use `target.callable` **with `target.trace`** so Phoenix/OpenInference (or the agent's own OTel SDK spans) feed tool calls, routing, and intermediate decisions to the judge. This is the recommended integration path.
 2. If they have a plain Python function that wraps a hosted model, use `target.callable` (still with OTel trace capture if the wrapper does anything meaningful — model call, retry, post-processing — that the judge should see).
 3. If they have a hosted model with a system prompt and optional tools, use `target.model` and optional `target.tools`.
-4. Simulated tools are useful for Prompt Agent setups (declared in YAML, runtime owns the loop) before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
+4. If they need to evaluate risky actions inside ASSERT-owned containment, use `target.sandbox` with a container setup YAML. ASSERT starts a fresh stock Docker sandbox per test case; an endpoint setup is available when the user already owns containment and lifecycle.
+5. Simulated tools are useful for Prompt Agent setups (declared in YAML, runtime owns the loop) before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
 
 **Terminology divergence to know about**: in customer-facing docs we call `target.model + target.tools` the **Prompt Agent target** (the agent is declared in YAML; the runtime owns the tool-call loop). In code, the corresponding session class is `HostedSession` (`assert_ai/core/session.py`). Use the customer-facing name in docs and the class name in code references — this divergence is intentional and not worth renaming.
 
@@ -73,7 +74,9 @@ For preview customers, use `pip` in setup instructions:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 
 # Create a config interactively, or use an existing one
@@ -88,7 +91,9 @@ Use the PowerShell equivalent on Windows:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
 # Create a config interactively, or use an existing one
@@ -165,7 +170,7 @@ These skills are for end users running evaluations, not for repository maintenan
 
 | Skill | Claude Code | GitHub Copilot | Cursor | What it does |
 |---|---|---|---|---|
-| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Discover risks via the Clarity MCP tools (`run_clarity`) in-IDE, then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
+| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Establish a risk source — discover risks via the Clarity MCP tools (`run_clarity`) in-IDE (recommended), or take risks the user supplies directly as prose or a PRD / design doc / threat model — then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
 
 ## Output style for coding agents
 

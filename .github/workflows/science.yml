@@ -31,6 +31,8 @@ on:
       - 'scripts/regression_*.py'
       - 'tests/regression/**'
       - 'tests/test_regression_*.py'
+      - 'examples/travel_planner_langgraph/**'
+      - 'pyproject.toml'
       - '.github/workflows/science.yml'
   schedule:
     # Daily regression sentinel on main. 12:00 UTC is before the US workday.
@@ -70,7 +72,7 @@ jobs:
       - name: Install deps
         run: |
           pip install uv
-          uv pip install --system -e ".[dev]"
+          uv pip install --system -e . pytest
       - name: Run regression module unit tests
         run: pytest tests/test_regression_metrics.py tests/test_regression_decision.py tests/test_regression_runner.py -x -q
 
@@ -92,7 +94,11 @@ jobs:
       - name: Install deps
         run: |
           pip install uv
-          uv pip install --system -e ".[all,dev]"
+          # The gate runs the flagship LangGraph target. ASSERT owns tracing;
+          # the target's LangGraph, LangChain Core, and model adapter versions
+          # are declared by the example requirements file.
+          uv pip install --system -e ".[phoenix]"
+          uv pip install --system -r examples/travel_planner_langgraph/requirements.txt
 
       - name: Start Phoenix collector
         # Run a real Phoenix server so localhost:4317 (OTLP gRPC) accepts the

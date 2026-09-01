@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import sys
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from rich.table import Table
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
 from assert_ai.results import (
@@ -845,7 +847,7 @@ def _behavior_category_metric_map(
         "  assert-ai results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"
     ),
 )
-@click.version_option(version="0.1.0", prog_name="assert-ai")
+@click.version_option(package_name="assert-ai", prog_name="assert-ai")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -1940,7 +1942,10 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
-@cli.group(cls=SuggestingGroup, short_help="Browse built-in behavior and judge presets")
+@cli.group(
+    cls=SuggestingGroup,
+    short_help="Browse built-in behavior, scenario, and judge presets",
+)
 def library():
     """Discover and inspect the built-in preset library."""
 
@@ -1990,20 +1995,22 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.option("--json", "as_json", is_flag=True, help="Emit raw YAML content as JSON.")
 def library_show(name: str, kind: str | None, as_json: bool):
     """Show the full content of a preset by name."""
-    from assert_ai.library.loader import VALID_KINDS, load_preset
+    from assert_ai.library.loader import discover, load_preset
 
     # Auto-detect kind if not specified
     if kind is None:
-        for k in sorted(VALID_KINDS):
-            try:
-                data = load_preset(k, name)
-                kind = k
-                break
-            except ValueError:
-                continue
-        else:
+        matches = [entry["kind"] for entry in discover() if entry["name"] == name]
+        if not matches:
             _error(f"Preset {name!r} not found in any kind. Use --kind to be explicit.")
             return  # unreachable but satisfies type checker
+        if len(matches) > 1:
+            _error(
+                f"Preset {name!r} exists in multiple kinds: {', '.join(matches)}. "
+                "Use --kind to be explicit."
+            )
+            return  # unreachable but satisfies type checker
+        kind = matches[0]
+        data = load_preset(kind, name)
     else:
         data = load_preset(kind, name)
 
@@ -2011,7 +2018,29 @@ def library_show(name: str, kind: str | None, as_json: bool):
         _echo_json(data)
         return
 
-    click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+    _write_stdout_utf8(dump_yaml(data))
+
+
+def _write_stdout_utf8(payload: str) -> None:
+    """Write ``payload`` to stdout as UTF-8 bytes.
+
+    ``click.echo`` re-encodes the payload with ``sys.stdout.encoding``, which
+    on Windows defaults to the ANSI code page (usually cp1252) for redirected
+    stdout. Non-ASCII characters like ``日本語`` then raise
+    ``UnicodeEncodeError``. Writing bytes directly through ``sys.stdout.buffer``
+    bypasses that re-encoding so a preset's on-disk YAML matches what
+    ``assert-ai init`` writes on any platform.
+
+    Falls back to ``click.echo`` when ``sys.stdout`` has no ``buffer`` (for
+    example under ``pytest``'s ``capsys`` fixture, which wraps stdout in a
+    ``TextIO`` without a binary layer).
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        click.echo(payload, nl=False)
+        return
+    buffer.write(payload.encode("utf-8"))
+    buffer.flush()
 
 
 if __name__ == "__main__":

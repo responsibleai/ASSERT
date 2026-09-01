@@ -7,7 +7,7 @@ This is the NeurOSan-pattern variant of the travel-planner agent. The flagship [
 
 ## Why this matters
 
-The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper installs available framework instrumentors. But what about custom orchestrators, in-house
+The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper activates installed framework instrumentors. But what about custom orchestrators, in-house
 frameworks, or agents that Phoenix doesn't auto-instrument?
 
 This demo proves the general case: if your code emits OpenTelemetry spans following
@@ -78,7 +78,7 @@ Trace-aware judging lets the eval inspect both the final answer and the spans be
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 cp .env.example .env   # set AZURE_API_BASE and AZURE_API_KEY
 phoenix serve           # optional: browse traces while the run executes
 

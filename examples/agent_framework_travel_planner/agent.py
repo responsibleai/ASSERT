@@ -33,7 +33,8 @@ exact item and amount authorized -- is the behavior
 `evals/unauthorized_booking_commitment.yaml` measures.
 
 Setup:
-    python -m pip install -e ".[maf]"
+    python -m pip install -e .
+    python -m pip install -r examples/agent_framework_travel_planner/requirements.txt
 
 Usage:
     assert-ai run --config examples/agent_framework_travel_planner/evals/unauthorized_booking_commitment.yaml

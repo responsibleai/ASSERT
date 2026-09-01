@@ -1,13 +1,18 @@
 # Workflow: measure-clarity-failures
 
-Turn Clarity-discovered failure modes into measured ASSERT violation rates —
-one atomic behavior at a time, with a human in the loop at every gate.
+Turn discovered or user-supplied failure modes into measured ASSERT violation
+rates — one atomic behavior at a time, with a human in the loop at every gate.
 
 This workflow is the measurement half of the Clarity → ASSERT story. Discovery
 is owned by the **Clarity MCP server** (`clarity-agent`, shipped by
 microsoft/clarity-agent); measurement is owned by this skill. The handoff is
 **files, not JSON**: Clarity writes `.clarity-protocol/failures/`, and this
 workflow reads it.
+
+Clarity is the **recommended** risk source, not a required one. When the user
+supplies risks directly (SKILL.md Step 1b), skip Step 1 (Parse) and start at
+Step 2 (Triage) — Steps 2-9 never touch `.clarity-protocol/` except at the
+optional close-the-loop step.
 
 > **Discovery is agent-driven, not scripted.** The Clarity MCP `run_clarity`
 > tool returns the relevant process guide inlined as text; **you** (the host
@@ -20,19 +25,35 @@ workflow reads it.
 Trigger this workflow when the user asks to **measure / test / quantify** risks
 or failures for their agent, model, or app.
 
-1. **If `.clarity-protocol/failures/failures.md` exists** → go to **Step 1 (Parse)**.
-2. **If it does not exist** → run discovery first:
-   - **Run the preservation gate below first** — a fresh discovery run destroys
-     any protocol from a previous domain.
-   - Call the Clarity MCP tool **`run_clarity`**. Follow the inlined process
-     guide's clarifying questions *with the user in chat*.
-   - Persist findings via **`write_protocol_document`** and **`record_failure`**.
-   - Continue until the failure-analysis process has produced
-     `failures/failures.md`, then proceed to Step 1.
-   - If the `clarity-agent` MCP tools are **not available** in this session, stop
-     and point the user at the in-IDE setup checklist (`SETUP-CHECKLIST.md`):
-     `clarity embed`, reload MCP servers, confirm `run_clarity` is callable. Do
-     **not** substitute a plain-language risk guess — that produces low-signal evals.
+1. **If the user already named a risk** (prose, PRD, design doc, threat model,
+   incident report, test plan) → that is an explicit user-supplied choice.
+   Follow **SKILL.md Step 1b**, then **skip Step 1 (Parse)** and join at **Step 2
+   (Triage)**. Do this even when `.clarity-protocol/failures/failures.md` exists —
+   never substitute the protocol's risks for the one the user just stated.
+2. **Otherwise, if `.clarity-protocol/failures/failures.md` exists** → offer it as
+   the default, naming what it covers, and ask before selecting it: *"I found an
+   existing Clarity protocol covering X and Y — want to measure one of those, or is
+   there a different risk you have in mind?"* On confirmation, go to
+   **Step 1 (Parse)**. If they name something else instead, treat it as case 1.
+3. **If no protocol exists** → ask which risk source the user wants (see SKILL.md,
+   "Choosing a risk source"). Recommend Clarity, but take their answer:
+   - **Clarity discovery (recommended)** —
+     **run the preservation gate below first**; a fresh discovery run destroys
+     any protocol from a previous domain. Call the Clarity MCP tool
+     **`run_clarity`** and follow the inlined process guide's clarifying questions
+     *with the user in chat*. Persist findings via **`write_protocol_document`**
+     and **`record_failure`**. Continue until the failure-analysis process has
+     produced `failures/failures.md`, then proceed to Step 1.
+   - **User-supplied risks** — the user names the risk, or points at a PRD,
+     design doc, threat model, incident report, or test plan. Follow **SKILL.md
+     Step 1b** to build the candidate-behavior list by hand, then **skip Step 1
+     (Parse)** — there is no `failures.md` to parse — and join at **Step 2
+     (Triage)**. Everything from Step 2 onward is risk-source agnostic.
+   - If the `clarity-agent` MCP tools are **not available** in this session, say
+     so, offer the in-IDE setup checklist (`SETUP-CHECKLIST.md`: `clarity embed`,
+     reload MCP servers, confirm `run_clarity` is callable), and let the user
+     choose. If they'd rather not set it up now, continue with user-supplied
+     risks — do not strand them on MCP setup.
 
 ### Preservation gate (blocking — check before any fresh `run_clarity`)
 
@@ -55,6 +76,10 @@ Skip this gate only when `.clarity-protocol/` is absent or empty. Clarity
 re-scaffolds a clean one on the next `run_clarity`.
 
 ## Step 1 — Parse
+
+**Clarity-sourced risks only.** If the user supplied risks directly (SKILL.md
+Step 1b), there is no `failures.md` to parse — skip to Step 2 with the candidate
+list you built there.
 
 Run the intake parser (`clarity_intake.py`) on the protocol directory:
 
@@ -251,6 +276,95 @@ For each generated config, show the user: `behavior.name`, `behavior.description
 the stratify `dimensions`, the `target`, and the `judge` settings. Apply any
 requested edits. **Run only on explicit go-ahead.**
 
+## Step 5a — Smoke run before the full suite (offer by default)
+
+A suite is 25 prompt + 25 scenario cases, and plumbing errors surface only once
+inference starts — after systematize and test_set have already run. Offer a
+smoke run on a few **real** cases first:
+
+> Test set ready: 25 prompt / 25 scenario.
+> Smoke test 3 prompt cases before the full run? [Y/n]
+
+Skip the offer only when the user has asked to run everything unattended.
+
+**1. Produce the artifacts without paying for inference.**
+
+```
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override inference.enabled=false --override judge.enabled=false
+```
+
+Runs systematize and test_set only, producing the **full** taxonomy and the
+**full** 25+25 test set, cached under the real config's key.
+
+**2. Slice a few real rows.**
+
+```
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>.yaml --count 3
+```
+
+Prints a JSON summary and writes `artifacts/smoke/<suite>-prompt-3.jsonl`. Take
+the path from the summary's `out` field. Add `--kind scenario` only when the
+risk is inherently multi-turn; scenario cases cost far more per case.
+
+**3. Run inference and judge on the slice only.**
+
+```
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override run=<run>-smoke \
+  --override inference.test_set_path=<out path from step 2>
+```
+
+**4. Gate.** If the smoke run fails, **stop and report** — do not start the full
+run. Typical causes: a wrong `target.callable` path, missing credentials, the
+callable raising on its first tool call, a tool-schema mismatch, an undeployed
+judge model. Fix, repeat step 3 (steps 1-2 remain valid), then continue.
+
+The run prints its own `Headline:` block on success — target, judge model, and
+the scored counts. To re-read it, or to show the user where it landed:
+
+```
+assert-ai results status <suite> <run>-smoke
+```
+
+and in the viewer it is a **run inside the existing suite**, not a new suite
+card — the suite grid never shows it:
+
+```
+http://localhost:5174/suite/<suite>/<run>-smoke
+```
+
+A smoke run says the config *executes*. It says nothing about the rates — three
+cases is not a measurement, so never report a number from it. Two things read as
+breakage but are normal: the viewer's **audit/scenario tab is empty** (the slice
+is prompt-only, so `viewer_audit_rows.json` is `[]`), and a dimension may show a
+**smaller scored count than the slice size** when a case doesn't apply to it.
+
+**5. Full run** — Step 6, unchanged. `systematize` and `test_set` report CACHED.
+
+**Never substitute these:**
+
+- **Do not** lower `pipeline.test_set.prompt.sample_size` for a cheap run. That
+  block feeds the stage's `config_hash`, so changing it invalidates the cached
+  test set and cascades into inference and judge. It also yields no subset:
+  under `sampling.method: pairwise` the sample size is divided across the
+  covering-array tuples, so a small value drops most tuples and case text is
+  regenerated. You would validate cases the full run never scores, then pay to
+  regenerate it.
+- **Do not** reuse the real `run:` label. A separate label keeps smoke results
+  out of the real run's directory and prevents writing its
+  `.inference_config_hash` / `.judge_config_hash`.
+- **Do not** write the slice inside the suite root — `smoke_slice.py` refuses,
+  because it could clobber the published `test_set.jsonl`.
+
+**Why the full run stays cheap:** `pipeline.test_set` is never modified, and
+artifacts live at `<results_dir>/<suite>/artifacts/`, a sibling of the run dirs
+keyed by suite rather than run — the same mechanism that lets `baseline` and
+`acs-governed` share a cached systematization. Leaving systematize and test_set
+enabled in step 3 costs nothing (both are cache hits) and keeps the judge
+supplied with its taxonomy from context, so no `taxonomy_path` wiring is needed.
+
 ## Step 6 — Run sequentially
 
 ```
@@ -258,8 +372,10 @@ assert-ai run --config evals/<atomic_behavior>.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
-judge). If one run fails, **report it and continue** with the remaining configs.
-Note each `suite`/`run` for the report.
+judge). After a smoke run the first two stages report CACHED; if either
+regenerates, something changed the config — stop and find out what before
+trusting the comparison. If one run fails, **report it and continue** with the
+remaining configs. Note each `suite`/`run` for the report.
 
 ## Step 7 — Report
 
@@ -277,6 +393,11 @@ Offer next steps: raise `sample_size`, add a stratify dimension, apply an ACS gu
 the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 
 ## Step 8 — Close the loop in Clarity
+
+**Only when a `.clarity-protocol/` exists.** With user-supplied risks there is
+nothing to write back to — skip this step, mention once that you're skipping it,
+and instead offer Clarity discovery as a way to find failure modes this pass
+didn't cover.
 
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
@@ -331,12 +452,17 @@ Do this at the end of the domain you just measured:
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
    user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
    `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
-6. Confirm → `assert-ai run` → results table: one `user_disengagement` column.
+6. Confirm → offer a smoke run (Step 5a): generate artifacts with
+   `--override inference.enabled=false --override judge.enabled=false`, slice 3
+   real prompt cases with `smoke_slice.py`, run them under `run=baseline-smoke`.
+   They pass, so continue.
+7. `assert-ai run` → systematize and test_set report CACHED → results table: one
+   `user_disengagement` column.
    Headline the permissibility split from `results status --json` —
    `not_permissible_policy_violation_rate` (real harm got through) and
    `permissible_policy_violation_rate` (an allowed behavior was broken) — with
    `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
-7. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
+8. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
    measured baseline at evals/user_disengagement.yaml."
-8. Curate the example (Step 9): keep the atomic config and README, and export
+9. Curate the example (Step 9): keep the atomic config and README, and export
    `.clarity-protocol/` outside `examples/` only if the user wants the raw record.
