@@ -67,6 +67,26 @@ class FormatUsageLineTest(unittest.TestCase):
         usage = UsageAccumulator(calls=1, input_tokens=0, output_tokens=5)
         self.assertNotIn("cached", _format_usage_line(usage))
 
+    def test_renders_total_only_usage(self) -> None:
+        usage = UsageAccumulator(
+            requests=1,
+            calls=1,
+            total_tokens=123,
+        )
+        self.assertIn("123 total", _format_usage_line(usage))
+
+    def test_renders_mixed_detailed_and_total_only_usage(self) -> None:
+        usage = UsageAccumulator()
+        usage.add(
+            UsageStats(prompt_tokens=100, completion_tokens=20),
+            model="detailed",
+        )
+        usage.add(UsageStats(total_tokens=500), model="total-only")
+
+        line = _format_usage_line(usage)
+        self.assertIn("2 calls", line)
+        self.assertIn("100 in / 20 out / 620 total", line)
+
 
 class BuildRunMetricsTest(unittest.TestCase):
     def test_aggregates_per_stage_into_totals(self) -> None:
@@ -114,6 +134,7 @@ class BuildRunMetricsTest(unittest.TestCase):
         self.assertEqual(totals["calls"], 115)
         self.assertEqual(totals["input_tokens"], 875_000)
         self.assertEqual(totals["output_tokens"], 17_000)
+        self.assertEqual(totals["total_tokens"], 892_000)
         self.assertEqual(totals["cached_input_tokens"], 630_000)
         self.assertAlmostEqual(totals["cache_hit_rate"], 630_000 / 875_000)
         per_model = payload["per_model"]["azure/gpt-5.4-mini"]
@@ -125,6 +146,127 @@ class BuildRunMetricsTest(unittest.TestCase):
         self.assertEqual(payload["totals"]["calls"], 0)
         self.assertEqual(payload["totals"]["cache_hit_rate"], 0.0)
         self.assertEqual(payload["per_model"], {})
+
+    def test_records_estimate_and_actual_error(self) -> None:
+        stage_usage = {
+            "judge": {
+                "calls": 2,
+                "input_tokens": 800,
+                "output_tokens": 200,
+                "cached_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "per_model": {},
+            },
+        }
+        estimate = {
+            "total_tokens": 1_100,
+            "input_tokens": 900,
+            "output_tokens": 200,
+            "calls": 2,
+        }
+
+        payload = _build_run_metrics(
+            stage_usage,
+            total_elapsed=1.0,
+            token_estimate=estimate,
+        )
+
+        self.assertEqual(payload["token_estimate"], estimate)
+        accuracy = payload["token_estimate_accuracy"]
+        self.assertEqual(accuracy["status"], "available")
+        self.assertEqual(accuracy["actual_total_tokens"], 1_000)
+        self.assertEqual(accuracy["difference_tokens"], -100)
+        self.assertAlmostEqual(accuracy["difference_ratio"], -100 / 1_100)
+        self.assertAlmostEqual(
+            accuracy["absolute_percentage_error"],
+            100 / 1_100,
+        )
+
+    def test_marks_accuracy_unavailable_when_usage_is_incomplete(self) -> None:
+        stage_usage = {
+            "judge": {
+                "requests": 2,
+                "calls": 1,
+                "missing_usage_calls": 1,
+                "input_tokens": 800,
+                "output_tokens": 200,
+                "cached_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "per_model": {},
+            },
+        }
+
+        payload = _build_run_metrics(
+            stage_usage,
+            total_elapsed=1.0,
+            token_estimate={"total_tokens": 1_100},
+        )
+
+        accuracy = payload["token_estimate_accuracy"]
+        self.assertEqual(accuracy["status"], "unavailable")
+        self.assertEqual(accuracy["reason"], "provider_usage_incomplete")
+        self.assertEqual(accuracy["usage_coverage"], 0.5)
+
+    def test_marks_accuracy_unavailable_when_pipeline_fails(self) -> None:
+        payload = _build_run_metrics(
+            {
+                "judge": {
+                    "requests": 1,
+                    "calls": 1,
+                    "input_tokens": 800,
+                    "output_tokens": 200,
+                    "per_model": {},
+                },
+            },
+            total_elapsed=1.0,
+            token_estimate={"total_tokens": 1_100},
+            run_completed=False,
+        )
+
+        accuracy = payload["token_estimate_accuracy"]
+        self.assertEqual(accuracy["status"], "unavailable")
+        self.assertEqual(accuracy["reason"], "pipeline_incomplete")
+
+    def test_marks_accuracy_unavailable_when_pipeline_is_partial(self) -> None:
+        payload = _build_run_metrics(
+            {
+                "judge": {
+                    "requests": 1,
+                    "calls": 1,
+                    "total_tokens": 1_000,
+                    "input_tokens": 800,
+                    "output_tokens": 200,
+                    "per_model": {},
+                },
+            },
+            total_elapsed=1.0,
+            token_estimate={"total_tokens": 1_100},
+            run_partial=True,
+        )
+
+        accuracy = payload["token_estimate_accuracy"]
+        self.assertEqual(accuracy["status"], "unavailable")
+        self.assertEqual(accuracy["reason"], "pipeline_partial")
+
+    def test_accuracy_uses_provider_total_when_breakdown_is_missing(self) -> None:
+        payload = _build_run_metrics(
+            {
+                "judge": {
+                    "requests": 1,
+                    "calls": 1,
+                    "total_tokens": 1_000,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "per_model": {},
+                },
+            },
+            total_elapsed=1.0,
+            token_estimate={"total_tokens": 1_100},
+        )
+
+        accuracy = payload["token_estimate_accuracy"]
+        self.assertEqual(accuracy["status"], "available")
+        self.assertEqual(accuracy["actual_total_tokens"], 1_000)
 
 
 if __name__ == "__main__":

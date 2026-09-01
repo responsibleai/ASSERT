@@ -2,12 +2,14 @@
 # Licensed under the MIT License.
 
 import io
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from assert_ai.core.model_client import UsageStats, _record_usage
 from assert_ai.runner import run_pipeline
 
 
@@ -190,6 +192,103 @@ class RunnerStageFilterTest(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(seen, ["judge"])
+
+    def test_estimator_failure_does_not_block_pipeline(self) -> None:
+        seen: list[str] = []
+        stages = {
+            "taxonomy": SimpleNamespace(
+                SCOPE="suite",
+                SUITE_OUTPUT=None,
+                run=self._async_recorder("taxonomy", seen),
+            )
+        }
+        with TemporaryDirectory() as tmp_dir:
+            ctx = {
+                "stages": [("taxonomy", {})],
+                "suite_root": str(Path(tmp_dir) / "suite"),
+                "run_root": None,
+            }
+            with (
+                patch("assert_ai.runner._load_context", return_value=ctx),
+                patch("assert_ai.runner._write_suite_metadata"),
+                patch("assert_ai.runner.STAGES", stages),
+                patch(
+                    "assert_ai.core.token_estimator.estimate_pipeline_tokens",
+                    side_effect=RuntimeError("estimator failed"),
+                ),
+                self.assertLogs("assert_ai.runner", level="WARNING") as logs,
+            ):
+                rc = run_pipeline(config="config.yaml")
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, ["taxonomy"])
+        self.assertIn("Token estimate unavailable", "\n".join(logs.output))
+
+    def test_partial_stage_marks_estimate_accuracy_unavailable(self) -> None:
+        async def partial_stage(
+            ctx: dict[str, object],
+            raw_cfg: dict[str, object],
+        ) -> dict[str, object]:
+            _record_usage(
+                UsageStats(
+                    prompt_tokens=80,
+                    completion_tokens=20,
+                    total_tokens=100,
+                ),
+                model="test/model",
+            )
+            return {"_summary": {"errored_count": 1}}
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            run_root = root / "run"
+            ctx = {
+                "stages": [("inference", {})],
+                "suite_root": str(root / "suite"),
+                "run_root": str(run_root),
+            }
+            manifest = SimpleNamespace(
+                started_at="",
+                status="running",
+                ended_at=None,
+                stages={},
+                stage_timings={},
+                to_dict=lambda: {},
+            )
+            estimate = SimpleNamespace(
+                to_dict=lambda: {"total_tokens": 110}
+            )
+            with (
+                patch("assert_ai.runner._load_context", return_value=ctx),
+                patch("assert_ai.runner._write_suite_metadata"),
+                patch("assert_ai.runner._build_manifest", return_value=manifest),
+                patch("assert_ai.runner._write_manifest"),
+                patch(
+                    "assert_ai.runner.STAGES",
+                    {
+                        "inference": SimpleNamespace(
+                            SCOPE="run",
+                            SUITE_OUTPUT=None,
+                            run=partial_stage,
+                        )
+                    },
+                ),
+                patch(
+                    "assert_ai.core.token_estimator.estimate_pipeline_tokens",
+                    return_value=estimate,
+                ),
+            ):
+                rc = run_pipeline(config="config.yaml")
+
+            metrics = json.loads(
+                (run_root / "metrics.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            metrics["token_estimate_accuracy"]["reason"],
+            "pipeline_partial",
+        )
 
 
 if __name__ == "__main__":

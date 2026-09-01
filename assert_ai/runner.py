@@ -291,13 +291,32 @@ def _format_token_count(value: int) -> str:
 
 def _format_usage_line(usage: UsageAccumulator | None) -> str:
     """Render a compact ' | N calls · IN→OUT tok · X% cached' suffix."""
-    if usage is None or usage.calls == 0:
+    if usage is None or (usage.requests == 0 and usage.calls == 0):
         return ""
-    parts = [
-        f"{usage.calls} call{'s' if usage.calls != 1 else ''}",
-        f"{_format_token_count(usage.input_tokens)} in / "
-        f"{_format_token_count(usage.output_tokens)} out",
-    ]
+    request_count = usage.requests or usage.calls
+    if usage.calls == 0:
+        return (
+            f" | {request_count} call{'s' if request_count != 1 else ''}"
+            " · token usage unavailable"
+        )
+    parts = [f"{request_count} call{'s' if request_count != 1 else ''}"]
+    if usage.input_tokens or usage.output_tokens:
+        token_summary = (
+            f"{_format_token_count(usage.input_tokens)} in / "
+            f"{_format_token_count(usage.output_tokens)} out"
+        )
+        detailed_total = usage.input_tokens + usage.output_tokens
+        if usage.total_tokens > detailed_total:
+            token_summary += (
+                f" / {_format_token_count(usage.total_tokens)} total"
+            )
+        parts.append(token_summary)
+    else:
+        parts.append(f"{_format_token_count(usage.total_tokens)} total")
+    if usage.missing_usage_calls:
+        parts.append(
+            f"{usage.calls}/{request_count} usage reported"
+        )
     if usage.input_tokens > 0:
         pct = 100.0 * usage.cached_input_tokens / usage.input_tokens
         parts.append(f"{pct:.1f}% cached")
@@ -307,20 +326,43 @@ def _format_usage_line(usage: UsageAccumulator | None) -> str:
 def _build_run_metrics(
     stage_usage: dict[str, dict[str, Any]],
     total_elapsed: float,
+    token_estimate: dict[str, Any] | None = None,
+    run_completed: bool = True,
+    run_partial: bool = False,
 ) -> dict[str, Any]:
     """Aggregate per-stage usage into the metrics.json payload."""
     totals = {
+        "requests": 0,
         "calls": 0,
+        "missing_usage_calls": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "total_tokens": 0,
         "cached_input_tokens": 0,
         "cache_creation_input_tokens": 0,
     }
     per_model: dict[str, dict[str, int]] = {}
     for stage_payload in stage_usage.values():
+        stage_calls = int(stage_payload.get("calls", 0) or 0)
+        totals["requests"] += int(
+            stage_payload.get("requests", stage_calls) or 0
+        )
         totals["calls"] += stage_payload.get("calls", 0)
+        totals["missing_usage_calls"] += int(
+            stage_payload.get("missing_usage_calls", 0) or 0
+        )
         totals["input_tokens"] += stage_payload.get("input_tokens", 0)
         totals["output_tokens"] += stage_payload.get("output_tokens", 0)
+        totals["total_tokens"] += int(
+            stage_payload.get(
+                "total_tokens",
+                (
+                    int(stage_payload.get("input_tokens", 0) or 0)
+                    + int(stage_payload.get("output_tokens", 0) or 0)
+                ),
+            )
+            or 0
+        )
         totals["cached_input_tokens"] += stage_payload.get("cached_input_tokens", 0)
         totals["cache_creation_input_tokens"] += stage_payload.get(
             "cache_creation_input_tokens", 0
@@ -329,27 +371,108 @@ def _build_run_metrics(
             bucket = per_model.setdefault(
                 model,
                 {
+                    "requests": 0,
                     "calls": 0,
+                    "missing_usage_calls": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
+                    "total_tokens": 0,
                     "cached_input_tokens": 0,
                     "cache_creation_input_tokens": 0,
                 },
             )
             for key, value in model_stats.items():
                 bucket[key] = bucket.get(key, 0) + value
+            if "total_tokens" not in model_stats:
+                bucket["total_tokens"] += int(
+                    model_stats.get("input_tokens", 0) or 0
+                ) + int(model_stats.get("output_tokens", 0) or 0)
     totals["cache_hit_rate"] = (
         totals["cached_input_tokens"] / totals["input_tokens"]
         if totals["input_tokens"] > 0
         else 0.0
     )
-    return {
+    totals["usage_coverage"] = (
+        totals["calls"] / totals["requests"]
+        if totals["requests"] > 0
+        else 0.0
+    )
+    payload: dict[str, Any] = {
         "schema_version": 1,
         "elapsed_s": round(total_elapsed, 3),
         "stages": stage_usage,
         "per_model": per_model,
         "totals": totals,
     }
+    if token_estimate:
+        payload["token_estimate"] = token_estimate
+        estimated_total = int(token_estimate.get("total_tokens", 0) or 0)
+        actual_total = totals["total_tokens"]
+        if estimated_total > 0:
+            if not run_completed:
+                payload["token_estimate_accuracy"] = {
+                    "status": "unavailable",
+                    "reason": "pipeline_incomplete",
+                }
+            elif run_partial:
+                payload["token_estimate_accuracy"] = {
+                    "status": "unavailable",
+                    "reason": "pipeline_partial",
+                }
+            elif totals["requests"] == 0:
+                payload["token_estimate_accuracy"] = {
+                    "status": "unavailable",
+                    "reason": "no_usage_reported",
+                }
+            elif totals["missing_usage_calls"] > 0:
+                payload["token_estimate_accuracy"] = {
+                    "status": "unavailable",
+                    "reason": "provider_usage_incomplete",
+                    "usage_coverage": totals["usage_coverage"],
+                }
+            else:
+                difference = actual_total - estimated_total
+                payload["token_estimate_accuracy"] = {
+                    "status": "available",
+                    "actual_total_tokens": actual_total,
+                    "estimated_total_tokens": estimated_total,
+                    "difference_tokens": difference,
+                    "difference_ratio": difference / estimated_total,
+                    "absolute_percentage_error": abs(difference) / estimated_total,
+                }
+    return payload
+
+
+def _log_token_estimate(token_estimate: dict[str, Any]) -> None:
+    """Print a compact pre-run estimate and stage breakdown."""
+    total = int(token_estimate.get("total_tokens", 0) or 0)
+    if total <= 0:
+        return
+    lower = int(token_estimate.get("lower_bound_tokens", total) or total)
+    upper = int(token_estimate.get("upper_bound_tokens", total) or total)
+    calls = int(token_estimate.get("calls", 0) or 0)
+    input_tokens = int(token_estimate.get("input_tokens", 0) or 0)
+    output_tokens = int(token_estimate.get("output_tokens", 0) or 0)
+    log.info(
+        "Estimated token usage: "
+        f"~{_format_token_count(total)} total "
+        f"(likely {_format_token_count(lower)}-{_format_token_count(upper)}; "
+        f"{_format_token_count(input_tokens)} in / "
+        f"{_format_token_count(output_tokens)} out across "
+        f"{calls} tracked call{'s' if calls != 1 else ''})"
+    )
+    stages = token_estimate.get("stages")
+    if isinstance(stages, dict) and stages:
+        breakdown = ", ".join(
+            f"{name} {_format_token_count(int(stage.get('total_tokens', 0) or 0))}"
+            for name, stage in stages.items()
+            if isinstance(stage, dict)
+        )
+        if breakdown:
+            log.info(f"  Estimated by stage: {breakdown}")
+    for note in token_estimate.get("notes") or []:
+        if isinstance(note, str) and note:
+            log.info(f"  Estimate note: {note}")
 
 
 def _print_stage_done(
@@ -744,6 +867,22 @@ def run_pipeline(
 
         stages_to_run.append((stage_name, module, raw_cfg))
 
+    token_estimate_payload: dict[str, Any] | None = None
+    try:
+        from assert_ai.core.token_estimator import estimate_pipeline_tokens
+
+        token_estimate_payload = estimate_pipeline_tokens(
+            ctx,
+            stages_to_run,
+            forced_stages=requested_force_stages,
+        ).to_dict()
+        _log_token_estimate(token_estimate_payload)
+    except ConfigError as exc:
+        log.warning(f"Token estimate unavailable: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        # Estimation is advisory and must never prevent the configured run.
+        log.warning(f"Token estimate unavailable: {exc}")
+
     run_root = Path(ctx["run_root"]) if ctx.get("run_root") else None
     selected_run_stage = any(module.SCOPE == "run" for _, module, _ in stages_to_run)
     manifest = None
@@ -795,6 +934,7 @@ def run_pipeline(
             run_root=run_root,
             pipeline_start=pipeline_start,
             stage_usage=stage_usage,
+            token_estimate=token_estimate_payload,
             heartbeat=heartbeat,
             watchdog=watchdog,
         )
@@ -816,12 +956,14 @@ def _run_stages_inner(
     run_root: Path | None,
     pipeline_start: float,
     stage_usage: dict[str, dict[str, Any]],
+    token_estimate: dict[str, Any] | None,
     heartbeat: ManifestHeartbeat | None,
     watchdog: PipelineWatchdog | None,
 ) -> int:
     """Stage execution loop. Extracted so the outer function can manage
     heartbeat/watchdog lifecycle in a single try/finally."""
     failed_stage: str | None = None
+    pipeline_partial = False
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -868,6 +1010,7 @@ def _run_stages_inner(
             stage_errored_count = int(
                 ((stage_result or {}).get("_summary") or {}).get("errored_count", 0) or 0
             )
+            pipeline_partial = pipeline_partial or stage_errored_count > 0
             if (
                 cache_supported
                 and module.SCOPE == "suite"
@@ -920,7 +1063,10 @@ def _run_stages_inner(
             discard_artifact_plan(ctx, artifact_plans[stage_name])
 
         elapsed = time.monotonic() - stage_start
-        if usage_acc is not None and usage_acc.calls > 0:
+        if (
+            usage_acc is not None
+            and (usage_acc.requests > 0 or usage_acc.calls > 0)
+        ):
             stage_payload = usage_acc.to_dict()
             stage_payload["elapsed_s"] = round(elapsed, 3)
             stage_usage[stage_name] = stage_payload
@@ -959,21 +1105,64 @@ def _run_stages_inner(
 
     total_elapsed = time.monotonic() - pipeline_start
     metrics_written = False
-    if run_root is not None and stage_usage:
+    if run_root is not None and (stage_usage or token_estimate):
         try:
             metrics_path = run_root / "metrics.json"
-            payload = _build_run_metrics(stage_usage, total_elapsed)
+            payload = _build_run_metrics(
+                stage_usage,
+                total_elapsed,
+                token_estimate=token_estimate,
+                run_completed=failed_stage is None,
+                run_partial=pipeline_partial,
+            )
             write_json(metrics_path, payload)
             metrics_written = True
             totals = payload["totals"]
-            if totals["calls"]:
+            if totals["requests"] or totals["calls"]:
                 cache_pct = 100.0 * totals["cache_hit_rate"]
+                if totals["input_tokens"] or totals["output_tokens"]:
+                    detailed_total = (
+                        totals["input_tokens"] + totals["output_tokens"]
+                    )
+                    token_summary = (
+                        f"{_format_token_count(totals['input_tokens'])} in / "
+                        f"{_format_token_count(totals['output_tokens'])} out"
+                    )
+                    if totals["total_tokens"] > detailed_total:
+                        token_summary += (
+                            " / "
+                            f"{_format_token_count(totals['total_tokens'])} total"
+                        )
+                else:
+                    token_summary = (
+                        f"{_format_token_count(totals['total_tokens'])} total"
+                    )
+                request_count = totals["requests"] or totals["calls"]
+                usage_coverage = ""
+                if totals["missing_usage_calls"]:
+                    usage_coverage = (
+                        f" · {totals['calls']}/{request_count} usage reported"
+                    )
                 log.info(
                     "Token usage: "
-                    f"{totals['calls']} calls · "
-                    f"{_format_token_count(totals['input_tokens'])} in / "
-                    f"{_format_token_count(totals['output_tokens'])} out · "
-                    f"{cache_pct:.1f}% cached"
+                    f"{request_count} "
+                    f"call{'s' if request_count != 1 else ''} · "
+                    f"{token_summary}{usage_coverage} · {cache_pct:.1f}% cached"
+                )
+            accuracy = payload.get("token_estimate_accuracy")
+            if (
+                isinstance(accuracy, dict)
+                and accuracy.get("status") == "available"
+            ):
+                difference_ratio = float(
+                    accuracy.get("difference_ratio", 0.0) or 0.0
+                )
+                log.info(
+                    "Token estimate accuracy: "
+                    f"actual {_format_token_count(int(accuracy['actual_total_tokens']))} "
+                    f"vs estimated "
+                    f"{_format_token_count(int(accuracy['estimated_total_tokens']))} "
+                    f"({difference_ratio:+.1%})"
                 )
         except Exception:  # noqa: BLE001
             log.debug("Failed to write metrics.json", exc_info=True)

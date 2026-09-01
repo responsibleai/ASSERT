@@ -90,3 +90,22 @@ def load_toolset_file(path: str | Path) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         raise ValueError("toolset YAML must be a list or a mapping with a 'tools' list")
     return normalize_tool_defs(data)
+
+
+def resolve_toolset_path(
+    path: str | Path,
+    *,
+    config_path: Path | None = None,
+) -> Path:
+    """Resolve a toolset using the same config-dir then cwd lookup as runtime."""
+    resolved = Path(path).expanduser()
+    if resolved.is_absolute():
+        return resolved
+    candidates = []
+    if config_path is not None:
+        candidates.append((config_path.parent / resolved).resolve())
+    candidates.append((Path.cwd() / resolved).resolve())
+    return next(
+        (candidate for candidate in candidates if candidate.exists()),
+        candidates[0],
+    )
