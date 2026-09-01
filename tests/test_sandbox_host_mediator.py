@@ -33,6 +33,7 @@ from assert_ai.integrations.sandbox.session import (
     SandboxedEndpointSession,
     _reconcile_action_claims,
 )
+from assert_ai.integrations.sandbox.tool_host import AgentHooksToolHost
 
 
 def _context(*, call_id: str, tool: str, case_id: str = "case-1") -> dict:
@@ -194,6 +195,70 @@ def test_remote_pass_result_is_explicitly_target_reported(tmp_path: Path):
     assert row["decision_source"] == "host_mediator"
     assert row["result_source"] == "target_reported"
     assert row["returned"] == {"status": "ok"}
+
+
+def test_tool_host_rejects_unserializable_arguments_before_mediation():
+    executed: list[dict] = []
+    host = AgentHooksToolHost(
+        tools={"lookup": lambda args: executed.append(args)},
+        mediator=_mediator(),
+        agent_id="agent",
+        session_id="session",
+    )
+
+    with pytest.raises(ValueError, match="JSON-native"):
+        host.call_tool("lookup", {"value": object()})
+
+    assert executed == []
+    assert host.records == []
+
+
+def test_tool_host_canonicalizes_arguments_once_for_mediation_execution_and_evidence(
+    tmp_path: Path,
+):
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        "interactions:\n  - match: lookup\n    mode: pass\n"
+        "default: {mode: block}\n",
+        encoding="utf-8",
+    )
+    server, thread, port, ledger = start_host_mediator(
+        policy_path=policy,
+        mocks_path=None,
+        cassette_dir=None,
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        access_token="test-token",
+    )
+    executed: list[dict] = []
+
+    def lookup(args: dict) -> dict:
+        executed.append(args)
+        return {"status": "ok"}
+
+    try:
+        host = AgentHooksToolHost(
+            tools={"lookup": lookup},
+            mediator=RemoteActionMediator(
+                f"http://127.0.0.1:{port}",
+                "test-token",
+            ),
+            agent_id="agent",
+            session_id="session",
+        )
+        expected = {"coordinates": [1, 2]}
+
+        returned = host.call_tool("lookup", {"coordinates": (1, 2)})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert returned == {"status": "ok"}
+    assert executed == [expected]
+    assert ledger.drain()[0]["args"] == expected
+    assert host.records[-1].args == expected
+    assert host.records[-1].pre_context["tool_call"]["args"] == expected
+    assert host.records[-1].post_context["tool_call"]["args"] == expected
 
 
 def test_remote_pass_bounds_large_completion_after_execution(tmp_path: Path):

@@ -4,6 +4,7 @@
 """A sandbox tool host that emits Agent Hooks-shaped contexts around tool calls."""
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from collections.abc import Callable, Mapping
@@ -14,6 +15,21 @@ from .agent_hooks_context import AgentHooksContextBuilder
 from .records import MediationDecision, MediationRecord
 
 ToolImpl = Callable[[dict[str, Any]], Any]
+
+
+def _canonicalize_tool_args(args: dict[str, Any] | None) -> dict[str, Any]:
+    """Create the one JSON-native argument snapshot used by every boundary."""
+    raw_args = {} if args is None else args
+    if not isinstance(raw_args, dict):
+        raise ValueError("tool arguments must be a JSON object")
+    try:
+        encoded = json.dumps(raw_args, ensure_ascii=False, allow_nan=False)
+        canonical = json.loads(encoded)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("tool arguments must contain only JSON-native values") from exc
+    if not isinstance(canonical, dict):
+        raise ValueError("tool arguments must be a JSON object")
+    return canonical
 
 
 class Mediator(Protocol):
@@ -54,7 +70,7 @@ class AgentHooksToolHost:
         self.records: list[MediationRecord] = []
 
     def call_tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
-        args = dict(args or {})
+        args = _canonicalize_tool_args(args)
         call_id = f"tc-{int(time.time() * 1000):x}-{secrets.token_hex(3)}"
         pre = self._builder.pre_tool_call(call_id=call_id, name=name, args=args)
         impl = self._tools.get(name)
