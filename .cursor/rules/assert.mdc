@@ -190,7 +190,7 @@ temperature 1.0; gpt-5 can't be pinned lower) so two runs of the same config dri
 cases per behavior? `25` = the floor and the recommendation, `50`+ = tightest — same size for prompt and scenario."*
 The floor protects coverage, not precision — prefer `50`+ for a small expected delta. The governed config is a
 byte-identical copy that inherits this size — see `govern-and-remeasure.md`. **`max_turns` is fixed at `6`** —
-ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value, not research-derived, and
+the config template's value, written explicitly because ASSERT's fallback for an omitted `max_turns` is `10`, not research-derived, and
 **identical in baseline and governed configs** or the "only ACS
 differs" comparison breaks. A genuinely single-turn harm uses `prompt` cases, which ignore the knob.
 After generation, show the user the resolved `behavior.description`, `context`,

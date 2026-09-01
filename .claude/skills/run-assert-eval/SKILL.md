@@ -332,8 +332,10 @@ Two things that workflow will ask you to decide, and that matter downstream:
   Write the chosen value into the config with an inline review comment
   (`# min for behavior-category coverage -- user should review; 50+ tightens the
   signal`) so it reads as a floor the user still owns, not a settled default.
-- **`max_turns` is fixed at `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and
-  the config template's value. The research does not move it, and it must be
+- **`max_turns` is fixed at `6`** — the config template's value, written
+  explicitly because ASSERT's fallback for an omitted `max_turns` is `10`
+  (`DEFAULT_TESTER_MAX_TURNS`, kept so configs written before this template
+  keep their original turn budget). The research does not move it, and it must be
   **identical in the baseline and governed configs** or the "only ACS differs"
   comparison breaks. A genuinely single-turn harm is expressed by writing `prompt`
   test cases, not by lowering the turn budget — `max_turns` is read only for

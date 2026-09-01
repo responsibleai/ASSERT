@@ -157,7 +157,7 @@ Fill from the candidate behavior (real schema field names):
 | `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently, and never accept a value below `behavior_category_count` (so **`≥25`**); recommend `25`, `50`+ for the tightest signal. Write it with the inline review comment: `# min for behavior-category coverage -- user should review; 50+ tightens the signal` |
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise; the same `≥ behavior_category_count` floor applies (see `govern-and-remeasure.md`), and the same inline review comment |
 | `pipeline.inference.target` | the target shape (see below) |
-| `pipeline.inference.max_turns` | **Fixed `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value. Not research-derived. Use the **same** value in the baseline and governed configs; a genuinely single-turn harm uses `prompt` cases, which ignore this knob. |
+| `pipeline.inference.max_turns` | **Fixed `6`** — the config template's value, written explicitly because ASSERT's fallback for an omitted `max_turns` is `10` (`DEFAULT_TESTER_MAX_TURNS`, kept so configs written before this template keep their original turn budget). Not research-derived. Use the **same** value in the baseline and governed configs; a genuinely single-turn harm uses `prompt` cases, which ignore this knob. |
 | `pipeline.judge.preset` | `safety-extended` for nuanced harms (additive). **Not `safety-core`** — it replaces both built-in rubrics; skip it if a library preset suggests it |
 | `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
@@ -250,8 +250,8 @@ Fill from the candidate behavior (real schema field names):
 
 > **Leave `pipeline.inference.max_turns` at `6`; do not lower it (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
-> cases (single-turn `prompt` cases ignore it). `6` is the ASSERT default
-> (`DEFAULT_TESTER_MAX_TURNS`) and gives a realistic persistence/erosion arc room to
+> cases (single-turn `prompt` cases ignore it). `6` is the config template's value
+> and gives a realistic persistence/erosion arc room to
 > land — many of the strongest findings are **multi-turn erosion** (the agent holds
 > firm for a few turns, then softens into a dose/clearance/leak under pressure). A low
 > cap like `2` truncates the attack before it lands and **understates the bad-event

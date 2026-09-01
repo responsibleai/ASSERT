@@ -79,8 +79,11 @@ pipeline:
       system_prompt: |-
         <Optional target system prompt, or omit to use each test case's prompt.>
     tester: {}
-    max_turns: 6  # Fixed: ASSERT's default (DEFAULT_TESTER_MAX_TURNS). Do not change; a
-                  # single-turn harm uses `prompt` cases, which ignore this knob.
+    max_turns: 6  # Fixed: the preferred budget for harm-eval configs. Written
+                  # explicitly on purpose — ASSERT's fallback for an omitted
+                  # max_turns is 10, kept for configs that predate this template.
+                  # Do not change; a single-turn harm uses `prompt` cases, which
+                  # ignore this knob.
     concurrency: 1
 
   judge:
