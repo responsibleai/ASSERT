@@ -37,7 +37,7 @@ load_dotenv()
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_mcp_adapters.tools import load_mcp_tools
-from langchain_openai import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -131,12 +131,7 @@ def _build_llm() -> BaseChatModel:
     - GPT-family deployments (model name starts with ``gpt``) are served via
       the Azure OpenAI gateway (``/openai/deployments/{name}``) and use
       ``AzureChatOpenAI``.
-    - Everything else (DeepSeek, Mistral, Llama, Phi, Cohere, …) is served
-      via Azure AI Inference (``/models/chat/completions``) and uses
-      ``AzureAIChatCompletionsModel`` from ``langchain-azure-ai``. These
-      deployments typically run behind SGLang/vLLM, which require the
-      ``model`` body field to be populated — something Azure OpenAI's path
-      style does not do.
+    - Compatible Foundry deployments use ``/openai/v1/chat/completions`` with the deployment name in ``model``.
     """
     deployment = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
 
@@ -172,14 +167,12 @@ def _build_llm() -> BaseChatModel:
             kwargs["temperature"] = 0.0
         return AzureChatOpenAI(**kwargs)
 
-    # Azure AI Inference route — endpoint is ``{base}/models``, deployment
-    # passed as ``model`` (populates the request body field SGLang requires).
-    from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
-
-    inference_endpoint = base.rstrip("/") + "/models"
-    return AzureAIChatCompletionsModel(
-        endpoint=inference_endpoint,
-        credential=key,
+    # ChatOpenAI appends ``/chat/completions`` and sends the deployment name in
+    # the ``model`` field required by the Azure OpenAI v1 endpoint.
+    inference_endpoint = base.rstrip("/") + "/openai/v1"
+    return ChatOpenAI(
+        base_url=inference_endpoint,
+        api_key=key,
         model=deployment,
         temperature=0.0,
         max_tokens=4000,

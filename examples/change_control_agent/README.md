@@ -92,7 +92,7 @@ rule-breaking.
 From the repo root:
 
 ```bash
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 cp examples/change_control_agent/.env.example examples/change_control_agent/.env
 # Edit the .env: AZURE_API_KEY and AZURE_API_BASE are required.
 

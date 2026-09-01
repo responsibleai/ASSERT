@@ -22,8 +22,7 @@ Run from the repo root:
 
   python scripts/render_trade_off.py
 
-This script intentionally stays stdlib-friendly: only matplotlib (already
-a base dependency of assert-ai) is required.
+Install its dependencies from ``scripts/requirements.txt`` before running.
 """
 from __future__ import annotations
 
@@ -35,7 +34,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-# matplotlib is a base dependency of assert-ai (see pyproject.toml).
+# Install optional script dependencies from scripts/requirements.txt.
 import matplotlib
 
 matplotlib.use("Agg")

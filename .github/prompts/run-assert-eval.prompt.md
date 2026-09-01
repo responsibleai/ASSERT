@@ -37,9 +37,9 @@ Copilot is for *answering questions* and *synthesis* — direct answers, failure
 
 1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install from PyPI — not an editable install of the user's own repo:
    ```
-   python -m pip install "assert-ai[otel]"
+    python -m pip install "assert-ai[phoenix]"
    ```
-   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via `litellm`'s own dependency — no separate extra to install. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
+    The target project owns its agent framework and OpenInference instrumentor dependencies. For repository examples, install the adjacent `requirements.txt`; for a customer project, use that project's existing dependency manifest. `target.endpoint` needs `aiohttp`, which ships with ASSERT. Use `pip install -e ".[phoenix]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
 
 2. **Clarity MCP server available** (needed only for Path A): the `clarity-agent` MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`, …) are callable in this session. Clarity is the risk-discovery engine — the skill drives its real MCP tools, it does not reimplement it. If the tools are missing, the server is not wired up yet: offer `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]` extra, run `clarity embed .` to generate `.vscode/mcp.json`, reload MCP servers) and confirm the LLM provider is configured (`clarity doctor` — Clarity supports GitHub Copilot, Anthropic, OpenAI, Azure AI, and Gemini). **This is not a blocker**: if the tools can't be made available, or the user would rather not set them up now, say so plainly and continue on Path B (Step 1b). Never strand the user on MCP setup when they came to measure something.
 

@@ -8,7 +8,7 @@ This is the recommended starting point for evaluating any agent or multi-agent s
 |---|---|
 | `agent.py` | The LangGraph agent itself, its five tools, and the `chat` callable ASSERT evaluates. |
 | `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
-| `auto_trace.py` | A thin re-export shim used by the tracing docs and CI. Current configs don't need it — ASSERT installs the instrumentors itself when `target.trace` is set. |
+| `auto_trace.py` | A thin re-export shim used by the tracing docs and CI. Current configs don't need it — ASSERT activates the instrumentors installed by this example's requirements when `target.trace` is set. |
 | `README.md` | This file. |
 
 Mock tools are defined inline in `agent.py`, so there is no separate `tools.py`.
@@ -21,7 +21,7 @@ Mock tools are defined inline in `agent.py`, so there is no separate `tools.py`.
 generated test case
       |
       v
-assert-ai inference loop  (installs OTel instrumentors)
+assert-ai inference loop  (activates installed OTel instrumentors)
       |
       v
 chat(message)
@@ -109,7 +109,8 @@ From the repo root:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 phoenix serve  # optional trace UI
