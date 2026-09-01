@@ -12,8 +12,13 @@ no pandas dependency in the critical path.
 
 from __future__ import annotations
 
+import heapq
+import json
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from numbers import Integral, Real
+from sys import maxsize as _PHOENIX_RAW_QUERY_LIMIT
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -30,6 +35,10 @@ RECOMMENDED_LLM_ATTRIBUTES = frozenset({
     "llm.token_count.completion",
     "output.value",
 })
+
+# Legacy DataFrame clients cannot express an unbounded query; use the largest
+# portable GraphQL Int while keeping the supported raw API genuinely cursor-complete.
+_PHOENIX_LEGACY_QUERY_LIMIT = 2_147_483_647
 
 
 @runtime_checkable
@@ -122,7 +131,7 @@ class PhoenixCollector:
     Phoenix is an OPTIONAL dependency — only imported when instantiated.
     Install: pip install 'assert-ai[phoenix]'
 
-    Queries Phoenix for DataFrame, then converts to list[OTelSpan] internally.
+    Uses Phoenix's event-bearing span API and converts to list[OTelSpan].
     """
 
     def __init__(
@@ -151,8 +160,6 @@ class PhoenixCollector:
         end_time: str | None = None,
         trace_ids: list[str] | None = None,
     ) -> list[Any]:
-        import pandas as pd
-
         name = project_name or self._default_project
         if name is None:
             raise ValueError("project_name required")
@@ -160,11 +167,44 @@ class PhoenixCollector:
         end_datetime = _parse_datetime(end_time, field_name="end_time")
 
         try:
-            df: pd.DataFrame = self._client.spans.get_spans_dataframe(
+            span_client = self._client.spans
+            raw_get_spans = getattr(span_client, "get_spans", None)
+            if callable(raw_get_spans):
+                query: dict[str, Any] = {
+                    "project_identifier": name,
+                    "start_time": start_datetime,
+                    "end_time": end_datetime,
+                    "limit": _PHOENIX_RAW_QUERY_LIMIT,
+                }
+                if trace_ids:
+                    query["trace_ids"] = list(trace_ids)
+                raw_spans = raw_get_spans(**query)
+                if not isinstance(raw_spans, Sequence) or isinstance(raw_spans, (str, bytes)):
+                    raise TypeError("Phoenix get_spans() returned a non-sequence value")
+                return _order_spans([
+                    _phoenix_span_to_otel_span(raw_span)
+                    for raw_span in raw_spans
+                ])
+
+            # Compatibility fallback for clients predating the raw span API.
+            # It cannot recover span events, so supported clients are tested on
+            # the raw path and this remains only a bounded legacy escape hatch.
+            import pandas as pd  # type: ignore[import-not-found]
+
+            df: pd.DataFrame = span_client.get_spans_dataframe(
                 project_identifier=name,
                 start_time=start_datetime,
                 end_time=end_datetime,
+                limit=_PHOENIX_LEGACY_QUERY_LIMIT,
             )
+            if trace_ids:
+                if "context.trace_id" not in df.columns:
+                    raise RuntimeError(
+                        "Phoenix DataFrame missing 'context.trace_id' column. "
+                        f"Available columns: {list(df.columns)}"
+                    )
+                df = df[df["context.trace_id"].isin(trace_ids)]
+            return _order_spans(_dataframe_to_otel_spans(df))
         except ConnectionError as exc:
             raise RuntimeError(
                 f"Cannot connect to Phoenix at {self._endpoint} "
@@ -172,17 +212,9 @@ class PhoenixCollector:
             ) from exc
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to fetch spans from Phoenix for project '{name}': {type(exc).__name__}: {exc}"
+                f"Failed to fetch spans from Phoenix for project '{name}': "
+                f"{type(exc).__name__}: {exc}"
             ) from exc
-        if trace_ids:
-            if "context.trace_id" not in df.columns:
-                raise RuntimeError(
-                    "Phoenix DataFrame missing 'context.trace_id' column. "
-                    f"Available columns: {list(df.columns)}"
-                )
-            df = df[df["context.trace_id"].isin(trace_ids)]
-
-        return _dataframe_to_otel_spans(df)
 
     def validate(self, spans: list[Any]) -> list[str]:
         return _validate_otel_spans(spans)
@@ -287,3 +319,119 @@ def _dataframe_to_otel_spans(df: Any) -> list[Any]:
             attributes=attrs,
         ))
     return spans
+
+
+def _phoenix_span_to_otel_span(raw: Mapping[str, Any]) -> "OTelSpan":
+    """Convert one event-bearing Phoenix API span to ASSERT's neutral shape."""
+    from assert_ai.core.otel import OTelSpan
+
+    context = raw.get("context") or {}
+    if not isinstance(context, Mapping):
+        raise ValueError("Phoenix span context must be an object")
+    raw_attributes = raw.get("attributes") or {}
+    if not isinstance(raw_attributes, Mapping):
+        raise ValueError("Phoenix span attributes must be an object")
+    attributes = dict(raw_attributes)
+    return OTelSpan(
+        trace_id=str(context.get("trace_id") or ""),
+        span_id=str(context.get("span_id") or ""),
+        parent_span_id=(str(raw["parent_id"]) if raw.get("parent_id") else None),
+        name=str(raw.get("name") or ""),
+        kind=str(
+            attributes.get("openinference.span.kind")
+            or raw.get("span_kind")
+            or "UNKNOWN"
+        ),
+        start_time_ns=_timestamp_to_ns(raw.get("start_time"), field_name="start_time"),
+        end_time_ns=_timestamp_to_ns(raw.get("end_time"), field_name="end_time"),
+        attributes=attributes,
+        status=str(raw.get("status_code") or "OK"),
+        events=_phoenix_events_to_otlp(raw.get("events") or []),
+    )
+
+
+def _phoenix_events_to_otlp(raw_events: Any) -> list[dict[str, Any]]:
+    """Preserve Phoenix event content in the OTLP-JSON shape ASSERT consumes."""
+    if not isinstance(raw_events, Sequence) or isinstance(raw_events, (str, bytes)):
+        raise ValueError("Phoenix span events must be a sequence")
+    events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        if not isinstance(raw_event, Mapping):
+            raise ValueError("Phoenix span event must be an object")
+        raw_attributes = raw_event.get("attributes") or {}
+        if not isinstance(raw_attributes, Mapping):
+            raise ValueError("Phoenix span event attributes must be an object")
+        event: dict[str, Any] = {
+            "name": str(raw_event.get("name") or ""),
+            "attributes": [
+                {"key": str(key), "value": _to_otlp_value(value)}
+                for key, value in raw_attributes.items()
+            ],
+        }
+        if raw_event.get("timestamp") is not None:
+            event["timeUnixNano"] = str(
+                _timestamp_to_ns(raw_event["timestamp"], field_name="event timestamp")
+            )
+        events.append(event)
+    return events
+
+
+def _to_otlp_value(value: Any) -> dict[str, Any]:
+    """Encode a Phoenix event attribute using OTLP's JSON value shape."""
+    if isinstance(value, bool):
+        return {"boolValue": value}
+    if isinstance(value, int):
+        return {"intValue": str(value)}
+    if isinstance(value, float):
+        return {"doubleValue": value}
+    if isinstance(value, (list, tuple)):
+        return {"arrayValue": {"values": [_to_otlp_value(item) for item in value]}}
+    if isinstance(value, Mapping):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return {"stringValue": "" if value is None else str(value)}
+
+
+def _order_spans(spans: list["OTelSpan"]) -> list["OTelSpan"]:
+    """Produce deterministic chronology with parent-first ordering on time ties."""
+    groups: defaultdict[tuple[int, str], list["OTelSpan"]] = defaultdict(list)
+    for span in spans:
+        groups[(span.start_time_ns, span.trace_id)].append(span)
+
+    ordered: list["OTelSpan"] = []
+    for group_key in sorted(groups):
+        group = groups[group_key]
+        by_id = {span.span_id: span for span in group}
+        if len(by_id) != len(group):
+            raise ValueError(
+                f"Phoenix returned duplicate span IDs for trace {group_key[1]!r}"
+            )
+
+        children: defaultdict[str, list[str]] = defaultdict(list)
+        indegree = {span_id: 0 for span_id in by_id}
+        for span in group:
+            parent_id = span.parent_span_id
+            if parent_id in by_id and parent_id != span.span_id:
+                children[parent_id].append(span.span_id)
+                indegree[span.span_id] += 1
+
+        pending = set(by_id)
+        ready = [span_id for span_id, count in indegree.items() if count == 0]
+        heapq.heapify(ready)
+        while pending:
+            if not ready:
+                # Break malformed parent cycles by the stable span ID rather
+                # than inheriting Phoenix's page/input order.
+                heapq.heappush(ready, min(pending))
+            span_id = heapq.heappop(ready)
+            if span_id not in pending:
+                continue
+            pending.remove(span_id)
+            ordered.append(by_id[span_id])
+            for child_id in sorted(children.get(span_id, [])):
+                if child_id not in pending:
+                    continue
+                indegree[child_id] -= 1
+                if indegree[child_id] == 0:
+                    heapq.heappush(ready, child_id)
+
+    return ordered

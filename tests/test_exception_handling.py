@@ -364,7 +364,7 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
             collector._endpoint = "http://localhost:6006"
             collector._default_project = "test-project"
             collector._client = MagicMock()
-            collector._client.spans.get_spans_dataframe.side_effect = ConnectionError("refused")
+            collector._client.spans.get_spans.side_effect = ConnectionError("refused")
 
             with self.assertRaises(RuntimeError) as ctx:
                 collector.get_spans(project_name="test-project")
