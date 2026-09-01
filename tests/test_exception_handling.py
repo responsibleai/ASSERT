@@ -361,9 +361,10 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
             from assert_ai.core.collector import PhoenixCollector
 
             collector = PhoenixCollector.__new__(PhoenixCollector)
+            collector._endpoint = "http://localhost:6006"
             collector._default_project = "test-project"
             collector._client = MagicMock()
-            collector._client.get_spans_dataframe.side_effect = ConnectionError("refused")
+            collector._client.spans.get_spans_dataframe.side_effect = ConnectionError("refused")
 
             with self.assertRaises(RuntimeError) as ctx:
                 collector.get_spans(project_name="test-project")
@@ -379,9 +380,10 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
             from assert_ai.core.collector import PhoenixCollector
 
             collector = PhoenixCollector.__new__(PhoenixCollector)
+            collector._endpoint = "http://localhost:6006"
             collector._default_project = "test-project"
             collector._client = MagicMock()
-            collector._client.get_spans_dataframe.side_effect = RuntimeError("unexpected")
+            collector._client.spans.get_spans_dataframe.side_effect = RuntimeError("unexpected")
 
             with self.assertRaises(RuntimeError) as ctx:
                 collector.get_spans(project_name="test-project")

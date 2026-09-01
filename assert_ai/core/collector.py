@@ -12,6 +12,8 @@ no pandas dependency in the critical path.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -130,13 +132,15 @@ class PhoenixCollector:
         project_name: str | None = None,
     ) -> None:
         try:
-            import phoenix as px
-            self._client = px.Client(endpoint=endpoint)
+            from phoenix.client import Client  # type: ignore[import-not-found]
+
+            self._client = Client(base_url=endpoint)
         except ImportError as e:
             raise ImportError(
                 "PhoenixCollector requires arize-phoenix. "
                 "Install with: pip install 'assert-ai[phoenix]'"
             ) from e
+        self._endpoint = endpoint
         self._default_project = project_name
 
     def get_spans(
@@ -152,16 +156,18 @@ class PhoenixCollector:
         name = project_name or self._default_project
         if name is None:
             raise ValueError("project_name required")
+        start_datetime = _parse_datetime(start_time, field_name="start_time")
+        end_datetime = _parse_datetime(end_time, field_name="end_time")
 
         try:
-            df: pd.DataFrame = self._client.get_spans_dataframe(
-                project_name=name,
-                start_time=start_time,
-                end_time=end_time,
+            df: pd.DataFrame = self._client.spans.get_spans_dataframe(
+                project_identifier=name,
+                start_time=start_datetime,
+                end_time=end_datetime,
             )
         except ConnectionError as exc:
             raise RuntimeError(
-                f"Cannot connect to Phoenix at {self._client._base_url if hasattr(self._client, '_base_url') else 'unknown'} "
+                f"Cannot connect to Phoenix at {self._endpoint} "
                 f"for project '{name}': {exc}"
             ) from exc
         except Exception as exc:
@@ -182,6 +188,58 @@ class PhoenixCollector:
         return _validate_otel_spans(spans)
 
 
+def _parse_datetime(value: str | None, *, field_name: str) -> datetime | None:
+    """Convert the collector protocol's ISO timestamp to Phoenix's datetime API."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be an ISO-8601 string")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a valid ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
+        raise ValueError(f"{field_name} must include a timezone offset")
+    return parsed.astimezone(UTC)
+
+
+def _is_missing(value: Any) -> bool:
+    """Return whether a scalar DataFrame value represents missing data."""
+    if value is None:
+        return True
+    try:
+        missing = value != value
+        return bool(missing)
+    except (TypeError, ValueError):
+        try:
+            import pandas as pd  # type: ignore[import-not-found]
+
+            return bool(pd.isna(value))
+        except (TypeError, ValueError):
+            return False
+
+
+def _timestamp_to_ns(value: Any, *, field_name: str) -> int:
+    """Normalize Phoenix numeric or timezone-aware timestamp values to nanoseconds."""
+    if _is_missing(value):
+        return 0
+    native_ns = getattr(value, "value", None)
+    if isinstance(native_ns, Integral) and not isinstance(native_ns, bool):
+        return int(native_ns)
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise ValueError(f"{field_name} must be timezone-aware")
+        return int(value.timestamp() * 1_000_000_000)
+    if isinstance(value, Real) and not isinstance(value, bool):
+        return int(value)  # type: ignore[arg-type]
+    if isinstance(value, str):
+        parsed = _parse_datetime(value, field_name=field_name)
+        assert parsed is not None
+        return int(parsed.timestamp() * 1_000_000_000)
+    raise TypeError(f"{field_name} has unsupported type {type(value).__name__}")
+
+
 def _dataframe_to_otel_spans(df: Any) -> list[Any]:
     """Convert an OpenInference-format DataFrame to list[OTelSpan].
 
@@ -190,23 +248,42 @@ def _dataframe_to_otel_spans(df: Any) -> list[Any]:
     from assert_ai.core.otel import OTelSpan
 
     spans = []
-    for _, row in df.iterrows():
+    for index, row in df.iterrows():
         attrs: dict[str, Any] = {}
         for col in df.columns:
             if col.startswith("attributes."):
                 key = col[len("attributes."):]
                 val = row[col]
-                if val is not None and not (isinstance(val, float) and val != val):
+                if not _is_missing(val):
                     attrs[key] = val
 
+        trace_id = row.get("context.trace_id", "")
+        span_id = row.get("context.span_id", row.get("span_id", ""))
+        if _is_missing(span_id) or span_id == "":
+            span_id = index if isinstance(index, str) else ""
+        parent_span_id = row.get("parent_id")
+        if _is_missing(parent_span_id) or parent_span_id == "":
+            parent_span_id = None
+        kind = attrs.get("openinference.span.kind")
+        if _is_missing(kind) or not kind:
+            kind = row.get("span_kind")
+        if _is_missing(kind) or not kind:
+            kind = "UNKNOWN"
+
         spans.append(OTelSpan(
-            trace_id=str(row.get("context.trace_id", "")),
-            span_id=str(row.get("context.span_id", "")),
-            parent_span_id=str(row["parent_id"]) if row.get("parent_id") else None,
+            trace_id="" if _is_missing(trace_id) else str(trace_id),
+            span_id=str(span_id),
+            parent_span_id=str(parent_span_id) if parent_span_id is not None else None,
             name=str(row.get("name", "")),
-            kind=attrs.get("openinference.span.kind", "UNKNOWN"),
-            start_time_ns=int(row.get("start_time", 0)) if row.get("start_time") else 0,
-            end_time_ns=int(row.get("end_time", 0)) if row.get("end_time") else 0,
+            kind=str(kind),
+            start_time_ns=_timestamp_to_ns(
+                row.get("start_time"),
+                field_name="start_time",
+            ),
+            end_time_ns=_timestamp_to_ns(
+                row.get("end_time"),
+                field_name="end_time",
+            ),
             attributes=attrs,
         ))
     return spans

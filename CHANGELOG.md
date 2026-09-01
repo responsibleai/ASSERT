@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore `PhoenixCollector` compatibility with the supported Phoenix client API, including bounded turn-time queries and conversion of Phoenix DataFrame timestamps and indexed span IDs.
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
 - Declare `aiohttp`, which is directly used by the HTTP endpoint target, instead of relying on LiteLLM to install it transitively.
 - Keep Bank Manager's GPT and non-GPT Azure routes compatible with ASSERT's OpenAI dependency range, and verify its documented installation with `pip check`.

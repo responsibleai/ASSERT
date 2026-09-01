@@ -954,14 +954,6 @@ class TestSpanCollectorProtocol(unittest.TestCase):
         warnings = collector.validate([])
         self.assertEqual(warnings, [])  # empty list → no warnings
 
-    @unittest.skip("Pre-existing: conflicting phoenix module lacks Client attribute")
-    def test_phoenix_collector_import_error(self):
-        from assert_ai.core.collector import PhoenixCollector
-
-        with self.assertRaises(ImportError) as ctx:
-            PhoenixCollector()
-        self.assertIn("arize-phoenix", str(ctx.exception))
-
     def test_custom_collector_satisfies_protocol(self):
         """A plain class with get_spans/validate should satisfy SpanCollector."""
         from assert_ai.core.collector import SpanCollector

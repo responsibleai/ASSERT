@@ -155,6 +155,9 @@ jobs:
           AZURE_API_BASE: https://example.openai.azure.com/
           PHOENIX_DISABLE_AUTO_INSTRUMENT: '1'
         run: python -c "import ${{ matrix.import }}"
+      - name: Test Phoenix collector against installed client
+        if: matrix.example == 'phoenix-auto-trace-openai'
+        run: python source/tests/test_phoenix_collector.py -v
       - name: Test Bank Manager model routing
         if: matrix.example == 'bank-manager-agent-control'
         working-directory: source
