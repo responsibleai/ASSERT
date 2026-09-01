@@ -27,7 +27,6 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from assert_ai.init._context import build_system_message, estimate_tokens, context_window_for
-from assert_ai.init._emit import apply_generated_defaults
 from assert_ai.init._llm import chat_completion
 from assert_ai.init._validate import validate_proposed_yaml
 from assert_ai.core.model_client import (
@@ -441,13 +440,8 @@ def run_design_loop(
 # ── Helpers ────────────────────────────────────────────────────
 
 def _normalize_yaml(yaml_str: str) -> str:
-    """Roundtrip through PyYAML for consistent formatting.
-
-    Also states the values a generated config must not inherit by omission, so
-    the config the user reviews, any saved draft, and the emitted file all
-    agree. See ``_emit.apply_generated_defaults``.
-    """
-    data = apply_generated_defaults(yaml.safe_load(yaml_str))
+    """Roundtrip through PyYAML for consistent formatting."""
+    data = yaml.safe_load(yaml_str)
     return dump_yaml(data)
 
 

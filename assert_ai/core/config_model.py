@@ -32,19 +32,7 @@ DEFAULT_INFERENCE_MAX_TOKENS = 10000
 # Default fan-out for the inference and judge stages. Overridable per-run via
 # ``pipeline.inference.concurrency`` in YAML or the ``--concurrency`` CLI flag.
 DEFAULT_INFERENCE_CONCURRENCY = 10
-# Turn budget for a scenario case when the config omits ``max_turns``.
-# This value is load-bearing for configs that predate the harm-eval templates:
-# changing it silently re-scopes every existing evaluation that relies on the
-# fallback. Newly generated configs write ``GENERATED_TESTER_MAX_TURNS``
-# explicitly, so the preferred value moves without rewriting the meaning of
-# configs already in use.
-DEFAULT_TESTER_MAX_TURNS = 10
-
-# Turn budget written into configs ASSERT generates. Kept separate from the
-# fallback above on purpose: the generator states the value rather than relying
-# on an omission to mean it, so the preferred value can change again without
-# touching a config anyone has already run.
-GENERATED_TESTER_MAX_TURNS = 6
+DEFAULT_TESTER_MAX_TURNS = 6
 DEFAULT_JUDGE_TEMPERATURE = None
 DEFAULT_JUDGE_MAX_TOKENS = 12000
 DEFAULT_MODEL_TIMEOUT_S = 300.0  # 5 minutes per API call
