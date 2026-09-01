@@ -262,13 +262,18 @@ def _timestamp_to_ns(value: Any, *, field_name: str) -> int:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError(f"{field_name} must be timezone-aware")
-        return int(value.timestamp() * 1_000_000_000)
+        utc_value = value.astimezone(UTC)
+        delta = utc_value - datetime(1970, 1, 1, tzinfo=UTC)
+        return (
+            (delta.days * 86_400 + delta.seconds) * 1_000_000_000
+            + delta.microseconds * 1_000
+        )
     if isinstance(value, Real) and not isinstance(value, bool):
         return int(value)  # type: ignore[arg-type]
     if isinstance(value, str):
         parsed = _parse_datetime(value, field_name=field_name)
         assert parsed is not None
-        return int(parsed.timestamp() * 1_000_000_000)
+        return _timestamp_to_ns(parsed, field_name=field_name)
     raise TypeError(f"{field_name} has unsupported type {type(value).__name__}")
 
 

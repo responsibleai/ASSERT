@@ -80,6 +80,7 @@ class PhoenixCollectorCompatibilityTest(unittest.TestCase):
         })
         raw_span = _raw_span(
             "span-event",
+            start_time="2026-09-01T00:00:00.000001Z",
             attributes={"gen_ai.operation.name": "chat"},
             events=[{
                 "name": "gen_ai.choice",
@@ -104,6 +105,7 @@ class PhoenixCollectorCompatibilityTest(unittest.TestCase):
         self.assertEqual(query["project_identifier"], "review-project")
         self.assertEqual(query["trace_ids"], ["trace-1"])
         self.assertEqual(query["limit"], sys.maxsize)
+        self.assertEqual(spans[0].start_time_ns, 1_788_220_800_000_001_000)
         self.assertEqual(len(spans[0].events), 2)
         events, aggregate = _spans_to_events(spans)
         self.assertEqual(events[0]["edit"]["message"]["content"], "event answer")
