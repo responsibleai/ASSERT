@@ -9,11 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Clean-install checks for every documented ASSERT/example environment, including `pip check` and credential-free target imports.
+
 ### Changed
+
+- **Breaking, planned for 0.3.0:** optional dependencies now describe ASSERT capabilities rather than repository examples. `otel` is replaced by `phoenix`, `azure-aad` by `azure-auth`, and `embeddings` remains the offline/local embedding backend. The `langgraph`, `dspy`, `examples`, and `regression` extras are removed; install each agent framework from the target project's dependency manifest or the repository example's adjacent `requirements.txt`. `all` now means all optional ASSERT product capabilities: `phoenix`, `analysis`, `embeddings`, `azure-auth`, and `acs`.
+- OpenInference instrumentors are owned by the runtime they instrument. ASSERT installs its LiteLLM instrumentor directly for Prompt Agent tracing; LangChain, OpenAI, and other framework instrumentors live with their target/example dependencies.
+- Analysis keeps NumPy and the OpenAI embedding backend, while Phoenix owns the Pandas dependency used to convert its DataFrame spans.
+
+| 0.2 install | 0.3 replacement |
+|---|---|
+| `assert-ai[otel]` | `assert-ai[phoenix]` plus the target framework's OpenInference instrumentor |
+| `assert-ai[azure-aad]` | `assert-ai[azure-auth]` |
+| `assert-ai[embeddings]` | Unchanged; use for offline/local Sentence Transformers embeddings |
+| `assert-ai[langgraph]` | Target-owned dependencies or an example's adjacent `requirements.txt` |
+| `assert-ai[dspy]` | Target-owned dependencies or an example's adjacent `requirements.txt` |
+| `assert-ai[examples]` | Each example's adjacent `requirements.txt` |
+| `assert-ai[regression]` | `uv sync --group dev` from a repository checkout; SciPy is no longer required |
 
 ### Fixed
 
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
+- Declare `aiohttp`, which is directly used by the HTTP endpoint target, instead of relying on LiteLLM to install it transitively.
+- Keep Bank Manager's GPT and non-GPT Azure routes compatible with ASSERT's OpenAI dependency range, and verify its documented installation with `pip check`.
+- Traced callable targets that capture no spans now record an actionable invalid-trace warning instead of silently reporting valid trace metadata.
 
 ## [0.2.0] - 2026-08-14
 

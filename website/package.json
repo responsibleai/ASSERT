@@ -35,6 +35,7 @@
   },
   "overrides": {
     "postcss": "^8.5.10",
-    "brace-expansion": "^2.0.2"
+    "brace-expansion": "^2.0.2",
+    "file-entry-cache": "11.1.5"
   }
 }

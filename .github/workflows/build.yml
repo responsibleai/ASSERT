@@ -10,6 +10,7 @@ on:
       - 'uv.lock'
       - 'pytest.ini'
       - 'README.md'
+      - 'examples/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   pull_request:
@@ -21,6 +22,7 @@ on:
       - 'uv.lock'
       - 'pytest.ini'
       - 'README.md'
+      - 'examples/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -91,3 +93,92 @@ jobs:
         # YAMLs) or missing modules at import time.
         run: pytest source/tests/test_import_smoke.py source/tests/test_library_loader.py -v --import-mode=importlib
         shell: bash
+
+  test-example-installs:
+    name: "Example install: ${{ matrix.example }}"
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: travel-planner-langgraph
+            assert_extras: phoenix
+            requirements: examples/travel_planner_langgraph/requirements.txt
+            import: examples.travel_planner_langgraph.auto_trace
+          - example: azure-doc-qa
+            assert_extras: ''
+            requirements: examples/azure_doc_qa/requirements.txt
+            import: examples.azure_doc_qa.auto_trace
+          - example: phoenix-auto-trace-openai
+            assert_extras: phoenix
+            requirements: examples/phoenix_auto_trace/requirements.txt
+            import: examples.phoenix_auto_trace.travel_openai
+          - example: phoenix-auto-trace-langgraph
+            assert_extras: phoenix
+            requirements: examples/phoenix_auto_trace/requirements-langgraph.txt
+            import: examples.phoenix_auto_trace.travel_langgraph
+          - example: science-research-agent
+            assert_extras: ''
+            requirements: examples/science_research_agent/requirements.txt
+            import: examples.science_research_agent.tools
+          - example: bank-manager-agent-control
+            assert_extras: acs
+            requirements: examples/bank_manager_agent_control/requirements.txt
+            import: examples.bank_manager_agent_control.agent
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/checkout@v4
+        with:
+          path: source
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Install documented environment
+        run: |
+          python -m pip install --upgrade pip
+          WHEEL="$(ls dist/*.whl)"
+          if [ -n "${{ matrix.assert_extras }}" ]; then
+            WHEEL="${WHEEL}[${{ matrix.assert_extras }}]"
+          fi
+          python -m pip install "$WHEEL"
+          python -m pip install -r "source/${{ matrix.requirements }}"
+          python -m pip check
+      - name: Import example target
+        working-directory: source
+        env:
+          OPENAI_API_KEY: test-key
+          AZURE_API_KEY: test-key
+          AZURE_API_BASE: https://example.openai.azure.com/
+          PHOENIX_DISABLE_AUTO_INSTRUMENT: '1'
+        run: python -c "import ${{ matrix.import }}"
+      - name: Test Bank Manager model routing
+        if: matrix.example == 'bank-manager-agent-control'
+        working-directory: source
+        env:
+          PYTHONPATH: examples/bank_manager_agent_control/tests
+        run: python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+      - name: Test Science Research Agent tools
+        if: matrix.example == 'science-research-agent'
+        working-directory: source
+        run: python -m unittest discover -s examples/science_research_agent/tests -p 'test_tools.py' -v
+
+  test-foundry-host-install:
+    name: "Example install: langgraph-foundry-hosted server"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/checkout@v4
+      - name: Install standalone host environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r examples/langgraph-foundry-hosted/requirements.txt
+          python -m pip check
+      - name: Import hosted server
+        working-directory: examples/langgraph-foundry-hosted
+        run: python -c "import main"

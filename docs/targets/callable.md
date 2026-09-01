@@ -27,13 +27,24 @@ Pick the path that exposes enough internals for the judge to score what matters.
 
 When your agent emits OpenTelemetry spans, the judge can cite tool arguments, routing decisions, model calls, and latency as evidence — not just the final response. This is the integration shape every flagship example uses.
 
-For 33 supported frameworks (OpenAI Agents SDK, LangChain/LangGraph, CrewAI, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, Smolagents, Instructor, Haystack, …), instrumentation is a small helper call at the top of your callable module:
+Install the OpenInference instrumentor that matches the framework already used by your target. ASSERT does not install target-framework packages on your behalf:
+
+| Target framework | Install |
+|---|---|
+| LangChain / LangGraph | `python -m pip install openinference-instrumentation-langchain` |
+| OpenAI SDK | `python -m pip install openinference-instrumentation-openai` |
+| OpenAI Agents SDK | `python -m pip install openinference-instrumentation-openai-agents` |
+| CrewAI | `python -m pip install openinference-instrumentation-crewai` |
+| DSPy | `python -m pip install openinference-instrumentation-dspy` |
+| LlamaIndex | `python -m pip install openinference-instrumentation-llama-index` |
+
+For all 33 supported frameworks, instrumentation is then a small helper call at the top of your callable module:
 
 ```python
 # e.g. examples/travel_planner_langgraph/auto_trace.py
 from assert_ai import auto_trace
 
-auto_trace.enable()  # installs available OpenInference instrumentors without starting Phoenix
+auto_trace.enable()  # activates installed OpenInference instrumentors without starting Phoenix
 
 def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:
     return run_my_agent(message, history)
@@ -52,6 +63,8 @@ pipeline:
 ```
 
 See `examples/phoenix_auto_trace/` for one runnable file per framework.
+
+ASSERT captures these spans in process during evaluation. Install `assert-ai[phoenix]` only when you also want to run the local Phoenix collector and browser UI.
 
 ### Why traces matter to the judge
 
@@ -142,7 +155,7 @@ pipeline:
       endpoint: https://my-agent.internal/chat
 ```
 
-The runtime POSTs `{"message": "...", "history": [...]}` (same `history` shape as above) and expects `{"response": "..."}` back. Requires [`aiohttp`](https://github.com/aio-libs/aiohttp) (`pip install aiohttp`).
+The runtime POSTs `{"message": "...", "history": [...]}` (same `history` shape as above) and expects `{"response": "..."}` back. The required [`aiohttp`](https://github.com/aio-libs/aiohttp) client ships with ASSERT.
 
 For black-box services, that response text is all the judge sees. An instrumented endpoint can additionally return top-level adapter-shaped `events` so tool calls, tool results, and mediation outcomes become first-class judge evidence:
 

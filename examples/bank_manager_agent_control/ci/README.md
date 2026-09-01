@@ -8,13 +8,19 @@ fork of ASSERT.
 **→ [`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)**
 &nbsp;*(the canonical CI shipping vehicle)*
 
-There, the banking agent simply does:
+To run the local Bank Manager example, use these commands from the root of the
+ASSERT checkout:
 
 ```bash
-pip install "assert-ai[acs,langgraph,otel,examples]"
+python -m pip install -e ".[acs]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
-and adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,
+The standalone `assert-ci-banking-demo` repository does not contain that
+`examples/` path. It owns a separate root `requirements.txt`; use its README and
+dependency manifest when working in that checkout.
+
+The standalone repository adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,
 compares it to the unguarded production baseline with a paired statistical test, and
 **passes only if the change significantly *improves* `policy_violation` without regressing
 `overrefusal`** — an improvement gate, not a fixed threshold. If it fails, the build is

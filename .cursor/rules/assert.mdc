@@ -65,7 +65,9 @@ stepping with citations highlighted). Answer in chat for "what / why / which"; h
 ### Preconditions (check, don't assume)
 
 1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
-   `python -m pip install -e ".[otel,langgraph]"`.
+    `python -m pip install "assert-ai[phoenix]"`. The target project owns its agent
+    framework dependencies; repository examples declare them in adjacent
+    `requirements.txt` files.
 2. **Clarity MCP server available** (needed only for Path A): the `clarity-agent` MCP tools
    (`run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`, …) are callable.
    Clarity is the risk-discovery engine — the skill drives its real MCP tools, it does not reimplement

@@ -30,7 +30,7 @@ Shared tool definitions live in [`../agents/`](../agents/).
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 cp .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY.
 ```
@@ -41,7 +41,7 @@ PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 Copy-Item .env.example .env
 ```
 

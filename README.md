@@ -39,7 +39,7 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 - **Curated behavior library** - a growing catalog of atomic, ready-to-use behavior presets ([`assert_ai/library/behaviors/`](assert_ai/library/behaviors/README.md)) spanning safety, bias/fairness, and agentic failure modes — the single source of truth for common behaviors, so you often don't have to write one from scratch. Pair with the [scenario library](assert_ai/library/scenarios/README.md) for ready-made application context.
 - **Test any model endpoint** via integrations with [LiteLLM](https://github.com/BerriAI/litellm), supporting 100+ model endpoints from platform providers such as Bedrock, Azure, OpenAI, VertexAI, Cohere, Anthropic, Sagemaker, HuggingFace, VLLM, NVIDIA NIM.
 - **Test any agent or multi-agent system** via integrations with [OpenInference](https://github.com/Arize-ai/openinference/). Evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the evaluation orchestration pipeline.
-- **Agent trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (OpenInference auto-instruments 33+ frameworks in two lines — `from assert_ai import auto_trace; auto_trace.enable()` — or you can emit your own with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.
+- **Agent trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (install your framework's OpenInference instrumentor, then activate it in two lines — `from assert_ai import auto_trace; auto_trace.enable()` — or emit your own spans with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.
 - **Test risky actions safely** - run a configured agent inside ASSERT's stock Docker sandbox, pass/mock/block its declared tool calls, deny direct internet access, and preserve attempted actions and audited proxy-aware egress as judge evidence. See the [sandboxed action-mediation example](examples/sandbox_action_mediation/README.md).
 - **Portable artifacts** - every stage writes JSON/JSONL files locally for inspection, CI, and sharing.
 - **Bundled local viewer** - browse runs side-by-side, pin a baseline, drill into per-behavior dimension breakdowns, and read judge justifications cited against the captured traces.
@@ -68,7 +68,8 @@ Every eval starts from a risk, and you choose where it comes from. Clarity is re
 ASSERT needs **Python 3.11+**. If you want Clarity's discovery step, you also need **Python 3.12+** and an IDE with MCP support — VS Code + Copilot agent mode, Claude Code, or Cursor — because Clarity runs as an MCP server and can't be driven from a bare terminal.
 
 ```bash
-pip install -e ".[otel,langgraph]"   # install ASSERT
+pip install -e ".[phoenix]"   # install ASSERT + local Phoenix trace collection
+pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env                 # add your provider key
 assert-ai --help                     # verify
 ```
@@ -174,7 +175,8 @@ The same skill ships for three assistants, plus the workflows it follows:
 
 ```bash
 python -m pip install --upgrade pip      # requires pip >= 24.1
-pip install -e ".[otel,langgraph]"       # install
+pip install -e ".[phoenix]"              # install ASSERT + local Phoenix tracing
+pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env                     # add your provider key
 assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```

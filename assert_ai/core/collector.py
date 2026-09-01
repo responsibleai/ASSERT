@@ -41,7 +41,7 @@ class SpanCollector(Protocol):
 
     def get_spans(
         self,
-        project_name: str,
+        project_name: str | None = None,
         *,
         start_time: str | None = None,
         end_time: str | None = None,
@@ -118,7 +118,7 @@ class PhoenixCollector:
     """SpanCollector backed by a local Phoenix instance.
 
     Phoenix is an OPTIONAL dependency — only imported when instantiated.
-    Install: pip install 'ASSERT-taxonomy[otel]'
+    Install: pip install 'assert-ai[phoenix]'
 
     Queries Phoenix for DataFrame, then converts to list[OTelSpan] internally.
     """
@@ -135,7 +135,7 @@ class PhoenixCollector:
         except ImportError as e:
             raise ImportError(
                 "PhoenixCollector requires arize-phoenix. "
-                "Install with: pip install 'ASSERT-taxonomy[otel]'"
+                "Install with: pip install 'assert-ai[phoenix]'"
             ) from e
         self._default_project = project_name
 

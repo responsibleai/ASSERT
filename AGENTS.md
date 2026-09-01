@@ -74,7 +74,9 @@ For preview customers, use `pip` in setup instructions:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 
 # Create a config interactively, or use an existing one
@@ -89,7 +91,9 @@ Use the PowerShell equivalent on Windows:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
 # Create a config interactively, or use an existing one
