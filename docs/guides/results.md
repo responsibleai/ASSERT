@@ -48,7 +48,9 @@ The run viewer shows the full custom-grade distribution and groups semantic N/A 
 
 ![Custom rubric scale run summary](../images/custom-rubric-scale-run.png)
 
-When `metrics.json` contains token telemetry, the run viewer also shows the conservative local pre-run estimate, its likely range and stage breakdown, provider-reported actual usage, and the measured difference. Incomplete or partial provider telemetry is labeled unavailable rather than reported as an accuracy result.
+The **Summary & submit** step shows a compact conservative token estimate before the run starts. It is computed locally without a provider call.
+
+When `metrics.json` contains token telemetry, the completed run viewer shows a compact estimate-versus-actual summary. Stage estimates and estimator notes remain available under **Details**. Incomplete or partial provider telemetry is labeled unavailable rather than reported as an accuracy result.
 
 ## Useful CLI commands for viewing results
 

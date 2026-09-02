@@ -889,6 +889,67 @@ from assert_ai.init._command import init  # noqa: E402
 cli.add_command(init)
 
 
+@cli.command(short_help="Estimate token usage without running a pipeline")
+@click.option(
+    "--config",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to a YAML pipeline config.",
+    show_envvar=True,
+)
+@click.option(
+    "--force-stage",
+    type=click.Choice(STAGE_NAMES, case_sensitive=False),
+    multiple=True,
+    help="Estimate as though the selected stage and its downstream stages were forced.",
+    show_envvar=True,
+)
+@click.option("--override", "overrides", multiple=True, help="Override a config value.")
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Override inference concurrency for the estimate.",
+    show_envvar=True,
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    show_default=True,
+)
+def estimate(
+    config: Path,
+    force_stage: tuple[str, ...],
+    overrides: tuple[str, ...],
+    concurrency: int | None,
+    output_format: str,
+):
+    """Estimate local model token usage without making provider calls."""
+
+    runner = _load_runner_module()
+    try:
+        payload = runner.estimate_pipeline_usage(
+            config=str(config),
+            force_stages=list(force_stage),
+            overrides=list(overrides),
+            concurrency=concurrency,
+        )
+    except (runner.ConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, ensure_ascii=False))
+    elif int(payload.get("total_tokens", 0) or 0) <= 0:
+        click.echo("Estimated token usage: 0 tracked tokens.")
+        for note in payload.get("notes") or []:
+            if isinstance(note, str) and note:
+                click.echo(f"Estimate note: {note}")
+    else:
+        runner._log_token_estimate(payload)
+
+
 @cli.command(short_help="Run a pipeline from a YAML config")
 @click.option(
     "--config",

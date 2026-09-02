@@ -41,7 +41,7 @@ import {
 	runDirPath,
 	suiteDirPath
 } from './artifacts.js';
-import { MEASUREMENTS_ROOT } from './config.js';
+import { ARTIFACTS_ROOT, MEASUREMENTS_ROOT } from './config.js';
 
 // ─── Errors ────────────────────────────────────────────────────────────
 
@@ -67,6 +67,13 @@ export class SpawnError extends Error {
 		super(message);
 		this.name = 'SpawnError';
 		this.cause = cause;
+	}
+}
+
+export class EstimateError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'EstimateError';
 	}
 }
 
@@ -194,6 +201,10 @@ const DEFAULT_BEHAVIOR_CATEGORY_COUNT = 6;
 const RUN_EVAL_CONFIG_FILE = 'eval_config.yaml';
 const RUN_LOG_FILE = 'runner.log';
 const RUN_PID_FILE = 'runner.pid';
+const ESTIMATE_TIMEOUT_MS = 45_000;
+const ESTIMATE_TERMINATION_GRACE_MS = 2_000;
+const ESTIMATE_PIPE_CLOSE_GRACE_MS = 250;
+const MAX_ESTIMATE_OUTPUT_BYTES = 1024 * 1024;
 
 // Server-decided filenames for uploaded tool artifacts. Both are resolved by the
 // runner relative to the config directory (the run dir).
@@ -647,6 +658,15 @@ export interface WrittenRun {
 	pidPath: string;
 }
 
+function writeExtraFiles(directory: string, files: NormalizedRun['extraFiles']) {
+	for (const file of files) {
+		if (!file.name || file.name.includes('/') || file.name.includes('\\') || file.name.includes('..')) {
+			throw new Error(`Refusing to write tool artifact with unsafe name: ${file.name}`);
+		}
+		fs.writeFileSync(path.join(directory, file.name), file.content, { encoding: 'utf-8' });
+	}
+}
+
 /**
  * Atomically reserves the run directory and writes eval_config.yaml. The mkdir
  * is the lock: if the directory already exists we refuse rather than overwrite.
@@ -679,15 +699,9 @@ export function writeRunConfigFiles(normalized: NormalizedRun): WrittenRun {
 	const yamlText = stringifyYaml(normalized.configObject, { lineWidth: 0 });
 	fs.writeFileSync(configPath, yamlText, { encoding: 'utf-8' });
 
-	// Write uploaded tool artifacts (toolset YAML / Python tool backend) next to
-	// the config. Names are server-decided constants; reject anything path-like as
+	// Names are server-decided constants; reject anything path-like as
 	// defense-in-depth so a future caller can't smuggle in a traversal.
-	for (const file of normalized.extraFiles) {
-		if (!file.name || file.name.includes('/') || file.name.includes('\\') || file.name.includes('..')) {
-			throw new Error(`Refusing to write tool artifact with unsafe name: ${file.name}`);
-		}
-		fs.writeFileSync(path.join(runDir, file.name), file.content, { encoding: 'utf-8' });
-	}
+	writeExtraFiles(runDir, normalized.extraFiles);
 
 	return { runDir, configPath, logPath, pidPath };
 }
@@ -739,8 +753,7 @@ function candidateVenvDirs(): string[] {
 	return dirs;
 }
 
-function resolveAssertAiCommand(configPath: string): ResolvedCommand {
-	const cliArgs = ['run', '--config', configPath];
+function resolveAssertAiCommand(cliArgs: string[]): ResolvedCommand {
 	// Module invocation is the reliable form: it works even when the `assert-ai`
 	// console script was never (re)generated for a venv — e.g. after the package
 	// was renamed and only an older console script remains on disk.
@@ -778,7 +791,17 @@ function resolveAssertAiCommand(configPath: string): ResolvedCommand {
 		return { command: 'assert-ai', args: cliArgs, source: 'PATH (assert-ai)' };
 	}
 
-	// 4. Last resort: a Python on PATH running the CLI as a module.
+	// 4. Windows Python launcher. It is commonly available even when python.exe
+	//    itself is not on PATH, and imports the checkout from MEASUREMENTS_ROOT.
+	if (os.platform() === 'win32' && commandExistsOnPath('py.exe')) {
+		return {
+			command: 'py',
+			args: ['-3', '-m', 'assert_ai.cli', ...cliArgs],
+			source: 'PATH (py -3 -m assert_ai.cli)'
+		};
+	}
+
+	// 5. Last resort: a Python on PATH running the CLI as a module.
 	const pathPython = os.platform() === 'win32' ? 'python.exe' : 'python3';
 	if (commandExistsOnPath(pathPython) || commandExistsOnPath('python')) {
 		const python = commandExistsOnPath(pathPython) ? pathPython : 'python';
@@ -816,13 +839,213 @@ function commandExistsOnPath(command: string): boolean {
 	return false;
 }
 
+export interface TokenEstimatePayload {
+	schema_version: number;
+	calls: number;
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+	lower_bound_tokens: number;
+	upper_bound_tokens: number;
+	stages: Record<
+		string,
+		{
+			calls: number;
+			input_tokens: number;
+			output_tokens: number;
+			total_tokens: number;
+		}
+	>;
+	notes: string[];
+}
+
+function parseTokenEstimate(stdout: string): TokenEstimatePayload {
+	const lines = stdout
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.reverse();
+	for (const line of lines) {
+		let value: unknown;
+		try {
+			value = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (
+			isRecord(value) &&
+			Number.isFinite(value.total_tokens) &&
+			Number.isFinite(value.lower_bound_tokens) &&
+			Number.isFinite(value.upper_bound_tokens)
+		) {
+			return value as unknown as TokenEstimatePayload;
+		}
+	}
+	throw new EstimateError('assert-ai estimate did not return a valid token estimate.');
+}
+
+function runTokenEstimate(
+	configPath: string,
+	signal?: AbortSignal
+): Promise<TokenEstimatePayload> {
+	const resolved = resolveAssertAiCommand([
+		'estimate',
+		'--config',
+		configPath,
+		'--output',
+		'json'
+	]);
+
+	return new Promise<TokenEstimatePayload>((resolve, reject) => {
+		let stdout = '';
+		let stderr = '';
+		let settled = false;
+		let terminationError: EstimateError | null = null;
+		let child: ChildProcess;
+		try {
+			child = spawn(resolved.command, resolved.args, {
+				cwd: MEASUREMENTS_ROOT,
+				env: process.env,
+				detached: os.platform() !== 'win32',
+				stdio: ['ignore', 'pipe', 'pipe'],
+				windowsHide: true
+			});
+		} catch (err) {
+			reject(
+				new EstimateError(
+					`Failed to start assert-ai estimate via ${resolved.source}: ${(err as Error).message ?? String(err)}`
+				)
+			);
+			return;
+		}
+
+		let timeout: ReturnType<typeof setTimeout>;
+		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
+		let pipeCloseTimeout: ReturnType<typeof setTimeout> | undefined;
+		const onAbort = () => {
+			requestTermination(new EstimateError('Token estimation was cancelled.'));
+		};
+		const cleanup = () => {
+			clearTimeout(timeout);
+			if (forceKillTimeout) clearTimeout(forceKillTimeout);
+			if (pipeCloseTimeout) clearTimeout(pipeCloseTimeout);
+			signal?.removeEventListener('abort', onAbort);
+		};
+		const finish = (error: EstimateError | null, payload?: TokenEstimatePayload) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			if (error) reject(error);
+			else if (payload) resolve(payload);
+		};
+		const killChild = (killSignal: 'SIGTERM' | 'SIGKILL') => {
+			if (os.platform() !== 'win32' && child.pid !== undefined) {
+				try {
+					process.kill(-child.pid, killSignal);
+					return;
+				} catch {
+					// Fall back to the direct child if its process group is gone.
+				}
+			}
+			try {
+				child.kill(killSignal);
+			} catch {
+				// A concurrent process exit will still deliver `close`.
+			}
+		};
+		const requestTermination = (error: EstimateError) => {
+			if (settled || terminationError) return;
+			terminationError = error;
+			killChild('SIGTERM');
+			forceKillTimeout = setTimeout(() => {
+				killChild('SIGKILL');
+				pipeCloseTimeout = setTimeout(() => {
+					child.stdout?.destroy();
+					child.stderr?.destroy();
+				}, ESTIMATE_PIPE_CLOSE_GRACE_MS);
+			}, ESTIMATE_TERMINATION_GRACE_MS);
+		};
+		const append = (current: string, chunk: Buffer): string => {
+			if (terminationError) return current;
+			const next = current + chunk.toString('utf-8');
+			if (Buffer.byteLength(next, 'utf-8') > MAX_ESTIMATE_OUTPUT_BYTES) {
+				requestTermination(new EstimateError('assert-ai estimate produced too much output.'));
+				return current;
+			}
+			return next;
+		};
+		child.stdout?.on('data', (chunk: Buffer) => {
+			stdout = append(stdout, chunk);
+		});
+		child.stderr?.on('data', (chunk: Buffer) => {
+			stderr = append(stderr, chunk);
+		});
+		child.on('error', (err: Error) => {
+			terminationError =
+				terminationError ??
+				new EstimateError(
+					`assert-ai estimate failed to start via ${resolved.source}: ${err.message}`
+				);
+		});
+		child.on('close', (code) => {
+			if (settled) return;
+			if (terminationError) {
+				finish(terminationError);
+				return;
+			}
+			if (code !== 0) {
+				const detail = stderr.trim().slice(-2000);
+				finish(
+					new EstimateError(
+						`assert-ai estimate exited with code ${code ?? 'unknown'}${detail ? `: ${detail}` : ''}`
+					)
+				);
+				return;
+			}
+			try {
+				finish(null, parseTokenEstimate(stdout));
+			} catch (err) {
+				finish(err instanceof EstimateError ? err : new EstimateError(String(err)));
+			}
+		});
+		timeout = setTimeout(() => {
+			requestTermination(new EstimateError('Token estimation timed out after 45 seconds.'));
+		}, ESTIMATE_TIMEOUT_MS);
+		signal?.addEventListener('abort', onAbort, { once: true });
+		if (signal?.aborted) onAbort();
+	});
+}
+
+/**
+ * Estimate a normalized wizard payload from a temporary config. This never
+ * reserves a run directory and always removes its temporary files.
+ */
+export async function estimateAssertAiRun(
+	normalized: NormalizedRun,
+	signal?: AbortSignal
+): Promise<TokenEstimatePayload> {
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'assert-ai-estimate-'));
+	const configPath = path.join(tempDir, RUN_EVAL_CONFIG_FILE);
+	try {
+		const configObject = cloneRecord(normalized.configObject);
+		const resultsRoot = path.resolve(ARTIFACTS_ROOT);
+		configObject.artifacts_root = path.dirname(resultsRoot);
+		configObject.results_dir = resultsRoot;
+		fs.writeFileSync(configPath, stringifyYaml(configObject, { lineWidth: 0 }), 'utf-8');
+		writeExtraFiles(tempDir, normalized.extraFiles);
+		return await runTokenEstimate(configPath, signal);
+	} finally {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
 /**
  * Spawn assert-ai detached, wait for the OS to confirm the spawn (or fail).
  * Only after we hear back do we resolve — that way a missing `assert-ai`
  * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
 export function spawnAssertAiRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveAssertAiCommand(written.configPath);
+	const resolved = resolveAssertAiCommand(['run', '--config', written.configPath]);
 
 	let logFd: number;
 	try {

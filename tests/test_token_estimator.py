@@ -8,6 +8,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import yaml
+
+from assert_ai.core.artifact_cache import (
+    activate_artifact_plan,
+    finalize_artifact_plan,
+    prepare_artifact_plan,
+)
 from assert_ai.core.config_model import (
     DEFAULT_INFERENCE_MAX_TOKENS,
     EvaluationConfig,
@@ -25,6 +32,7 @@ from assert_ai.core.io import (
     write_jsonl,
 )
 from assert_ai.core.token_estimator import estimate_pipeline_tokens
+from assert_ai.runner import estimate_pipeline_usage
 from assert_ai.stages import inference as inference_stage
 from assert_ai.stages import judge as judge_stage
 
@@ -101,6 +109,241 @@ def _record_cached_compatibility_file(
 
 
 class TokenEstimatorTest(unittest.TestCase):
+    def test_config_estimate_is_read_only(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "eval.yaml"
+            artifacts_root = root / "artifacts"
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "suite": "preview-suite",
+                        "run": "preview-run",
+                        "artifacts_root": str(artifacts_root),
+                        "behavior": {
+                            "name": "answer_accuracy",
+                            "description": "Answer accurately.",
+                        },
+                        "context": "A factual question answering assistant.",
+                        "pipeline": {
+                            "systematize": {
+                                "behavior_category_count": 2,
+                                "web_search": False,
+                                "model": {
+                                    "name": "openai/gpt-4o-mini",
+                                    "max_tokens": 2_000,
+                                },
+                            },
+                            "test_set": {
+                                "prompt": {
+                                    "sample_size": 2,
+                                    "model": {
+                                        "name": "openai/gpt-4o-mini",
+                                        "max_tokens": 1_000,
+                                    },
+                                }
+                            },
+                            "inference": {
+                                "target": {
+                                    "model": {
+                                        "name": "openai/gpt-4o-mini",
+                                        "max_tokens": 512,
+                                    }
+                                }
+                            },
+                            "judge": {
+                                "model": {
+                                    "name": "openai/gpt-4o-mini",
+                                    "max_tokens": 1_000,
+                                }
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            estimate = estimate_pipeline_usage(config=str(config_path))
+
+            self.assertGreater(estimate["total_tokens"], 0)
+            self.assertEqual(
+                set(estimate["stages"]),
+                {"systematize", "test_set", "inference", "judge"},
+            )
+            self.assertFalse(artifacts_root.exists())
+
+    def test_inference_only_estimate_reads_versioned_test_set_without_writes(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "eval.yaml"
+            artifacts_root = root / "artifacts"
+            results_dir = artifacts_root / "results"
+            suite_root = results_dir / "preview-suite"
+            suite_root.mkdir(parents=True)
+            cache_ctx = {
+                "config_path": config_path,
+                "artifacts_root": artifacts_root,
+                "suite_root": suite_root,
+                "behavior_name": "answer_accuracy",
+                "behavior": "Answer accurately.",
+                "context": "A factual assistant.",
+                "artifact_versions": {},
+            }
+            raw_test_set = {
+                "prompt": {
+                    "sample_size": 2,
+                    "model": {"name": "openai/gpt-4o-mini"},
+                }
+            }
+            plan = prepare_artifact_plan(
+                ctx=cache_ctx,
+                stage_name="test_set",
+                raw_cfg=raw_test_set,
+                forced=False,
+            )
+            activate_artifact_plan(cache_ctx, plan)
+            _write_jsonl(
+                plan.output_paths["test_set"],
+                [
+                    {
+                        "type": "prompt",
+                        "test_case_id": f"test_case_{index:06d}",
+                        "seed": {
+                            "description": f"Question {index}.",
+                            "system_prompt": "Answer accurately.",
+                        },
+                    }
+                    for index in (1, 2)
+                ],
+            )
+            plan.output_paths["stratification"].write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            finalize_artifact_plan(cache_ctx, plan)
+            compatibility_path = suite_root / "test_set.jsonl"
+            compatibility_path.unlink()
+            latest_path = suite_root / "latest.json"
+            latest_before = latest_path.read_bytes()
+
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "suite": "preview-suite",
+                        "run": "preview-run",
+                        "artifacts_root": str(artifacts_root),
+                        "context": "A factual assistant.",
+                        "pipeline": {
+                            "inference": {
+                                "test_set_path": str(compatibility_path),
+                                "target": {
+                                    "model": {
+                                        "name": "openai/gpt-4o-mini",
+                                        "max_tokens": 512,
+                                    }
+                                }
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            estimate = estimate_pipeline_usage(config=str(config_path))
+
+            self.assertEqual(estimate["stages"]["inference"]["calls"], 2)
+            self.assertEqual(latest_path.read_bytes(), latest_before)
+            self.assertFalse(compatibility_path.exists())
+            self.assertFalse((suite_root / "preview-run").exists())
+
+    def test_judge_only_estimate_reads_versioned_taxonomy_without_writes(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "eval.yaml"
+            artifacts_root = root / "artifacts"
+            suite_root = artifacts_root / "results" / "preview-suite"
+            run_root = suite_root / "preview-run"
+            suite_root.mkdir(parents=True)
+            cache_ctx = {
+                "config_path": config_path,
+                "artifacts_root": artifacts_root,
+                "suite_root": suite_root,
+                "behavior_name": "answer_accuracy",
+                "behavior": "Answer accurately.",
+                "context": "A factual assistant.",
+                "artifact_versions": {},
+            }
+            raw_systematize = {
+                "behavior_category_count": 2,
+                "model": {"name": "openai/gpt-4o-mini"},
+            }
+            plan = prepare_artifact_plan(
+                ctx=cache_ctx,
+                stage_name="systematize",
+                raw_cfg=raw_systematize,
+                forced=False,
+            )
+            activate_artifact_plan(cache_ctx, plan)
+            _write_taxonomy(plan.output_paths["taxonomy"])
+            plan.output_paths["systematization"].write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            finalize_artifact_plan(cache_ctx, plan)
+            compatibility_path = suite_root / "taxonomy.json"
+            compatibility_path.unlink()
+            run_root.mkdir()
+            inference_path = run_root / "inference_set.jsonl"
+            _write_jsonl(
+                inference_path,
+                [
+                    {
+                        "type": "prompt",
+                        "test_case_id": "test_case_000001",
+                        "events": [],
+                        "stop_reason": "completed",
+                    }
+                ],
+            )
+            latest_path = suite_root / "latest.json"
+            latest_before = latest_path.read_bytes()
+
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "suite": "preview-suite",
+                        "run": "preview-run",
+                        "artifacts_root": str(artifacts_root),
+                        "behavior": {
+                            "name": "answer_accuracy",
+                            "description": "Answer accurately.",
+                        },
+                        "context": "A factual assistant.",
+                        "pipeline": {
+                            "judge": {
+                                "taxonomy_path": str(compatibility_path),
+                                "inference_set_path": str(inference_path),
+                                "model": {
+                                    "name": "openai/gpt-4o-mini",
+                                    "max_tokens": 1_000,
+                                },
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            estimate = estimate_pipeline_usage(config=str(config_path))
+
+            self.assertEqual(estimate["stages"]["judge"]["calls"], 1)
+            self.assertEqual(latest_path.read_bytes(), latest_before)
+            self.assertFalse(compatibility_path.exists())
+
     def test_hosted_prompt_run_estimates_target_and_judge_calls(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

@@ -23,6 +23,20 @@ RUN_PAGE_SRC = (
     / "+page.svelte"
 )
 EXPORT_PAGE_SRC = ROOT / "viewer" / "src" / "lib" / "export" / "ExportPage.svelte"
+NEW_PAGE_SRC = ROOT / "viewer" / "src" / "routes" / "new" / "+page.svelte"
+TOKEN_SUMMARY_SRC = (
+    ROOT / "viewer" / "src" / "lib" / "components" / "TokenUsageSummary.svelte"
+)
+ESTIMATE_ROUTE_SRC = (
+    ROOT
+    / "viewer"
+    / "src"
+    / "routes"
+    / "api"
+    / "runs"
+    / "estimate"
+    / "+server.ts"
+)
 
 
 class ViewerTokenUsageWiringTest(unittest.TestCase):
@@ -31,6 +45,30 @@ class ViewerTokenUsageWiringTest(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertIn("TokenUsageSummary", source)
             self.assertIn("tokenUsage={data.tokenUsage}", source)
+
+    def test_wizard_shows_estimate_before_submit(self) -> None:
+        page_source = NEW_PAGE_SRC.read_text(encoding="utf-8")
+        route_source = ESTIMATE_ROUTE_SRC.read_text(encoding="utf-8")
+
+        self.assertIn("Estimated token usage", page_source)
+        self.assertIn("fetch('/api/runs/estimate'", page_source)
+        self.assertIn("estimateAssertAiRun", route_source)
+        self.assertIn("request.signal", route_source)
+        self.assertIn("No provider calls are", route_source)
+
+    def test_completed_token_summary_is_compact(self) -> None:
+        source = TOKEN_SUMMARY_SRC.read_text(encoding="utf-8")
+
+        self.assertIn("<details", source)
+        self.assertIn("In range", source)
+        self.assertIn("actual.missingUsageCalls > 0", source)
+        self.assertIn("'Reported' : 'Actual'", source)
+        self.assertGreaterEqual(
+            source.count("tokenAccuracyUnavailableMessage"),
+            3,
+        )
+        self.assertNotIn("md:grid-cols-3", source)
+        self.assertNotIn("text-2xl", source)
 
 
 @unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need >= 22.6)")

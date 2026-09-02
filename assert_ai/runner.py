@@ -34,6 +34,7 @@ from assert_ai.core.artifact_cache import (
     is_cacheable_stage,
     override_cacheable_output_paths,
     prepare_artifact_plan,
+    preview_artifact_plan,
     refresh_compatibility_files,
     supports_artifact_cache,
     update_latest,
@@ -135,6 +136,107 @@ def _write_suite_metadata(ctx: dict[str, Any]) -> None:
         created_at=existing.get("created_at", datetime.now(timezone.utc).isoformat()),
     )
     write_json(suite_path, meta.to_dict())
+
+
+def _requested_force_stages(
+    ctx: dict[str, Any],
+    force_stages: list[str] | None,
+) -> set[str]:
+    """Validate forced stages and cascade each request through downstream stages."""
+
+    requested = set(force_stages or [])
+    configured = {stage_name for stage_name, _ in ctx["stages"]}
+    invalid = sorted(requested.difference(configured))
+    if invalid:
+        joined = ", ".join(invalid)
+        raise ConfigError(f"--force-stage stage(s) not present in config: {joined}")
+
+    if requested:
+        forced_indices = [
+            PIPELINE_STAGE_ORDER.index(name)
+            for name in requested
+            if name in PIPELINE_STAGE_ORDER
+        ]
+        if forced_indices:
+            min_forced_index = min(forced_indices)
+            requested.update(
+                name
+                for name in PIPELINE_STAGE_ORDER[min_forced_index:]
+                if name in configured
+            )
+    return requested
+
+
+def estimate_pipeline_usage(
+    *,
+    config: str,
+    force_stages: list[str] | None = None,
+    overrides: list[str] | None = None,
+    concurrency: int | None = None,
+) -> dict[str, Any]:
+    """Estimate configured token usage without creating artifacts or running stages."""
+
+    ctx = _load_context(config=config, overrides=overrides)
+    concurrency_ignored = False
+    if concurrency is not None:
+        evaluation = ctx.get("evaluation")
+        inference_cfg = getattr(evaluation, "inference", None) if evaluation is not None else None
+        if inference_cfg is None:
+            concurrency_ignored = True
+        else:
+            inference_cfg.concurrency = concurrency
+
+    requested_force_stages = _requested_force_stages(ctx, force_stages)
+    ctx.setdefault("artifact_versions", {})
+    cache_supported = supports_artifact_cache(ctx)
+    if cache_supported:
+        activate_latest_artifacts(ctx, read_only=True)
+    cache_chain_reusable = True
+    stages_to_run: list[tuple[str, Any, dict[str, Any]]] = []
+
+    for stage_name, raw_cfg in ctx["stages"]:
+        if not raw_cfg.get("enabled", True):
+            continue
+
+        module = STAGES[stage_name]
+        if module.SCOPE == "suite":
+            if cache_supported and is_cacheable_stage(stage_name):
+                plan = preview_artifact_plan(
+                    ctx=ctx,
+                    stage_name=stage_name,
+                    raw_cfg=raw_cfg,
+                    forced=(
+                        stage_name in requested_force_stages
+                        or not cache_chain_reusable
+                    ),
+                )
+                activate_artifact_plan(ctx, plan)
+                if plan.reused:
+                    continue
+                cache_chain_reusable = False
+                raw_cfg = override_cacheable_output_paths(stage_name, raw_cfg, plan)
+            elif (
+                module.SUITE_OUTPUT
+                and stage_name not in requested_force_stages
+                and (Path(ctx["suite_root"]) / module.SUITE_OUTPUT).exists()
+            ):
+                continue
+
+        stages_to_run.append((stage_name, module, raw_cfg))
+
+    from assert_ai.core.token_estimator import estimate_pipeline_tokens
+
+    payload = estimate_pipeline_tokens(
+        ctx,
+        stages_to_run,
+        forced_stages=requested_force_stages,
+    ).to_dict()
+    if concurrency_ignored:
+        payload.setdefault("notes", []).insert(
+            0,
+            "Concurrency override ignored because this config has no inference stage.",
+        )
+    return payload
 
 
 def _build_manifest(ctx: dict[str, Any]) -> RunManifest:
@@ -782,35 +884,11 @@ def run_pipeline(
                 "[runner] --concurrency ignored: this config has no inference stage to override."
             )
 
-    requested_force_stages = set(force_stages or [])
-    configured_stage_names = {stage_name for stage_name, _ in ctx["stages"]}
-    invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
-    if invalid_forced:
-        joined = ", ".join(invalid_forced)
-        log.error(f"[config error] --force-stage stage(s) not present in config: {joined}")
+    try:
+        requested_force_stages = _requested_force_stages(ctx, force_stages)
+    except ConfigError as exc:
+        log.error(f"[config error] {exc}")
         return 1
-
-    # Cascade: forcing an upstream stage logically invalidates every stage
-    # downstream of it. Without this, `--force-stage test_set` regenerates test_set
-    # but inference silently keeps the old inference rows (its resume cache keys on
-    # test_case_id, and test case ids are deterministic so they collide with the prior
-    # run's content). Same hazard for judge against scores.jsonl. Computing
-    # the closure here keeps the workflow `--force-stage <upstream>` honest
-    # without forcing users to remember the full downstream chain.
-    if requested_force_stages:
-        forced_indices = [
-            PIPELINE_STAGE_ORDER.index(name)
-            for name in requested_force_stages
-            if name in PIPELINE_STAGE_ORDER
-        ]
-        if forced_indices:
-            min_forced_index = min(forced_indices)
-            cascade = {
-                name
-                for name in PIPELINE_STAGE_ORDER[min_forced_index:]
-                if name in configured_stage_names
-            }
-            requested_force_stages = requested_force_stages.union(cascade)
 
     suite_root = Path(ctx["suite_root"])
     suite_root.mkdir(parents=True, exist_ok=True)

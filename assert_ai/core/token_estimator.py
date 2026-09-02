@@ -294,6 +294,32 @@ def _compatibility_path_will_refresh(
     )
 
 
+def _effective_artifact_input_path(
+    ctx: dict[str, Any],
+    *,
+    key: str,
+    value: Any,
+    stage_name: str,
+    filename: str,
+) -> Path:
+    """Mirror compatibility-file refreshes without writing during estimation."""
+
+    resolved = _resolved_path(ctx, key, value)
+    if not _compatibility_path_will_refresh(
+        ctx,
+        stage_name=stage_name,
+        input_path=resolved,
+        filename=filename,
+    ):
+        return resolved
+    activated = ctx.get(key)
+    if activated:
+        activated_path = Path(str(activated)).resolve()
+        if activated_path.exists() and activated_path.is_file():
+            return activated_path
+    return resolved
+
+
 def _systematize_output_feeds_taxonomy(
     ctx: dict[str, Any],
     stage_cfgs: dict[str, dict[str, Any]],
@@ -395,7 +421,15 @@ def _taxonomy_for_stage(
         or ctx.get("taxonomy_path")
         or str(Path(ctx["suite_root"]) / "taxonomy.json")
     )
-    taxonomy = _load_json_mapping(_resolved_path(ctx, "taxonomy_path", raw_path))
+    taxonomy = _load_json_mapping(
+        _effective_artifact_input_path(
+            ctx,
+            key="taxonomy_path",
+            value=raw_path,
+            stage_name="systematize",
+            filename="taxonomy.json",
+        )
+    )
     if taxonomy is not None and taxonomy.get("behavior_categories"):
         return taxonomy, False
     return _synthetic_taxonomy(ctx, stage_cfgs), True
@@ -798,7 +832,15 @@ def _case_inventory(
         or str(Path(ctx["suite_root"]) / test_set.TEST_SET_FILE)
     )
     rows = normalize_test_case_rows(
-        load_jsonl(_resolved_path(ctx, "test_set_path", raw_path))
+        load_jsonl(
+            _effective_artifact_input_path(
+                ctx,
+                key="test_set_path",
+                value=raw_path,
+                stage_name="test_set",
+                filename=test_set.TEST_SET_FILE,
+            )
+        )
     )
     inventory = _CaseInventory()
     if rows and not prefer_generated:
@@ -1229,10 +1271,12 @@ def _pending_case_inventory(
         or ctx.get("test_set_path")
         or str(Path(ctx["suite_root"]) / test_set.TEST_SET_FILE)
     )
-    test_set_path = _resolved_path(
+    test_set_path = _effective_artifact_input_path(
         ctx,
-        "test_set_path",
-        str(raw_test_set_path),
+        key="test_set_path",
+        value=str(raw_test_set_path),
+        stage_name="test_set",
+        filename=test_set.TEST_SET_FILE,
     )
     raw_output_dir = raw_cfg.get("save_dir") or str(ctx["run_root"])
     output_dir = _resolved_path(ctx, "save_dir", str(raw_output_dir))

@@ -18,6 +18,7 @@ assert-ai [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
 ## Command groups
 
 - `init`: interactive config generation assistant
+- `estimate`: preview tracked model token usage without running stages
 - `run`: execute pipeline stages
 - `results`: list/status/compare suites and runs
 - `analysis`: post-hoc metrics commands
@@ -50,6 +51,18 @@ Options:
 - `--force` optional flag
 - `--dry-run` optional flag
 - `--no-color` optional flag
+
+## `estimate`
+
+Estimate token usage without executing any pipeline stages.
+
+```bash
+assert-ai estimate --config <path> [OPTIONS]
+```
+
+The command uses the same local, conservative estimator shown before `run`.
+It does not call a provider or create run artifacts. Use `--output json` for
+machine-readable output.
 
 ## `run`
 
