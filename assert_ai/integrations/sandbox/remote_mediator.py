@@ -16,6 +16,20 @@ from .records import MediationDecision
 
 _MAX_COMPLETION_RESULT_BYTES = 512 * 1024
 _MAX_COMPLETION_PREVIEW_BYTES = 64 * 1024
+_MAX_COMPLETION_ERROR_TYPE_BYTES = 1024
+_MAX_COMPLETION_ERROR_MESSAGE_BYTES = 16 * 1024
+
+
+def _bounded_text(value: Any, *, max_bytes: int, fallback: str) -> str:
+    """Render target-controlled diagnostics within a strict UTF-8 byte bound."""
+    try:
+        text = str(value)
+    except Exception:
+        text = fallback
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _bounded_completion_value(value: Any) -> Any:
@@ -30,8 +44,16 @@ def _bounded_completion_value(value: Any) -> Any:
     except (TypeError, ValueError, RecursionError) as exc:
         return {
             "_assert_result_unserializable": True,
-            "error_type": type(exc).__name__,
-            "message": str(exc),
+            "error_type": _bounded_text(
+                type(exc).__name__,
+                max_bytes=_MAX_COMPLETION_ERROR_TYPE_BYTES,
+                fallback="SerializationError",
+            ),
+            "message": _bounded_text(
+                exc,
+                max_bytes=_MAX_COMPLETION_ERROR_MESSAGE_BYTES,
+                fallback="completion result serialization failed",
+            ),
         }
     if len(encoded) <= _MAX_COMPLETION_RESULT_BYTES:
         return value

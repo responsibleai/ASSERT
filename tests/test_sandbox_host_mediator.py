@@ -307,6 +307,51 @@ def test_remote_pass_bounds_large_completion_after_execution(tmp_path: Path):
     assert len(row["returned"]["sha256"]) == 64
 
 
+def test_remote_pass_bounds_unserializable_completion_diagnostic(tmp_path: Path):
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        "interactions:\n  - match: lookup\n    mode: pass\n"
+        "default: {mode: block}\n",
+        encoding="utf-8",
+    )
+    server, thread, port, ledger = start_host_mediator(
+        policy_path=policy,
+        mocks_path=None,
+        cassette_dir=None,
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        access_token="test-token",
+    )
+
+    class UnserializableResult:
+        def __str__(self):
+            raise ValueError("x" * (2 * 1024 * 1024))
+
+    class TrackedExecutor:
+        real_executed = False
+
+        def __call__(self, _args):
+            self.real_executed = True
+            return {"value": UnserializableResult()}
+
+    try:
+        client = RemoteActionMediator(f"http://127.0.0.1:{port}", "test-token")
+        decision = client.mediate(
+            _context(call_id="unserializable-result", tool="lookup"),
+            TrackedExecutor(),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert decision.real_executed is True
+    row = ledger.drain()[0]
+    assert row["completion_status"] == "complete"
+    assert row["execution_status"] == "executed"
+    assert row["returned"]["_assert_result_unserializable"] is True
+    assert len(row["returned"]["message"].encode()) <= 16 * 1024
+
+
 def test_remote_pass_encodes_nonfinite_completion_as_strict_json(tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     policy.write_text(
