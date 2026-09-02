@@ -34,7 +34,7 @@
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h2 id="token-usage-heading" class="text-base font-semibold text-text">Token usage</h2>
-			<p class="mt-0.5 text-xs text-text-muted">Local pre-run estimate compared with provider-reported usage.</p>
+			<p class="mt-0.5 text-xs text-text-muted">Conservative local pre-run estimate compared with provider-reported usage.</p>
 		</div>
 		{#if accuracy?.status === 'available' && withinRange !== null}
 			<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium {withinRange ? 'bg-score-pass/10 text-score-pass' : 'bg-score-border/10 text-score-border'}">

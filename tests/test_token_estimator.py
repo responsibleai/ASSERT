@@ -153,8 +153,14 @@ class TokenEstimatorTest(unittest.TestCase):
 
         self.assertEqual(estimate.stages["inference"].calls, 2)
         self.assertEqual(estimate.stages["judge"].calls, 2)
+        self.assertEqual(estimate.stages["inference"].output_tokens, 1_500)
+        self.assertEqual(estimate.stages["judge"].output_tokens, 1_280)
         self.assertGreater(estimate.input_tokens, 0)
         self.assertGreater(estimate.output_tokens, 0)
+        self.assertEqual(estimate.uncertainty, 0.35)
+        self.assertTrue(
+            any("high-side output assumptions" in note for note in estimate.notes)
+        )
         self.assertLess(
             estimate.lower_bound_tokens,
             estimate.total_tokens,

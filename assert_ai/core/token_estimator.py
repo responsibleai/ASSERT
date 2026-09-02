@@ -58,8 +58,11 @@ from assert_ai.stages import test_set
 
 _MAX_PROFILE_SAMPLES = 24
 _TESTER_OUTPUT_TOKENS = 55
-_PROMPT_TARGET_OUTPUT_TOKENS = 350
-_SCENARIO_TARGET_OUTPUT_TOKENS = 180
+_PROMPT_TARGET_OUTPUT_TOKENS = 512
+_PROMPT_TARGET_OUTPUT_BUDGET_RATIO = 0.75
+_PROMPT_TARGET_OUTPUT_TOKEN_CAP = 768
+_SCENARIO_TARGET_OUTPUT_TOKENS = 384
+_JUDGE_OUTPUT_TOKENS = 640
 _SIMULATOR_OUTPUT_TOKENS = 90
 _UNSCORABLE_STOP_REASONS = {
     "tester_input_refused",
@@ -116,7 +119,7 @@ class PipelineTokenEstimate:
 
     @property
     def uncertainty(self) -> float:
-        return 0.30 if self.notes else 0.20
+        return 0.35 if self.notes else 0.25
 
     @property
     def lower_bound_tokens(self) -> int:
@@ -192,6 +195,19 @@ def _bounded_output(expected: int, max_tokens: int | None) -> int:
     if max_tokens is None:
         return max(1, expected)
     return max(1, min(expected, max_tokens))
+
+
+def _high_side_prompt_output(max_tokens: int | None) -> int:
+    expected = _PROMPT_TARGET_OUTPUT_TOKENS
+    if max_tokens is not None:
+        expected = max(
+            expected,
+            min(
+                _PROMPT_TARGET_OUTPUT_TOKEN_CAP,
+                round(max_tokens * _PROMPT_TARGET_OUTPUT_BUDGET_RATIO),
+            ),
+        )
+    return _bounded_output(expected, max_tokens)
 
 
 def _request_tokens(
@@ -981,9 +997,8 @@ def _project_prompt_case(
     request_messages.append(Message(role="user", content=profile.description))
     transcript_messages.append(("user", profile.description))
 
-    target_output = _bounded_output(
-        _PROMPT_TARGET_OUTPUT_TOKENS,
-        target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens,
+    target_output = _high_side_prompt_output(
+        target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens
     )
     target_text = _synthetic_text(target_output, "response")
     if isinstance(target.model, ModelConfig):
@@ -1694,14 +1709,17 @@ def _estimate_judge(
         forced=forced,
     )
     per_call_output = _bounded_output(
-        estimate_token_count(
-            judge_cfg.model.name,
-            text=json.dumps(
-                _synthetic_judge_output(
-                    contract["score_keys"],
-                    taxonomy,
+        max(
+            _JUDGE_OUTPUT_TOKENS,
+            estimate_token_count(
+                judge_cfg.model.name,
+                text=json.dumps(
+                    _synthetic_judge_output(
+                        contract["score_keys"],
+                        taxonomy,
+                    ),
+                    ensure_ascii=False,
                 ),
-                ensure_ascii=False,
             ),
         ),
         judge_cfg.model.max_tokens or DEFAULT_JUDGE_MAX_TOKENS,
@@ -1836,6 +1854,9 @@ def estimate_pipeline_tokens(
         if estimate.calls or estimate.total_tokens:
             result.stages[stage_name] = estimate
 
+    result.notes.append(
+        "Point estimates use high-side output assumptions so actual usage is more likely to be lower."
+    )
     result.notes.append("Retries and provider-side hidden overhead are not included.")
     result.notes = list(dict.fromkeys(result.notes))
     return result

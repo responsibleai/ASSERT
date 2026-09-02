@@ -74,10 +74,12 @@ Optional:
 - `--output text|json`
 
 Before uncached stages execute, `run` prints a best-effort token estimate with
-an expected range and per-stage breakdown. The estimate uses local tokenization
-and does not call a provider. For callable, connector, endpoint, and sandbox
-targets, model usage inside the target is opaque to ASSERT and is explicitly
-excluded; tester and judge usage is still estimated.
+a likely range and per-stage breakdown. The point estimate deliberately uses
+high-side output assumptions so it is more likely to be above actual usage than
+below it. Estimation uses local tokenization and does not call a provider. For
+callable, connector, endpoint, and sandbox targets, model usage inside the
+target is opaque to ASSERT and is explicitly excluded; tester and judge usage
+is still estimated.
 
 ## `results list`
 
