@@ -646,8 +646,40 @@ def test_host_action_count_is_bounded_per_case(tmp_path: Path):
     assert rows[1]["mode"] == "block"
     assert rows[1]["decision_status"] == "error"
     assert rows[1]["completion_status"] == "complete"
+    assert rows[1]["suppressed_attempt_count"] == 11
     assert "action limit of 1" in rows[1]["reason"]
-    assert len(ledger.ledger_path.read_text(encoding="utf-8").splitlines()) == 4
+    transitions = [
+        json.loads(line)
+        for line in ledger.ledger_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(transitions) == 5
+    assert transitions[-1]["phase"] == "overflow_summary"
+    assert transitions[-1]["suppressed_attempt_count"] == 11
+
+
+def test_action_limit_marker_waits_for_final_drain(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        max_actions=1,
+    )
+    ledger.mediate(_context(call_id="first", tool="send_message"))
+    with pytest.raises(ValueError, match="action limit of 1"):
+        ledger.mediate(_context(call_id="second", tool="send_message"))
+
+    ready = ledger.drain_ready_batch().rows
+    assert [row["id"] for row in ready] == ["host-action-0"]
+
+    for index in range(3):
+        with pytest.raises(ValueError, match="action limit of 1"):
+            ledger.mediate(
+                _context(call_id=f"later-overflow-{index}", tool="send_message")
+            )
+
+    final = ledger.drain()
+    assert len(final) == 1
+    assert final[0]["id"] == "host-action-1"
+    assert final[0]["suppressed_attempt_count"] == 4
 
 
 def test_ready_drain_keeps_pending_pass_call_completable(tmp_path: Path):

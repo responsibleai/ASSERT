@@ -90,7 +90,8 @@ class HostMediationLedger:
         self._seen: set[str] = set()
         self._claims: dict[str, ActionClaim] = {}
         self._next_sequence = 0
-        self._limit_recorded = False
+        self._limit_row: dict[str, Any] | None = None
+        self._limit_summary_persisted = False
         self._registered = False
         self._lock = threading.Lock()
 
@@ -138,7 +139,7 @@ class HostMediationLedger:
                 raise ValueError(f"duplicate mediation call id {call_id!r}")
             if self._next_sequence >= self.max_actions:
                 reason = f"host mediator action limit of {self.max_actions} was reached"
-                if not self._limit_recorded:
+                if self._limit_row is None:
                     sequence = self._next_sequence
                     self._next_sequence += 1
                     attempt = {
@@ -164,6 +165,7 @@ class HostMediationLedger:
                         "result_source": None,
                         "completion_status": "pending",
                         "decision_status": "pending",
+                        "suppressed_attempt_count": 1,
                     }
                     self._append_transition({"phase": "attempt", **attempt})
                     rejected = {
@@ -181,7 +183,11 @@ class HostMediationLedger:
                     self._seen.add(call_id)
                     self._claims[call_id] = claim
                     self._ready.append(rejected)
-                    self._limit_recorded = True
+                    self._limit_row = rejected
+                else:
+                    self._limit_row["suppressed_attempt_count"] = (
+                        int(self._limit_row["suppressed_attempt_count"]) + 1
+                    )
                 raise ValueError(reason)
             sequence = self._next_sequence
             self._next_sequence += 1
@@ -328,6 +334,20 @@ class HostMediationLedger:
                 row for row in self._ready
                 if int(row["sequence"]) >= earliest_pending
             ]
+        if not finalize_pending and self._limit_row is not None:
+            # Keep the bounded overflow marker mutable until shutdown. Emitting
+            # it earlier would make subsequent rejected attempts invisible in
+            # the normal inference evidence.
+            ready = [row for row in ready if row is not self._limit_row]
+            if all(row is not self._limit_row for row in held_ready):
+                held_ready.append(self._limit_row)
+        if (
+            finalize_pending
+            and self._limit_row is not None
+            and not self._limit_summary_persisted
+        ):
+            self._append_transition({"phase": "overflow_summary", **self._limit_row})
+            self._limit_summary_persisted = True
         rows = sorted(
             [*ready, *incomplete],
             key=lambda row: int(row["sequence"]),
