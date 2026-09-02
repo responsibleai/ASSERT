@@ -139,7 +139,8 @@ def _reconcile_action_claims(
         host_by_id[claim.call_id_digest] = (claim, public_id, index)
 
     target_actions: dict[str, ActionClaim] = {}
-    target_action_order: list[str] = []
+    target_action_ids: list[str] = []
+    target_call_order: list[str] = []
     result_ids: set[str] = set()
     for index, claim in enumerate(target_claims, start=1):
         call_id = claim.call_id_digest
@@ -149,7 +150,8 @@ def _reconcile_action_claims(
                     f"duplicate target tool-call occurrence at action event {index}"
                 )
             target_actions[call_id] = claim
-            target_action_order.append(call_id)
+            target_action_ids.append(call_id)
+            target_call_order.append(call_id)
             continue
 
         if call_id in result_ids:
@@ -171,7 +173,7 @@ def _reconcile_action_claims(
                 arguments_digest=claim.arguments_digest,
                 arguments_supplied=True,
             )
-            target_action_order.append(call_id)
+            target_action_ids.append(call_id)
             continue
         if existing.tool_digest != claim.tool_digest or (
             claim.arguments_supplied
@@ -184,8 +186,7 @@ def _reconcile_action_claims(
     missing_positions: list[str] = []
     mismatch_positions: list[str] = []
     reordered_positions: list[str] = []
-    last_host_position = 0
-    for position, call_id in enumerate(target_action_order, start=1):
+    for position, call_id in enumerate(target_action_ids, start=1):
         host_match = host_by_id.get(call_id)
         if host_match is None:
             missing_positions.append(str(position))
@@ -197,6 +198,13 @@ def _reconcile_action_claims(
             or target_claim.arguments_digest != host_claim.arguments_digest
         ):
             mismatch_positions.append(str(position))
+
+    last_host_position = 0
+    for position, call_id in enumerate(target_call_order, start=1):
+        host_match = host_by_id.get(call_id)
+        if host_match is None:
+            continue
+        _host_claim, _public_id, host_position = host_match
         if host_position <= last_host_position:
             reordered_positions.append(str(position))
         last_host_position = host_position

@@ -842,6 +842,46 @@ def test_parallel_results_may_complete_out_of_request_order():
     ]
 
 
+def test_result_only_parallel_completions_do_not_imply_request_order():
+    first_host = make_action_claim(
+        kind="call",
+        call_id="first",
+        tool="lookup",
+        arguments={"value": 1},
+        arguments_supplied=True,
+    )
+    second_host = make_action_claim(
+        kind="call",
+        call_id="second",
+        tool="lookup",
+        arguments={"value": 2},
+        arguments_supplied=True,
+    )
+    second_result = make_action_claim(
+        kind="result",
+        call_id="second",
+        tool="lookup",
+        arguments={"value": 2},
+        arguments_supplied=True,
+    )
+    first_result = make_action_claim(
+        kind="result",
+        call_id="first",
+        tool="lookup",
+        arguments={"value": 1},
+        arguments_supplied=True,
+    )
+
+    assert _reconcile_action_claims(
+        [second_result, first_result],
+        [first_host, second_host],
+        ["host-action-0", "host-action-1"],
+    ) == [
+        ("result", "host-action-1"),
+        ("result", "host-action-0"),
+    ]
+
+
 def test_missing_target_result_is_inserted_immediately_after_matching_call():
     host_call = {
         "role": "assistant",
