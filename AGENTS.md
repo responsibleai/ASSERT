@@ -82,7 +82,7 @@ cp .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 Use the PowerShell equivalent on Windows:
@@ -99,7 +99,7 @@ Copy-Item .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 ## How to help with common tasks
@@ -170,7 +170,7 @@ These skills are for end users running evaluations, not for repository maintenan
 
 | Skill | Claude Code | GitHub Copilot | Cursor | What it does |
 |---|---|---|---|---|
-| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Establish a risk source — discover risks via the Clarity MCP tools (`run_clarity`) in-IDE (recommended), or take risks the user supplies directly as prose or a PRD / design doc / threat model — then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
+| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Establish a risk source — discover risks via the Clarity MCP tools (`run_clarity`) in-IDE (recommended), or take risks the user supplies directly as prose or a PRD / design doc / threat model / red-team finding — then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Config generation is owned by `workflows/research-eval-dimensions.md`, which runs downstream of both risk sources: given an already-named risk, it reviews **how that risk has been evaluated** in the literature and turns the findings into the test-set design, researching every behavior category, stratify dimension, and judge dimension against retrieved primary sources under a ≥2-independent-source gate, running `N` complete generation passes with semantic deduplication, blocking on explicit user approval, and writing a cited `examples/<slug>/eval_config.yaml`. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
 
 ## Output style for coding agents
 

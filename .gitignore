@@ -91,6 +91,9 @@ README_preannounce.md
 # Adopters using this skill in their own product repo may instead commit the durable
 # protocol docs (goal/, solution/, failures/) and ignore only transcripts/.
 /.clarity-protocol/
+# Per-example copies of that same protocol output, exported under an example tree
+examples/**/.clarity-protocol/
+examples/**/Clarity Protocol/
 # Generated eval configs written by the measure-clarity-failures workflow
 # (evals/<atomic_behavior>.yaml). Per-target output; adopters may commit these.
 /evals/

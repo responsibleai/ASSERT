@@ -5,7 +5,7 @@
 
 This module is intentionally pure manifest parsing. It does not import the ACS
 runtime, evaluate Rego, shell out to OPA, generate policy, or wrap targets. The
-output is a small ASSERT config for regression/sanity checking a target that is
+output is a policy-derived ASSERT config for regression/sanity checking a target that is
 already guarded by the supplied ACS manifest.
 """
 
@@ -222,12 +222,12 @@ def build_eval_config(
         },
         "pipeline": {
             "systematize": {
-                "behavior_category_count": 6,
+                "behavior_category_count": 25,
                 "web_search": False,
             },
             "test_set": {
-                "prompt": {"sample_size": 12},
-                "scenario": {"sample_size": 12},
+                "prompt": {"sample_size": 25},
+                "scenario": {"sample_size": 25},
             },
             "inference": {
                 "concurrency": 1,
@@ -239,7 +239,7 @@ def build_eval_config(
                     },
                 },
                 "tester": {},
-                "max_turns": 4,
+                "max_turns": 6,
             },
             "judge": {
                 "dimensions": _judge_dimensions(),

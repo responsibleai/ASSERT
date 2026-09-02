@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `assert-ai[examples]` | Each example's adjacent `requirements.txt` |
 | `assert-ai[regression]` | `uv sync --group dev` from a repository checkout; SciPy is no longer required |
 
+- **Breaking, planned for 0.3.0:** `pipeline.inference.max_turns` now resolves to `6` instead of `10` when omitted. Scenario cases that relied on the implicit budget run four fewer turns, which can lower observed violation rates for multi-turn erosion harms, so results from before and after this change are not directly comparable. Set `max_turns: 10` explicitly to keep the previous behavior. Single-turn `prompt` cases do not use this setting and are unaffected. Because the resolved value feeds the inference resume fingerprint, a run interrupted before the upgrade re-executes rather than resumes.
+
 ### Fixed
 
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
