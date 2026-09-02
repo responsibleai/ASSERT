@@ -88,7 +88,7 @@ If your framework is not in the [auto-instrument list](https://github.com/Arize-
 pipeline:
   inference:
     target:
-      callable: examples.travel_planner_neurosan.agent:plan_trip_sync
+      callable: examples.travel_planner_neurosan.agent:chat
       trace:
         backend: phoenix
         group_by: session.id

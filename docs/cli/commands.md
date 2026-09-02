@@ -45,6 +45,7 @@ Options:
 - `--judge-preset <name>` optional
 - `--dimensions <csv>` optional
 - `--model <litellm-model>` optional, default `azure/gpt-4o-mini`
+- `--web-search / --no-web-search` optional, default `--web-search`. Lets the design agent do live web research via the OpenAI/Azure Responses API `web_search_preview` tool. Automatically falls back to a knowledge-only conversation when the design-agent model or region does not support it.
 - `--env-file <path>` optional, default `.env`
 - `--non-interactive` optional flag
 - `--max-turns <int>` optional, default `20`

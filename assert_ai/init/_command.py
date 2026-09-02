@@ -11,6 +11,44 @@ import click
 log = logging.getLogger(__name__)
 
 
+def _confirm_web_search(console, non_interactive: bool) -> bool:
+    """Disclose the external search and get consent. Returns the final setting.
+
+    Live research is on by default because the methodology's value is grounding
+    dimensions in real literature rather than recall. That default still sends
+    terms derived from the user's product description to a third-party search
+    provider, which the user cannot consent to without being told.
+
+    Passing ``--web-search`` explicitly is itself the affirmative act, so it is
+    only disclosed. When the flag was merely defaulted on, an interactive run
+    asks. A non-interactive run cannot ask, so it discloses and proceeds; the
+    caller can set ``--no-web-search`` to opt out.
+    """
+
+    explicit = False
+    try:
+        ctx = click.get_current_context()
+        source = ctx.get_parameter_source("web_search")
+        explicit = source is not None and source.name != "DEFAULT"
+    except RuntimeError:
+        pass
+
+    console.print(
+        "[dim]Live web research is enabled. Search terms derived from your "
+        "description are sent to an external search provider (OpenAI/Azure "
+        "web_search), and retrieved pages are read to ground the config. "
+        "Use --no-web-search to disable.[/dim]"
+    )
+
+    if explicit or non_interactive:
+        return True
+
+    if not click.confirm("Continue with live web research?", default=True):
+        console.print("[dim]Continuing without live web research.[/dim]")
+        return False
+    return True
+
+
 @click.command(short_help="Design an eval config with an LLM assistant")
 @click.option(
     "--output", "-o",
@@ -83,6 +121,18 @@ log = logging.getLogger(__name__)
     ),
 )
 @click.option(
+    "--web-search/--no-web-search",
+    "web_search",
+    default=True,
+    show_default=True,
+    help=(
+        "Let the design agent do live web research via the OpenAI/Azure "
+        "Responses API web_search_preview tool. Falls back to a "
+        "knowledge-only conversation when the model or region does not "
+        "support it."
+    ),
+)
+@click.option(
     "--env-file",
     type=click.Path(path_type=Path),
     default=Path(".env"),
@@ -125,6 +175,7 @@ def init(
     dimensions: str | None,
     model: str,
     default_model_hint: str | None,
+    web_search: bool,
     env_file: Path,
     non_interactive: bool,
     max_turns: int,
@@ -143,6 +194,8 @@ def init(
 
     from assert_ai.init._design_agent import run_design_loop
     from assert_ai.init._emit import emit_config
+    from assert_ai.init._llm import web_search_available
+    from assert_ai.core.model_client import chat_completions_fallback_active
 
     # Load env vars for LLM credentials
     if env_file.exists():
@@ -183,6 +236,35 @@ def init(
     console = Console(highlight=False, color_system=None if no_color else "auto", stderr=True)
     log.info("Starting eval config designer")
 
+    # Live web research rides the OpenAI/Azure Responses API web_search_preview
+    # tool, so it only applies to those model families. If the user asked for it
+    # on an unsupported design-agent model, degrade to a knowledge-only
+    # conversation instead of failing mid-run. (Responses-API-unavailable
+    # regions still degrade automatically inside model_client.generate.)
+    effective_web_search = web_search
+    if web_search and not web_search_available(model):
+        log.warning(
+            "Web search requested but the design-agent model %r does not support "
+            "it (needs an OpenAI/Azure model via the Responses API). Continuing "
+            "without live web research.",
+            model,
+        )
+        effective_web_search = False
+    if effective_web_search and chat_completions_fallback_active():
+        # Already off the Responses API for this process (ASSERT_PREFER_CHAT_
+        # COMPLETIONS, or an earlier region error). There is no web_search tool
+        # to hand the model, so promising one in the prompt would only invite
+        # fabricated citations.
+        log.warning(
+            "Web search requested but the Chat Completions fallback is already "
+            "active for this process, so the Responses API web_search tool is "
+            "unavailable. Continuing without live web research."
+        )
+        effective_web_search = False
+
+    if effective_web_search:
+        effective_web_search = _confirm_web_search(console, non_interactive)
+
     # Load seed config if provided
     seed_yaml: str | None = None
     if seed_path is not None:
@@ -197,6 +279,7 @@ def init(
         judge_preset=judge_preset,
         dimension_hints=dimensions,
         default_model_hint=default_model_hint,
+        web_search=effective_web_search,
         non_interactive=non_interactive,
         max_turns=max_turns,
         console=console,
