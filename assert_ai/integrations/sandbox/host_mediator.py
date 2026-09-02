@@ -8,6 +8,7 @@ import json
 import secrets
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +26,11 @@ _MAX_REQUEST_BYTES = 1024 * 1024
 _DEFAULT_MAX_WORKERS = 16
 _DEFAULT_CONNECTION_TIMEOUT_S = 5.0
 _DEFAULT_MAX_ACTIONS = 64
+
+
+def _reject_nonfinite_json(value: str) -> Any:
+    raise ValueError(f"non-finite JSON value {value!r} is not supported")
+
 
 def _public_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
     """Sanitize persisted evidence and assign a host-owned public call ID."""
@@ -84,6 +90,7 @@ class HostMediationLedger:
         self._seen: set[str] = set()
         self._claims: dict[str, ActionClaim] = {}
         self._next_sequence = 0
+        self._limit_recorded = False
         self._registered = False
         self._lock = threading.Lock()
 
@@ -130,9 +137,52 @@ class HostMediationLedger:
             if call_id in self._seen:
                 raise ValueError(f"duplicate mediation call id {call_id!r}")
             if self._next_sequence >= self.max_actions:
-                raise ValueError(
-                    f"host mediator action limit of {self.max_actions} was reached"
-                )
+                reason = f"host mediator action limit of {self.max_actions} was reached"
+                if not self._limit_recorded:
+                    sequence = self._next_sequence
+                    self._next_sequence += 1
+                    attempt = {
+                        "id": call_id,
+                        "sequence": sequence,
+                        "tool": tool,
+                        "args": args,
+                        "case_id": self.expected_case_id or claimed_case_id,
+                        "mode": "pending",
+                        "matched": "",
+                        "reason": "",
+                        "decision_reason": "",
+                        "policy_note": None,
+                        "flagged": False,
+                        "returned": None,
+                        "is_error": False,
+                        "real_executed": False,
+                        "execution_status": "not_executed",
+                        "mock_source": None,
+                        "replay": None,
+                        "evidence_source": "host_mediator",
+                        "decision_source": "host_mediator",
+                        "result_source": None,
+                        "completion_status": "pending",
+                        "decision_status": "pending",
+                    }
+                    self._append_transition({"phase": "attempt", **attempt})
+                    rejected = {
+                        **attempt,
+                        "mode": "block",
+                        "reason": reason,
+                        "decision_reason": reason,
+                        "returned": {"status": "blocked", "reason": reason},
+                        "is_error": True,
+                        "result_source": "host_mediator",
+                        "completion_status": "complete",
+                        "decision_status": "error",
+                    }
+                    self._append_transition({"phase": "decision_error", **rejected})
+                    self._seen.add(call_id)
+                    self._claims[call_id] = claim
+                    self._ready.append(rejected)
+                    self._limit_recorded = True
+                raise ValueError(reason)
             sequence = self._next_sequence
             self._next_sequence += 1
             attempt = {
@@ -247,34 +297,59 @@ class HostMediationLedger:
             self._completed[call_id] = completed
             self._ready.append(completed)
 
-    def drain_batch(self) -> HostActionBatch:
-        """Drain sanitized rows and their non-persisted canonical claims."""
-        with self._lock:
-            incomplete = [
-                {
-                    **row,
-                    "returned": None,
-                    "is_error": True,
-                    "real_executed": None,
-                    "execution_status": "unknown",
-                    "result_source": "not_reported",
-                    "completion_status": "missing",
-                }
+    def _drain_batch(self, *, finalize_pending: bool) -> HostActionBatch:
+        incomplete = [
+            {
+                **row,
+                "returned": None,
+                "is_error": True,
+                "real_executed": None,
+                "execution_status": "unknown",
+                "result_source": "not_reported",
+                "completion_status": "missing",
+            }
+            for row in self._pending.values()
+        ] if finalize_pending else []
+        for row in incomplete:
+            self._append_transition({"phase": "completion_missing", **row})
+        if finalize_pending or not self._pending:
+            ready = list(self._ready)
+            held_ready: list[dict[str, Any]] = []
+        else:
+            earliest_pending = min(
+                int(row["sequence"])
                 for row in self._pending.values()
-            ]
-            for row in incomplete:
-                self._append_transition({"phase": "completion_missing", **row})
-            rows = sorted(
-                [*self._ready, *incomplete],
-                key=lambda row: int(row["sequence"]),
             )
-            claims = [self._claims[str(row["id"])] for row in rows]
-            public_rows = [_public_ledger_row(row) for row in rows]
-            self._ready.clear()
+            ready = [
+                row for row in self._ready
+                if int(row["sequence"]) < earliest_pending
+            ]
+            held_ready = [
+                row for row in self._ready
+                if int(row["sequence"]) >= earliest_pending
+            ]
+        rows = sorted(
+            [*ready, *incomplete],
+            key=lambda row: int(row["sequence"]),
+        )
+        claims = [self._claims[str(row["id"])] for row in rows]
+        public_rows = [_public_ledger_row(row) for row in rows]
+        self._ready = held_ready
+        if finalize_pending:
             self._pending.clear()
-            for row in rows:
-                self._claims.pop(str(row["id"]), None)
-            return HostActionBatch(rows=public_rows, claims=claims)
+        for row in rows:
+            self._claims.pop(str(row["id"]), None)
+        return HostActionBatch(rows=public_rows, claims=claims)
+
+    def drain_ready_batch(self) -> HostActionBatch:
+        """Drain completed rows while leaving passed calls completable."""
+        with self._lock:
+            return self._drain_batch(finalize_pending=False)
+
+    def drain_batch(self) -> HostActionBatch:
+        """Finalize and drain all sanitized rows and private claims."""
+        with self._lock:
+            return self._drain_batch(finalize_pending=True)
 
     def drain(self) -> list[dict[str, Any]]:
         """Compatibility wrapper returning only sanitized evidence rows."""
@@ -283,7 +358,14 @@ class HostMediationLedger:
     def _append_transition(self, row: dict[str, Any]) -> None:
         public_row = _public_ledger_row(row)
         with self.ledger_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(public_row, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.write(
+                json.dumps(
+                    public_row,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    allow_nan=False,
+                ) + "\n"
+            )
         self.ledger_path.chmod(0o600)
 
 
@@ -310,6 +392,21 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self._deadline_lock = threading.Lock()
         self._deadline_timers: dict[int, threading.Timer] = {}
         super().__init__(server_address, request_handler_class)
+
+    def wait_for_idle(self) -> bool:
+        """Wait until every accepted mediator request has left its worker."""
+        acquired = 0
+        deadline = time.monotonic() + self.connection_timeout_s + 1.0
+        try:
+            while acquired < self.max_workers:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._worker_slots.acquire(timeout=remaining):
+                    return False
+                acquired += 1
+            return True
+        finally:
+            for _ in range(acquired):
+                self._worker_slots.release()
 
     def process_request(self, request: Any, client_address: Any) -> None:
         if not self._worker_slots.acquire(blocking=False):
@@ -378,7 +475,10 @@ class _HostMediatorHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("content-length", "0") or 0)
             if length <= 0 or length > _MAX_REQUEST_BYTES:
                 raise ValueError("invalid mediation request size")
-            payload = json.loads(self.rfile.read(length))
+            payload = json.loads(
+                self.rfile.read(length),
+                parse_constant=_reject_nonfinite_json,
+            )
             if not isinstance(payload, dict):
                 raise ValueError("mediation request must be a JSON object")
             if self.path == "/mediate":
@@ -408,7 +508,11 @@ class _HostMediatorHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "invalid_request", "detail": str(exc)})
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode()
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()
         try:
             self.send_response(status)
             self.send_header("content-type", "application/json")

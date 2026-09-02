@@ -153,6 +153,10 @@ def _load_target(data: Any) -> TargetSpec:
         raise SetupError(f"`target.kind` must be one of {sorted(TARGET_KINDS)}, got {kind or '(missing)'}")
 
     if kind == "endpoint":
+        if "host_action_mediation" in data:
+            raise SetupError(
+                "`target.host_action_mediation` is only supported for container targets"
+            )
         url = str(data.get("url") or "").strip()
         if not url:
             raise SetupError("`target.kind: endpoint` requires `url:`")

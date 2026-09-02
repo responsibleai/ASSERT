@@ -21,7 +21,12 @@ _MAX_COMPLETION_PREVIEW_BYTES = 64 * 1024
 def _bounded_completion_value(value: Any) -> Any:
     """Keep an honest completion report below the mediator request limit."""
     try:
-        encoded = json.dumps(value, ensure_ascii=False, default=str).encode()
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False,
+        ).encode()
     except (TypeError, ValueError, RecursionError) as exc:
         return {
             "_assert_result_unserializable": True,
@@ -155,7 +160,12 @@ class RemoteActionMediator:
         )
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        body = json.dumps(payload, ensure_ascii=False, default=str).encode()
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False,
+        ).encode()
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=body,

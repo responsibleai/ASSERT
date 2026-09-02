@@ -259,6 +259,11 @@ def _replace_target_actions_with_host_evidence(
             passthrough.append(message)
 
     event_index = 0
+    target_result_ids = {
+        public_id
+        for kind, public_id in event_public_ids
+        if kind == "result"
+    }
 
     def next_public_id(expected_kind: str) -> str:
         nonlocal event_index
@@ -287,6 +292,15 @@ def _replace_target_actions_with_host_evidence(
                 if (public_id, "call") not in inserted:
                     rebuilt.append(host_call)
                     inserted.add((public_id, "call"))
+                if public_id not in target_result_ids:
+                    host_result = host_messages[public_id].get("result")
+                    if host_result is None:
+                        raise RuntimeError(
+                            "matched host action is missing rendered result evidence"
+                        )
+                    if (public_id, "result") not in inserted:
+                        rebuilt.append(host_result)
+                        inserted.add((public_id, "result"))
             continue
         if message.get("role") == "tool":
             public_id = next_public_id("result")
@@ -453,6 +467,13 @@ class SandboxedEndpointSession:
                 await asyncio.to_thread(self._handle.stop)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
+            try:
+                final_messages = await self.drain_pending_interaction_messages(
+                    finalize_pending=True,
+                )
+                self._buffered_interaction_messages.extend(final_messages)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
             self._handle = None
         if self._workdir is not None:
             self._workdir.cleanup()
@@ -502,19 +523,30 @@ class SandboxedEndpointSession:
             result.interaction_messages.extend(additions)
         return result
 
-    async def drain_pending_interaction_messages(self) -> list[dict[str, Any]]:
-        """Drain host action and egress evidence even when the target turn failed."""
+    async def drain_pending_interaction_messages(
+        self,
+        *,
+        finalize_pending: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Drain host evidence without finalizing active calls before shutdown."""
         if self._handle is None:
             buffered, self._buffered_interaction_messages = (
                 self._buffered_interaction_messages,
                 [],
             )
             return buffered
-        buffered, self._buffered_interaction_messages = (
-            self._buffered_interaction_messages,
-            [],
+        buffered = list(self._buffered_interaction_messages)
+        new_action_batch = getattr(
+            self._handle,
+            (
+                "new_action_batch"
+                if finalize_pending
+                else "new_ready_action_batch"
+            ),
+            None,
         )
-        new_action_batch = getattr(self._handle, "new_action_batch", None)
+        if not callable(new_action_batch):
+            new_action_batch = getattr(self._handle, "new_action_batch", None)
         action_rows: list[dict[str, Any]] = []
         action_claims: list[ActionClaim] = []
         if callable(new_action_batch):
@@ -538,7 +570,15 @@ class SandboxedEndpointSession:
         ]
         if any(not public_id for public_id in host_public_ids):
             raise RuntimeError("host action evidence is missing a public call ID")
-        egress_rows = await asyncio.to_thread(self._handle.new_egress_rows)
+        new_egress_rows = getattr(self._handle, "new_egress_rows", None)
+        egress_rows = (
+            cast(
+                list[dict[str, Any]],
+                await asyncio.to_thread(new_egress_rows),
+            )
+            if callable(new_egress_rows)
+            else []
+        )
         self._drained_host_action_rows = len(action_rows)
         self._drained_host_action_claims = action_claims
         self._drained_host_action_public_ids = host_public_ids
@@ -567,6 +607,7 @@ class SandboxedEndpointSession:
                     "raw": raw,
                 },
             ])
+        self._buffered_interaction_messages = []
         return [*buffered, *additions]
 
     @property

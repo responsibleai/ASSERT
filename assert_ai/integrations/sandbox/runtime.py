@@ -570,6 +570,11 @@ class SandboxHandle:
             return HostActionBatch(rows=[], claims=[])
         return self.action_ledger.drain_batch()
 
+    def new_ready_action_batch(self) -> HostActionBatch:
+        if self.action_ledger is None:
+            return HostActionBatch(rows=[], claims=[])
+        return self.action_ledger.drain_ready_batch()
+
     def stop(self) -> None:
         commands = (
             ("rm", "-f", self.container),
@@ -583,7 +588,14 @@ class SandboxHandle:
                 continue
             try:
                 server.shutdown()
-                server.server_close()
+                wait_for_idle = getattr(server, "wait_for_idle", None)
+                try:
+                    if callable(wait_for_idle) and not wait_for_idle():
+                        raise SandboxRuntimeError(
+                            "host mediator requests did not quiesce before cleanup"
+                        )
+                finally:
+                    server.server_close()
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
         if errors:

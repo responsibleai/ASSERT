@@ -228,6 +228,22 @@ mocks: ./mocks.yaml
     assert loaded.mocks_path == tmp_path / "mocks.yaml"
 
 
+def test_endpoint_setup_rejects_container_only_host_action_mediation(tmp_path):
+    _, _, setup = _files(tmp_path)
+    setup.write_text(
+        "version: 1\n"
+        "target:\n"
+        "  kind: endpoint\n"
+        "  url: http://localhost/chat\n"
+        "  host_action_mediation: true\n"
+        "policy: ./policy.yaml\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="only supported for container targets"):
+        load_setup(setup)
+
+
 def test_container_setup_requires_a_port(tmp_path):
     _, _, setup = _files(tmp_path)
     setup.write_text(
@@ -1152,6 +1168,8 @@ def test_failed_sandbox_prompt_preserves_host_action_and_egress_evidence(monkeyp
 
         def __init__(self):
             self.session_metadata: dict[str, str] = {}
+            self.closed = False
+            self.final_drain_count = 0
 
         async def open(self):
             return None
@@ -1160,6 +1178,9 @@ def test_failed_sandbox_prompt_preserves_host_action_and_egress_evidence(monkeyp
             raise TimeoutError("target timed out")
 
         async def drain_pending_interaction_messages(self):
+            if not self.closed:
+                return []
+            self.final_drain_count += 1
             args = {"host": "bad.example", "port": 443, "method": "CONNECT", "path": ""}
             return [
                 {
@@ -1201,7 +1222,7 @@ def test_failed_sandbox_prompt_preserves_host_action_and_egress_evidence(monkeyp
             ]
 
         async def close(self):
-            return None
+            self.closed = True
 
     runtime = Runtime()
     monkeypatch.setattr(inference_stage, "_build_target_session", lambda **kwargs: runtime)
@@ -1221,6 +1242,7 @@ def test_failed_sandbox_prompt_preserves_host_action_and_egress_evidence(monkeyp
 
     payload = json.dumps(transcript.to_dict())
     assert transcript.stop_reason == "target_error"
+    assert runtime.final_drain_count == 1
     assert "bad.example" in payload
     assert "network_egress" in payload
     assert "send_message" in payload

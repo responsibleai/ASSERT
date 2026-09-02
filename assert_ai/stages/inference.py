@@ -726,6 +726,10 @@ async def _run_prompt_test_case(
             await runtime.close()
         except Exception as exc:  # noqa: BLE001
             close_error = exc
+        try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve final runtime interaction evidence")
         _record_runtime_metadata(
             transcript,
             runtime=runtime,
@@ -1069,6 +1073,10 @@ async def _run_scenario_test_case(
             await runtime.close()
         except Exception as exc:  # noqa: BLE001
             close_error = exc
+        try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve final runtime interaction evidence")
         _record_runtime_metadata(
             transcript,
             runtime=runtime,

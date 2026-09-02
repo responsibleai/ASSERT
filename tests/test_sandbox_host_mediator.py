@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
+import math
 import socket
 import threading
 import time
@@ -32,6 +33,7 @@ from assert_ai.integrations.sandbox.remote_mediator import RemoteActionMediator
 from assert_ai.integrations.sandbox.session import (
     SandboxedEndpointSession,
     _reconcile_action_claims,
+    _replace_target_actions_with_host_evidence,
 )
 from assert_ai.integrations.sandbox.tool_host import AgentHooksToolHost
 
@@ -305,6 +307,52 @@ def test_remote_pass_bounds_large_completion_after_execution(tmp_path: Path):
     assert len(row["returned"]["sha256"]) == 64
 
 
+def test_remote_pass_encodes_nonfinite_completion_as_strict_json(tmp_path: Path):
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        "interactions:\n  - match: lookup\n    mode: pass\n",
+        encoding="utf-8",
+    )
+    server, thread, port, ledger = start_host_mediator(
+        policy_path=policy,
+        mocks_path=None,
+        cassette_dir=None,
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+        access_token="test-token",
+    )
+
+    class TrackedExecutor:
+        real_executed = False
+
+        def __call__(self, _args):
+            self.real_executed = True
+            return {"value": float("nan")}
+
+    try:
+        client = RemoteActionMediator(f"http://127.0.0.1:{port}", "test-token")
+        decision = client.mediate(
+            _context(call_id="nan-result", tool="lookup"),
+            TrackedExecutor(),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert decision.real_executed is True
+    assert isinstance(decision.returned, dict)
+    assert math.isnan(decision.returned["value"])
+    row = ledger.drain()[0]
+    assert row["returned"]["_assert_result_unserializable"] is True
+    persisted = ledger.ledger_path.read_text(encoding="utf-8")
+
+    def reject_nonfinite(value: str):
+        raise ValueError(f"non-finite JSON value: {value}")
+
+    for line in persisted.splitlines():
+        json.loads(line, parse_constant=reject_nonfinite)
+
+
 def test_host_server_bounds_workers_and_times_out_stalled_connections(tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     policy.write_text("interactions: []\ndefault: {mode: block}\n", encoding="utf-8")
@@ -328,6 +376,14 @@ def test_host_server_bounds_workers_and_times_out_stalled_connections(tmp_path: 
         while worker_slots._value != 0 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert worker_slots._value == 0
+        idle_result: list[bool] = []
+        idle_thread = threading.Thread(
+            target=lambda: idle_result.append(getattr(server, "wait_for_idle")()),
+            daemon=True,
+        )
+        idle_thread.start()
+        time.sleep(0.02)
+        assert idle_thread.is_alive()
 
         with pytest.raises(
             (http.client.RemoteDisconnected, ConnectionResetError, TimeoutError, urllib.error.URLError)
@@ -338,6 +394,8 @@ def test_host_server_bounds_workers_and_times_out_stalled_connections(tmp_path: 
         while worker_slots._value != 1 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert worker_slots._value == 1
+        idle_thread.join(timeout=1)
+        assert idle_result == [True]
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
             assert response.status == 200
     finally:
@@ -576,7 +634,114 @@ def test_host_action_count_is_bounded_per_case(tmp_path: Path):
     with pytest.raises(ValueError, match="action limit of 1"):
         ledger.mediate(_context(call_id="second", tool="send_message"))
 
-    assert len(ledger.drain()) == 1
+    for index in range(10):
+        with pytest.raises(ValueError, match="action limit of 1"):
+            ledger.mediate(
+                _context(call_id=f"overflow-{index}", tool="send_message")
+            )
+
+    rows = ledger.drain()
+    assert len(rows) == 2
+    assert rows[1]["id"] == "host-action-1"
+    assert rows[1]["mode"] == "block"
+    assert rows[1]["decision_status"] == "error"
+    assert rows[1]["completion_status"] == "complete"
+    assert "action limit of 1" in rows[1]["reason"]
+    assert len(ledger.ledger_path.read_text(encoding="utf-8").splitlines()) == 4
+
+
+def test_ready_drain_keeps_pending_pass_call_completable(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(_context(call_id="late", tool="lookup"))
+
+    assert ledger.drain_ready_batch().rows == []
+    ledger.complete(
+        call_id="late",
+        returned={"status": "ok"},
+        is_error=False,
+        real_executed=True,
+    )
+
+    row = ledger.drain()[0]
+    assert row["completion_status"] == "complete"
+    assert row["execution_status"] == "executed"
+
+
+def test_ready_drain_holds_later_completion_behind_earlier_pending_call(
+    tmp_path: Path,
+):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(_context(call_id="first", tool="lookup"))
+    ledger.mediate(_context(call_id="second", tool="lookup"))
+    ledger.complete(
+        call_id="second",
+        returned={"status": "second"},
+        is_error=False,
+        real_executed=True,
+    )
+
+    assert ledger.drain_ready_batch().rows == []
+    ledger.complete(
+        call_id="first",
+        returned={"status": "first"},
+        is_error=False,
+        real_executed=True,
+    )
+
+    rows = ledger.drain_ready_batch().rows
+    assert [row["sequence"] for row in rows] == [0, 1]
+    assert [row["returned"]["status"] for row in rows] == ["first", "second"]
+
+
+def test_session_finalizes_pending_calls_after_target_stop(tmp_path: Path):
+    ledger = HostMediationLedger(
+        _mediator(),
+        ledger_path=tmp_path / "trusted" / "actions.jsonl",
+    )
+    ledger.mediate(_context(call_id="late", tool="lookup"))
+    session = _fake_sandbox_session(tmp_path)
+
+    class FakeEndpoint:
+        async def close(self):
+            return None
+
+    class FakeHandle:
+        action_ledger = ledger
+
+        def new_ready_action_batch(self):
+            return ledger.drain_ready_batch()
+
+        def new_action_batch(self):
+            return ledger.drain_batch()
+
+        def new_egress_rows(self):
+            return []
+
+        def stop(self):
+            ledger.complete(
+                call_id="late",
+                returned={"status": "ok"},
+                is_error=False,
+                real_executed=True,
+            )
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = FakeHandle()  # type: ignore[assignment]
+
+    assert asyncio.run(session.drain_pending_interaction_messages()) == []
+    asyncio.run(session.close())
+    final_messages = asyncio.run(session.drain_pending_interaction_messages())
+
+    rendered = json.dumps(final_messages)
+    assert "host-action-0" in rendered
+    assert '"completion_status": "complete"' in rendered
+    assert '"execution_status": "executed"' in rendered
 
 
 def test_target_action_order_must_follow_host_sequence():
@@ -601,6 +766,88 @@ def test_target_action_order_must_follow_host_sequence():
             [first, second],
             ["host-action-0", "host-action-1"],
         )
+
+
+def test_parallel_results_may_complete_out_of_request_order():
+    first_call = make_action_claim(
+        kind="call",
+        call_id="first",
+        tool="lookup",
+        arguments={"value": 1},
+        arguments_supplied=True,
+    )
+    second_call = make_action_claim(
+        kind="call",
+        call_id="second",
+        tool="lookup",
+        arguments={"value": 2},
+        arguments_supplied=True,
+    )
+    second_result = make_action_claim(
+        kind="result",
+        call_id="second",
+        tool="lookup",
+        arguments={},
+        arguments_supplied=False,
+    )
+    first_result = make_action_claim(
+        kind="result",
+        call_id="first",
+        tool="lookup",
+        arguments={},
+        arguments_supplied=False,
+    )
+
+    assert _reconcile_action_claims(
+        [first_call, second_call, second_result, first_result],
+        [first_call, second_call],
+        ["host-action-0", "host-action-1"],
+    ) == [
+        ("call", "host-action-0"),
+        ("call", "host-action-1"),
+        ("result", "host-action-1"),
+        ("result", "host-action-0"),
+    ]
+
+
+def test_missing_target_result_is_inserted_immediately_after_matching_call():
+    host_call = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "host-action-0",
+            "function": "lookup",
+            "arguments": {"value": 1},
+        }],
+    }
+    host_result = {
+        "role": "tool",
+        "content": "host-result",
+        "function": "lookup",
+        "tool_call_id": "host-action-0",
+    }
+
+    rebuilt = _replace_target_actions_with_host_evidence(
+        [
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "target-call",
+                "function": "lookup",
+                "arguments": {"value": 1},
+            }]},
+            {"role": "assistant", "content": "I used the lookup result."},
+            {"role": "assistant", "content": "Final answer."},
+        ],
+        [host_call, host_result],
+        [("call", "host-action-0")],
+        {"host-action-0"},
+    )
+
+    assert rebuilt == [
+        host_call,
+        host_result,
+        {"role": "assistant", "content": "I used the lookup result."},
+        {"role": "assistant", "content": "Final answer."},
+    ]
 
 
 def test_endpoint_event_sanitization_preserves_action_identity():
