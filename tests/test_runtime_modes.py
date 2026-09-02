@@ -395,6 +395,40 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         cfg = parse_model_config({"name": "m"}, field_name="test")
         self.assertIsNone(cfg.reasoning_effort)
 
+    def test_parse_model_config_wires_bus_transport(self) -> None:
+        from assert_ai.config import parse_model_config
+        cfg = parse_model_config(
+            {
+                "name": "bus/gpt5-rf",
+                "bus": {
+                    "snapshot": "az://orngcresco/models/snapshots/gpt5-rf",
+                    "user": "grader",
+                    "renderer": "harmony-test",
+                },
+            },
+            field_name="test",
+        )
+        self.assertEqual(cfg.bus.snapshot, "az://orngcresco/models/snapshots/gpt5-rf")
+        self.assertEqual(cfg.bus.user, "grader")
+        self.assertEqual(cfg.bus.renderer, "harmony-test")
+        self.assertEqual(cfg.bus.bus_line, "bus")
+        self.assertEqual(cfg.bus.top_p, 1.0)
+
+    def test_parse_model_config_rejects_invalid_bus_snapshot(self) -> None:
+        from assert_ai.config import parse_model_config
+        with self.assertRaisesRegex(ValueError, "snapshot must start with az://"):
+            parse_model_config(
+                {
+                    "name": "bus/gpt5-rf",
+                    "bus": {
+                        "snapshot": "orngcresco/models/snapshots/gpt5-rf",
+                        "user": "grader",
+                        "renderer": "harmony-test",
+                    },
+                },
+                field_name="test",
+            )
+
     def test_parse_model_config_rejects_unknown_keys_still(self) -> None:
         from assert_ai.config import parse_model_config
         with self.assertRaisesRegex(ValueError, "unsupported field"):
@@ -428,6 +462,61 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         )
         self.assertIsNotNone(pipeline)
         self.assertEqual(pipeline.evaluation.tester.model.reasoning_effort, "medium")
+
+    def test_pipeline_config_wires_distinct_bus_target_and_judge(self) -> None:
+        pipeline = parse_pipeline_config(
+            {
+                "pipeline": {
+                    "inference": {
+                        "target": {
+                            "model": {
+                                "name": "bus/target",
+                                "bus": {
+                                    "snapshot": "az://container/models/target",
+                                    "user": "target",
+                                    "renderer": "target-renderer",
+                                },
+                            },
+                        },
+                    },
+                    "judge": {
+                        "model": {
+                            "name": "bus/judge",
+                            "bus": {
+                                "snapshot": "az://container/models/judge",
+                                "user": "judge",
+                                "renderer": "judge-renderer",
+                            },
+                        },
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(pipeline.target.model.bus.user, "target")
+        self.assertEqual(pipeline.evaluation.judge.model.bus.user, "judge")
+
+    def test_pipeline_config_rejects_bus_target_tools(self) -> None:
+        with self.assertRaisesRegex(ValueError, "target.tools is not supported with model.bus"):
+            parse_pipeline_config(
+                {
+                    "pipeline": {
+                        "inference": {
+                            "target": {
+                                "model": {
+                                    "name": "bus/target",
+                                    "bus": {
+                                        "snapshot": "az://container/models/target",
+                                        "user": "target",
+                                        "renderer": "target-renderer",
+                                    },
+                                },
+                                "tools": {"module": "example.tools"},
+                            },
+                        },
+                    },
+                },
+            )
 
 
     def test_transcript_metadata_reasoning_effort_round_trips(self) -> None:

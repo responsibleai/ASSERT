@@ -62,6 +62,29 @@ pipeline:
         questions when user constraints are missing.
 ```
 
+### Forwarded vLLM server
+
+For an OpenAI-compatible vLLM server forwarded to the local machine, set the
+base URL in the same shell that launches ASSERT and use LiteLLM's
+`hosted_vllm/` provider prefix:
+
+```bash
+export HOSTED_VLLM_API_BASE=http://127.0.0.1:18000/v1
+curl "$HOSTED_VLLM_API_BASE/models"
+```
+
+```yaml
+pipeline:
+  inference:
+    target:
+      model:
+        name: hosted_vllm/qwen-sft
+```
+
+The suffix (`qwen-sft`) must match an ID returned by `/v1/models`. If
+`HOSTED_VLLM_API_BASE` is missing, ASSERT stops inference before scheduling test
+cases; otherwise LiteLLM would default to OpenAI's public URL.
+
 ## When to switch to the callable target
 
 The Prompt Agent target is for agents declared in YAML — one model in a runtime-owned tool loop. Once you have a real agent implemented in code (LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen / MAF, DSPy, custom orchestration, …), switch to the [callable target](callable.md). At that point your code owns the loop, and the recommended OTel-traced integration captures routing, sub-agent decisions, and intermediate tool calls — visibility the Prompt Agent target cannot give you because, by design, you didn't write the loop.

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,7 @@ def _judge_config_fingerprint(
     judge_temperature: float | None,
     judge_max_tokens: int | None,
     judge_reasoning_effort: str | None,
+    judge_bus: dict[str, Any] | None,
     judge_n: int,
     judge_dimensions: list[dict[str, Any]],
     disabled_dimensions: list[str],
@@ -73,6 +75,7 @@ def _judge_config_fingerprint(
             "judge_temperature": judge_temperature,
             "judge_max_tokens": judge_max_tokens,
             "judge_reasoning_effort": judge_reasoning_effort,
+            "judge_bus": judge_bus,
             "judge_n": judge_n,
             "judge_dimensions": judge_dimensions,
             "disabled_dimensions": disabled_dimensions,
@@ -101,6 +104,7 @@ async def run_judge(
     judge_temperature = evaluation.judge.model.temperature
     judge_max_tokens = evaluation.judge.model.max_tokens
     judge_reasoning_effort = evaluation.judge.model.reasoning_effort
+    judge_bus = evaluation.judge.model.bus
     judge_n = evaluation.judge.n
     effective_judge_dimensions = (
         judge_dimensions
@@ -200,6 +204,7 @@ async def run_judge(
             judge_max_tokens=judge_max_tokens,
             response_schema=judge_contract["response_schema"],
             reasoning_effort=judge_reasoning_effort,
+            bus_config=judge_bus,
             not_applicable_score_keys=judge_contract["not_applicable_score_keys"],
             dimension_scales=judge_contract["dimension_scales"],
         )
@@ -349,6 +354,7 @@ async def run_judge(
         judge_temperature=judge_temperature,
         judge_max_tokens=judge_max_tokens,
         judge_reasoning_effort=judge_reasoning_effort,
+        judge_bus=asdict(judge_bus) if judge_bus else None,
         judge_n=judge_n,
         judge_dimensions=effective_judge_dimensions,
         disabled_dimensions=effective_disabled_dimensions,

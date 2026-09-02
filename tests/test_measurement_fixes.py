@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
+from assert_ai.core.config_model import BusConfig, EvaluationConfig, JudgeConfig, InferenceConfig, ModelConfig
 from assert_ai.core.transcript import (
     AddMessageEdit,
     Message,
@@ -949,7 +949,14 @@ class MeasurementFixesTest(unittest.TestCase):
         )
 
     def test_run_judge_writes_minimal_rows(self) -> None:
+        bus = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="judge",
+            renderer="harmony-test",
+        )
+
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
+            self.assertIs(getattr(args[1], "bus"), bus)
             return (
                 [
                     {
@@ -991,7 +998,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
-                            judge=JudgeConfig(model="judge"),
+                            judge=JudgeConfig(model=ModelConfig(name="bus/judge", bus=bus)),
                             inference=InferenceConfig(concurrency=1),
                         ),
                     )

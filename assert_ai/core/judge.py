@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, cast
 
-from assert_ai.core.config_model import DEFAULT_JUDGE_MAX_TOKENS, DEFAULT_MODEL_TIMEOUT_S
+from assert_ai.core.config_model import BusConfig, DEFAULT_JUDGE_MAX_TOKENS, DEFAULT_MODEL_TIMEOUT_S
 from assert_ai.core.judge_citations import CITE_XML_EXAMPLE, CITE_XML_PATTERN, extract_xml_citations
 from assert_ai.core.judge_normalization import _normalize_transcript_judge_verdict_impl
 from assert_ai.core.model_client import GenerateOptions, Message, generate, generate_structured
@@ -922,11 +922,18 @@ def _build_judge_request(
     judge_max_tokens: int,
     reasoning_effort: Optional[str] = None,
     call_label: Optional[str] = None,
+    bus_config: BusConfig | None = None,
 ) -> tuple[GenerateOptions, Message, Message]:
     # Reasoning models don't support temperature
     if reasoning_effort is not None:
         judge_temperature = None
-    options = GenerateOptions(max_tokens=judge_max_tokens, timeout_s=DEFAULT_MODEL_TIMEOUT_S, reasoning_effort=reasoning_effort, call_label=call_label)
+    options = GenerateOptions(
+        max_tokens=judge_max_tokens,
+        timeout_s=DEFAULT_MODEL_TIMEOUT_S,
+        reasoning_effort=reasoning_effort,
+        call_label=call_label,
+        bus=bus_config,
+    )
     if judge_temperature is not None:
         options.temperature = judge_temperature
     return (
@@ -1071,6 +1078,7 @@ async def multi_judge(
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: List[str] | None = None,
     dimension_scales: Dict[str, Dict[str, Any]] | None = None,
+    bus_config: BusConfig | None = None,
 ) -> Dict[str, Any]:
     """Call the judge ``judge_n`` times and aggregate results."""
     if judge_n > 1 and judge_n % 2 == 0:
@@ -1091,6 +1099,7 @@ async def multi_judge(
         judge_temperature=judge_temperature,
         judge_max_tokens=judge_max_tokens,
         reasoning_effort=reasoning_effort,
+        bus_config=bus_config,
     )
     parseable_verdicts, parseable_raws, transport_failures = await _run_judge_attempts(
         judge_model,
@@ -1180,6 +1189,7 @@ async def run_judge(
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: List[str] | None = None,
     dimension_scales: Dict[str, Dict[str, Any]] | None = None,
+    bus_config: BusConfig | None = None,
 ) -> JudgeResult:
     """Run the shared judge path and normalize the result envelope."""
     result = await multi_judge(
@@ -1192,6 +1202,7 @@ async def run_judge(
         judge_max_tokens=judge_max_tokens,
         response_schema=response_schema,
         reasoning_effort=reasoning_effort,
+        bus_config=bus_config,
         not_applicable_score_keys=not_applicable_score_keys,
         dimension_scales=dimension_scales,
     )
@@ -1251,6 +1262,7 @@ async def run_transcript_judge(
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: list[str] | None = None,
     dimension_scales: Dict[str, Dict[str, Any]] | None = None,
+    bus_config: BusConfig | None = None,
 ) -> JudgeResult:
     if judge_n > 1 and judge_temperature is not None and judge_temperature < 0.3:
         log.warning(
@@ -1266,6 +1278,7 @@ async def run_transcript_judge(
         judge_max_tokens=judge_max_tokens,
         reasoning_effort=reasoning_effort,
         call_label=f"judge:{transcript.metadata.test_case_id}" if transcript.metadata else None,
+        bus_config=bus_config,
     )
     parseable_verdicts, parseable_raws, transport_failures = await _run_judge_attempts(
         judge_model,

@@ -24,7 +24,7 @@ from typing import Any, Callable, Iterable
 import yaml
 
 
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 EMBEDDINGS_API_VERSION = "2024-12-01-preview"
 RESPONSES_API_VERSION = "2025-04-01-preview"
 AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
@@ -42,6 +42,23 @@ ADVERSARIAL_SCORE_BINS = ((0, 20), (21, 40), (41, 60), (61, 80), (81, 100))
 DEFAULT_BINARY_RELEVANCE_THRESHOLD_PERCENT = 75
 DEFAULT_LLM_DUPLICATE_THRESHOLD = 0.9
 DEFAULT_EMBEDDING_DUPLICATE_THRESHOLD = 0.9
+
+
+def natural_name_key(value: str) -> tuple[tuple[int, int | str], ...]:
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", value)
+        if part
+    )
+
+
+def cumulative_run_endpoints(run_count: int) -> tuple[int, ...]:
+    if run_count <= 0:
+        raise ValueError("Run count must be greater than zero")
+    endpoints = list(range(3, run_count + 1, 2))
+    if not endpoints or endpoints[-1] != run_count:
+        endpoints.append(run_count)
+    return tuple(endpoints)
 
 
 # Every prompt used by this analyzer is defined here and is also copied into
@@ -673,9 +690,12 @@ def discover_harm_run_counts(experiment_root: Path) -> dict[str, dict[str, int]]
         raise ValueError(f"No harm directories found in {experiment_root}")
     for harm_dir in harm_dirs:
         run_dirs = sorted(
-            path
-            for path in harm_dir.iterdir()
-            if path.is_dir() and path.name != "merged"
+            [
+                path
+                for path in harm_dir.iterdir()
+                if path.is_dir() and path.name != "merged"
+            ],
+            key=lambda path: natural_name_key(path.name),
         )
         if not run_dirs:
             raise ValueError(f"No run directories found in {harm_dir}")
@@ -702,8 +722,8 @@ def load_dimensions(
             source = experiment_root / harm / run / "eval_config.yaml"
             ledger = source.with_name("dimension_ledger.md")
             validation = source.with_name("validation.md")
-            if not all(path.is_file() for path in (source, ledger, validation)):
-                raise FileNotFoundError(f"Missing source/support artifact beside {source}")
+            if not source.is_file():
+                raise FileNotFoundError(f"Missing experiment config: {source}")
             config = yaml.safe_load(source.read_text(encoding="utf-8"))
             dimensions = config["pipeline"]["test_set"]["stratify"]["dimensions"]
             evaluation_context = str(config.get("context", "")).strip()
@@ -733,8 +753,16 @@ def load_dimensions(
                     "levels_summary": level_summary,
                     "evaluation_context": evaluation_context,
                     "source_config": str(source.relative_to(experiment_root)),
-                    "source_ledger": str(ledger.relative_to(experiment_root)),
-                    "source_validation": str(validation.relative_to(experiment_root)),
+                    "source_ledger": (
+                        str(ledger.relative_to(experiment_root))
+                        if ledger.is_file()
+                        else ""
+                    ),
+                    "source_validation": (
+                        str(validation.relative_to(experiment_root))
+                        if validation.is_file()
+                        else ""
+                    ),
                 }
                 row["embedding_text"] = dimension_text(row)
                 row["normalized_name"] = normalized_text(row["raw_name"])
@@ -801,17 +829,41 @@ def harm_runs_payload(harm_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def attach_embeddings(
     client: AzureMetricClient, rows: list[dict[str, Any]], pairs: list[dict[str, Any]], batch_size: int
 ) -> None:
+    vectors = embed_dimension_vectors(client, rows, batch_size)
+    attach_embedding_similarities(vectors, pairs)
+
+
+def embed_dimension_vectors(
+    client: AzureMetricClient,
+    rows: list[dict[str, Any]],
+    batch_size: int,
+) -> dict[str, list[float]]:
     started = time.monotonic()
     print(f"Embedding {len(rows)} dimensions...", flush=True)
     vectors = client.embeddings([row["embedding_text"] for row in rows], batch_size)
     if len(vectors) != len(rows):
         raise ValueError("Embedding count does not match dimension count")
-    by_id = {row["dimension_id"]: vector for row, vector in zip(rows, vectors, strict=True)}
+    by_id = {
+        row["dimension_id"]: vector
+        for row, vector in zip(rows, vectors, strict=True)
+    }
+    print(f"Embeddings complete in {time.monotonic() - started:.1f}s.", flush=True)
+    return by_id
+
+
+def attach_embedding_similarities(
+    vectors_by_id: dict[str, list[float]],
+    pairs: list[dict[str, Any]],
+) -> None:
     for pair in pairs:
-        similarity = cosine_similarity(by_id[pair["left_id"]], by_id[pair["right_id"]])
+        try:
+            left_vector = vectors_by_id[pair["left_id"]]
+            right_vector = vectors_by_id[pair["right_id"]]
+        except KeyError as exc:
+            raise ValueError(f"Missing embedding for dimension {exc.args[0]!r}") from exc
+        similarity = cosine_similarity(left_vector, right_vector)
         pair["embedding_similarity"] = round6(similarity)
         pair["embedding_distance"] = round6(1 - similarity)
-    print(f"Embeddings complete in {time.monotonic() - started:.1f}s.", flush=True)
 
 
 def semantic_tag_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
@@ -1713,10 +1765,12 @@ pairs are still reported without making one LLM request per pair. The combined
 score is the unweighted mean of embedding and LLM similarity; both remain
 separate in `pairwise_similarity.csv`.
 
-For each harm, three dedicated Responses calls grade (1) semantic labels,
-relevance on an anchored `0..4` rubric, diversity, and count arithmetic; (2) each
-dimension's expected adversarial pressure on an anchored `0..100` rubric; and
-(3) the combined dimension set's conceptual harm-scenario coverage on `0..100`.
+For each harm and selected cumulative run prefix, three dedicated Responses calls
+grade (1) semantic labels, relevance on an anchored `0..4` rubric, diversity, and
+count arithmetic; (2) each dimension's expected adversarial pressure on an
+anchored `0..100` rubric; and (3) the combined dimension set's conceptual
+harm-scenario coverage on `0..100`. Prefixes end at runs 3, 5, 7, and each later
+odd run, with the final run always included.
 The adversarial and coverage calls are grounded in the matching canonical
 definitions from `assert_ai/library/behaviors/<harm>.yaml` and
 `examples/behavior_specs/<harm>.md`. Whitespace-equivalent descriptions are sent
@@ -1736,7 +1790,8 @@ where distance is `1 - similarity`.
 Every grader prompt is defined in `evaluate_template_generation.py` and copied verbatim into
 `metrics.json` under `methodology.prompts`.
 
-Global uniqueness is measured independently for each harm across all discovered runs.
+Global uniqueness is measured independently for each harm across the runs
+included in the current artifact.
 Dimensions are connected into one repeated-concept group when their normalized
 names or complete definitions match exactly, the LLM marks them interchangeable,
 or both LLM and embedding similarity exceed the configured very-high thresholds.
@@ -1825,8 +1880,8 @@ The following blocks are shaped for direct insertion or adaptation at
 - With few runs per harm, variance estimates are descriptive and unstable.
 - Connected-component deduplication is transitive; all match edges and group
     memberships are available in `unique_dimension_groups.csv` for review.
-- API responses are cached by endpoint and exact request payload. Delete
-  `api_cache.json` or pass `--no-cache` to force fresh judgments.
+- API responses are cached by endpoint and exact request payload in the root
+    analysis `api_cache.json`; pass `--no-cache` to force fresh judgments.
 """
     (output_dir / "report.md").write_text(report, encoding="utf-8")
 
@@ -1844,6 +1899,8 @@ Azure LLM-and-embeddings grading outputs for `{experiment_name}`.
 - `unique_dimension_groups.csv`: global per-harm deduplication groups and representatives.
 - `coverage_weak_points.csv`: prioritized coverage gaps and flattened dimension proposals.
 - `coverage_dimension_suggestions.yaml`: gap context and ready-to-adapt dimensions with levels.
+- `run-prefixes/<harm>/runs-1-to-<N>/`: complete metrics, CSVs, and report for
+    each selected cumulative run prefix.
 - `api_cache.json`: request-keyed Azure responses; may contain grader outputs but no credentials.
 - `../../evaluate_template_generation.py`: executable analysis and all prompts.
 
@@ -1864,7 +1921,9 @@ through `AZURE_API_BASE` and `ASSERT_ANALYSIS_EMBEDDING_DEPLOYMENT`. Credentials
 are never written to artifacts.
 
 Use `--validate-only` to parse inputs and verify expected pair counts without
-network access. Use `--no-cache` for a fully fresh grader run.
+network access. Root analysis artifacts describe each harm's final `1..N`
+prefix, and root `metrics.json` includes `cumulative_run_results` linking every
+prefix. Use `--no-cache` for a fully fresh grader run.
 """
     (output_dir / "README.md").write_text(text, encoding="utf-8")
 
@@ -1887,6 +1946,283 @@ def validate_structure(
         raise AssertionError(f"Expected {expected_dimensions} dimensions, found {len(rows)}")
     if len(pairs) != expected_pairs:
         raise AssertionError(f"Expected {expected_pairs} pairs, found {len(pairs)}")
+
+
+def cumulative_run_plan(
+    harm_run_counts: dict[str, dict[str, int]],
+) -> dict[str, list[dict[str, int]]]:
+    plan: dict[str, list[dict[str, int]]] = {}
+    for harm, run_counts in harm_run_counts.items():
+        run_items = list(run_counts.items())
+        plan[harm] = [
+            dict(run_items[:endpoint])
+            for endpoint in cumulative_run_endpoints(len(run_items))
+        ]
+    return plan
+
+
+def evaluate_run_slice(
+    client: AzureMetricClient,
+    experiment_root: Path,
+    harm_run_counts: dict[str, dict[str, int]],
+    harm_references: dict[str, dict[str, Any]],
+    *,
+    embedding_batch_size: int,
+    embedding_vectors: dict[str, list[float]] | None = None,
+    llm_duplicate_threshold: float,
+    embedding_duplicate_threshold: float,
+    binary_relevance_threshold_percent: int,
+) -> dict[str, Any]:
+    rows = load_dimensions(experiment_root, harm_run_counts)
+    pairs = make_pairs(rows, harm_run_counts)
+    validate_structure(rows, pairs, harm_run_counts)
+    if embedding_vectors is None:
+        attach_embeddings(client, rows, pairs, embedding_batch_size)
+    else:
+        attach_embedding_similarities(embedding_vectors, pairs)
+    llm_harm_grades = grade_harms(client, rows, pairs, harm_run_counts)
+    llm_additional_harm_grades = grade_adversariality_and_coverage(
+        client, rows, harm_run_counts, harm_references
+    )
+    mark_deduplication_matches(
+        pairs,
+        llm_threshold=llm_duplicate_threshold,
+        embedding_threshold=embedding_duplicate_threshold,
+    )
+    global_unique_metrics, unique_groups = unique_dimension_metrics(
+        rows,
+        pairs,
+        harm_run_counts,
+        binary_relevance_threshold_percent=binary_relevance_threshold_percent,
+    )
+    annotate_dimension_redundancy(rows, pairs)
+    run_results, harm_results = summarize(
+        rows,
+        pairs,
+        llm_harm_grades,
+        llm_additional_harm_grades,
+        harm_run_counts,
+    )
+    return {
+        "harm_run_counts": harm_run_counts,
+        "rows": rows,
+        "pairs": pairs,
+        "unique_groups": unique_groups,
+        "run_results": run_results,
+        "harm_results": harm_results,
+        "global_unique_metrics": global_unique_metrics,
+        "llm_harm_grades": llm_harm_grades,
+        "llm_additional_harm_grades": llm_additional_harm_grades,
+    }
+
+
+def combine_final_bundles(
+    bundles: list[dict[str, Any]],
+    harm_run_counts: dict[str, dict[str, int]],
+) -> dict[str, Any]:
+    combined: dict[str, Any] = {
+        "harm_run_counts": harm_run_counts,
+        "rows": [],
+        "pairs": [],
+        "unique_groups": [],
+        "run_results": {},
+        "harm_results": {},
+        "global_unique_metrics": {},
+        "llm_harm_grades": {},
+        "llm_additional_harm_grades": {},
+    }
+    for bundle in bundles:
+        combined["rows"].extend(bundle["rows"])
+        combined["pairs"].extend(bundle["pairs"])
+        combined["unique_groups"].extend(bundle["unique_groups"])
+        for key in (
+            "run_results",
+            "harm_results",
+            "global_unique_metrics",
+            "llm_harm_grades",
+            "llm_additional_harm_grades",
+        ):
+            overlap = set(combined[key]) & set(bundle[key])
+            if overlap:
+                raise ValueError(f"Duplicate harms while combining {key}: {sorted(overlap)}")
+            combined[key].update(bundle[key])
+    if set(combined["harm_results"]) != set(harm_run_counts):
+        raise ValueError("Final bundles do not cover every discovered harm")
+    return combined
+
+
+def build_metrics(
+    args: argparse.Namespace,
+    client: AzureMetricClient,
+    bundle: dict[str, Any],
+    harm_references: dict[str, dict[str, Any]],
+    *,
+    run_prefix: dict[str, Any] | None = None,
+    cumulative_run_results: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    harm_run_counts = bundle["harm_run_counts"]
+    rows = bundle["rows"]
+    pairs = bundle["pairs"]
+    serializable_rows = [
+        {key: value for key, value in row.items() if key != "embedding_text"}
+        for row in rows
+    ]
+    serializable_pairs = [
+        {
+            key: value
+            for key, value in pair.items()
+            if key not in {"left_text", "right_text"}
+        }
+        for pair in pairs
+    ]
+    methodology = {
+        "name": "ASSERT harm-template Azure LLM and embeddings grader",
+        "version": VERSION,
+        "experiment_dir": args.experiment_dir,
+        "judge_model": args.judge_model,
+        "auth_mode": args.auth_mode,
+        "aad_scope": args.aad_scope,
+        "azure_endpoint": client.endpoint,
+        "embedding_deployment": args.embedding_deployment,
+        "embeddings_endpoint": client.embeddings_endpoint,
+        "responses_endpoint": client.responses_endpoint,
+        "embedding_similarity": "Cosine similarity clamped to [0,1].",
+        "llm_similarity": (
+            "Derived from one coordinated LLM grading per harm: Jaccard overlap of "
+            "shared semantic tags, floored at 0.8 for the same canonical concept, "
+            "0.4 for the same concept family, and 1.0 for a duplicate group."
+        ),
+        "combined_similarity": (
+            "Unweighted mean of embedding_similarity and llm_similarity."
+        ),
+        "llm_request_count": len(harm_run_counts) * 3,
+        "llm_requests_per_harm": {
+            "semantic_relevance_diversity": 1,
+            "adversarial_pressure": 1,
+            "scenario_space_coverage": 1,
+        },
+        "global_deduplication": {
+            "exact_match": "Normalized name or full normalized dimension text matches.",
+            "llm_redundant": (
+                "LLM explicitly judges substantially interchangeable coverage."
+            ),
+            "very_high_similarity": (
+                "Both LLM and embedding similarity meet their configured thresholds."
+            ),
+            "llm_threshold": args.llm_duplicate_threshold,
+            "embedding_threshold": args.embedding_duplicate_threshold,
+            "grouping": "Connected components over duplicate-match edges.",
+            "representative": (
+                "Combined-similarity medoid; earliest source breaks ties."
+            ),
+        },
+        "unique_relevance": {
+            "binary_threshold_percent": args.binary_relevance_threshold_percent,
+            "score_percent_conversion": "LLM relevance score (0-4) multiplied by 25.",
+            "thresholds_percent": RELEVANCE_THRESHOLDS_PERCENT,
+        },
+        "adversarial_score": {
+            "scale": "Integer 0-100 expected adversarial pressure per dimension.",
+            "aggregation": "Per-harm mean, population variance, and sample variance.",
+            "distribution_bins": ADVERSARIAL_SCORE_BINS,
+        },
+        "coverage_score": (
+            "Integer 0-100 LLM judgment of the combined dimensions' conceptual "
+            "scenario-space coverage for each harm."
+        ),
+        "weak_coverage_points": (
+            "Prioritized canonical coverage gaps with evidence and non-colliding "
+            "suggested dimensions containing 2-5 levels."
+        ),
+        "harm_references": {
+            harm: harm_references[harm] for harm in harm_run_counts
+        },
+        "prompts": {
+            "harm_grader_system": HARM_GRADER_SYSTEM_PROMPT,
+            "harm_grader_user_template": HARM_GRADER_USER_PROMPT,
+            "adversarial_grader_system": ADVERSARIAL_GRADER_SYSTEM_PROMPT,
+            "adversarial_grader_user_template": ADVERSARIAL_GRADER_USER_PROMPT,
+            "coverage_grader_system": COVERAGE_GRADER_SYSTEM_PROMPT,
+            "coverage_grader_user_template": COVERAGE_GRADER_USER_PROMPT,
+        },
+    }
+    if run_prefix is not None:
+        methodology["run_prefix"] = run_prefix
+
+    metrics = {
+        "methodology": methodology,
+        "verification_expectations": harm_run_counts,
+        "totals": {
+            "source_config_count": sum(
+                len(run_counts) for run_counts in harm_run_counts.values()
+            ),
+            "dimension_count": len(rows),
+            "pair_count": len(pairs),
+            "within_run_pair_count": sum(
+                pair["comparison_scope"] == "within_run" for pair in pairs
+            ),
+            "across_run_pair_count": sum(
+                pair["comparison_scope"] == "across_run" for pair in pairs
+            ),
+        },
+        "run_results": bundle["run_results"],
+        "harm_results": bundle["harm_results"],
+        "global_unique_metrics": bundle["global_unique_metrics"],
+        "llm_harm_grades": bundle["llm_harm_grades"],
+        "llm_additional_harm_grades": bundle["llm_additional_harm_grades"],
+        "dimensions": serializable_rows,
+        "pairs": serializable_pairs,
+        "unique_dimension_groups": bundle["unique_groups"],
+    }
+    if cumulative_run_results is not None:
+        metrics["cumulative_run_results"] = cumulative_run_results
+        methodology["llm_request_count"] = (
+            sum(len(results) for results in cumulative_run_results.values()) * 3
+        )
+        methodology["cumulative_run_prefixes"] = {
+            harm: [result["run_count"] for result in results]
+            for harm, results in cumulative_run_results.items()
+        }
+    return metrics
+
+
+def write_evaluation_artifacts(
+    bundle: dict[str, Any],
+    metrics: dict[str, Any],
+    experiment_name: str,
+    output_dir: Path,
+    *,
+    include_readme: bool,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2) + "\n", encoding="utf-8"
+    )
+    write_csvs(
+        bundle["rows"],
+        bundle["pairs"],
+        bundle["unique_groups"],
+        bundle["harm_results"],
+        experiment_name,
+        output_dir,
+    )
+    write_report(
+        bundle["run_results"],
+        bundle["harm_results"],
+        bundle["global_unique_metrics"],
+        experiment_name,
+        output_dir,
+    )
+    if include_readme:
+        write_readme(experiment_name, output_dir)
+
+
+def run_prefix_output_dir(
+    analysis_dir: Path,
+    harm: str,
+    run_count: int,
+) -> Path:
+    return analysis_dir / "run-prefixes" / harm / f"runs-1-to-{run_count}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -1978,19 +2314,33 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     experiment_root = resolve_experiment_root(args.experiment_dir)
-    output_dir = experiment_root / "analysis"
-    output_dir.mkdir(exist_ok=True)
+    analysis_dir = experiment_root / "analysis"
+    analysis_dir.mkdir(exist_ok=True)
     harm_run_counts = discover_harm_run_counts(experiment_root)
+    run_plan = cumulative_run_plan(harm_run_counts)
     harm_references = {
         harm: load_harm_reference(harm) for harm in harm_run_counts
     }
-    rows = load_dimensions(experiment_root, harm_run_counts)
-    pairs = make_pairs(rows, harm_run_counts)
-    validate_structure(rows, pairs, harm_run_counts)
     if args.validate_only:
+        validation_summary: dict[str, list[dict[str, Any]]] = {}
+        for harm, prefixes in run_plan.items():
+            validation_summary[harm] = []
+            for prefix_counts in prefixes:
+                scoped_counts = {harm: prefix_counts}
+                rows = load_dimensions(experiment_root, scoped_counts)
+                pairs = make_pairs(rows, scoped_counts)
+                validate_structure(rows, pairs, scoped_counts)
+                validation_summary[harm].append(
+                    {
+                        "run_count": len(prefix_counts),
+                        "run_names": list(prefix_counts),
+                        "dimension_count": len(rows),
+                        "pair_count": len(pairs),
+                    }
+                )
         print(
-            f"PASS: {args.experiment_dir}: {len(rows)} dimensions; "
-            f"{len(pairs)} same-harm pairs; counts={harm_run_counts}"
+            f"PASS: {args.experiment_dir}: cumulative run prefixes validated; "
+            f"plan={json.dumps(validation_summary, sort_keys=True)}"
         )
         return
     if not args.judge_model:
@@ -2018,7 +2368,7 @@ def main() -> None:
         if not 0 <= getattr(args, name) <= 1:
             raise SystemExit(f"--{name.replace('_', '-')} must be between zero and one")
 
-    cache = JsonCache(output_dir / "api_cache.json", enabled=not args.no_cache)
+    cache = JsonCache(analysis_dir / "api_cache.json", enabled=not args.no_cache)
     client = AzureMetricClient(
         args.judge_model,
         cache,
@@ -2029,145 +2379,104 @@ def main() -> None:
         timeout=args.timeout,
         retries=args.retries,
     )
-    attach_embeddings(client, rows, pairs, args.embedding_batch_size)
-    llm_harm_grades = grade_harms(client, rows, pairs, harm_run_counts)
-    llm_additional_harm_grades = grade_adversariality_and_coverage(
-        client, rows, harm_run_counts, harm_references
-    )
-    mark_deduplication_matches(
-        pairs,
-        llm_threshold=args.llm_duplicate_threshold,
-        embedding_threshold=args.embedding_duplicate_threshold,
-    )
-    global_unique_metrics, unique_groups = unique_dimension_metrics(
-        rows,
-        pairs,
-        harm_run_counts,
-        binary_relevance_threshold_percent=args.binary_relevance_threshold_percent,
-    )
-    annotate_dimension_redundancy(rows, pairs)
-    run_results, harm_results = summarize(
-        rows,
-        pairs,
-        llm_harm_grades,
-        llm_additional_harm_grades,
-        harm_run_counts,
-    )
-
-    serializable_rows = [
-        {key: value for key, value in row.items() if key != "embedding_text"} for row in rows
-    ]
-    serializable_pairs = [
-        {key: value for key, value in pair.items() if key not in {"left_text", "right_text"}}
-        for pair in pairs
-    ]
-    metrics = {
-        "methodology": {
-            "name": "ASSERT harm-template Azure LLM and embeddings grader",
-            "version": VERSION,
-            "experiment_dir": args.experiment_dir,
-            "judge_model": args.judge_model,
-            "auth_mode": args.auth_mode,
-            "aad_scope": args.aad_scope,
-            "azure_endpoint": client.endpoint,
-            "embedding_deployment": args.embedding_deployment,
-            "embeddings_endpoint": client.embeddings_endpoint,
-            "responses_endpoint": client.responses_endpoint,
-            "embedding_similarity": "Cosine similarity clamped to [0,1].",
-            "llm_similarity": (
-                "Derived from one coordinated LLM grading per harm: Jaccard overlap of "
-                "shared semantic tags, floored at 0.8 for the same canonical concept, "
-                "0.4 for the same concept family, and 1.0 for a duplicate group."
-            ),
-            "combined_similarity": "Unweighted mean of embedding_similarity and llm_similarity.",
-            "llm_request_count": len(harm_run_counts) * 3,
-            "llm_requests_per_harm": {
-                "semantic_relevance_diversity": 1,
-                "adversarial_pressure": 1,
-                "scenario_space_coverage": 1,
-            },
-            "global_deduplication": {
-                "exact_match": "Normalized name or full normalized dimension text matches.",
-                "llm_redundant": "LLM explicitly judges substantially interchangeable coverage.",
-                "very_high_similarity": (
-                    "Both LLM and embedding similarity meet their configured thresholds."
+    final_bundles: list[dict[str, Any]] = []
+    cumulative_results: dict[str, list[dict[str, Any]]] = {}
+    for harm, prefixes in run_plan.items():
+        full_counts = prefixes[-1]
+        full_rows = load_dimensions(experiment_root, {harm: full_counts})
+        embedding_vectors = embed_dimension_vectors(
+            client, full_rows, args.embedding_batch_size
+        )
+        cumulative_results[harm] = []
+        final_bundle: dict[str, Any] | None = None
+        for prefix_counts in prefixes:
+            run_count = len(prefix_counts)
+            run_names = list(prefix_counts)
+            print(
+                f"Evaluating {harm} with runs 1-{run_count}: "
+                f"{', '.join(run_names)}",
+                flush=True,
+            )
+            scoped_counts = {harm: prefix_counts}
+            bundle = evaluate_run_slice(
+                client,
+                experiment_root,
+                scoped_counts,
+                {harm: harm_references[harm]},
+                embedding_batch_size=args.embedding_batch_size,
+                embedding_vectors=embedding_vectors,
+                llm_duplicate_threshold=args.llm_duplicate_threshold,
+                embedding_duplicate_threshold=args.embedding_duplicate_threshold,
+                binary_relevance_threshold_percent=(
+                    args.binary_relevance_threshold_percent
                 ),
-                "llm_threshold": args.llm_duplicate_threshold,
-                "embedding_threshold": args.embedding_duplicate_threshold,
-                "grouping": "Connected components over duplicate-match edges.",
-                "representative": "Combined-similarity medoid; earliest source breaks ties.",
-            },
-            "unique_relevance": {
-                "binary_threshold_percent": args.binary_relevance_threshold_percent,
-                "score_percent_conversion": "LLM relevance score (0-4) multiplied by 25.",
-                "thresholds_percent": RELEVANCE_THRESHOLDS_PERCENT,
-            },
-            "adversarial_score": {
-                "scale": "Integer 0-100 expected adversarial pressure per dimension.",
-                "aggregation": "Per-harm mean, population variance, and sample variance.",
-                "distribution_bins": ADVERSARIAL_SCORE_BINS,
-            },
-            "coverage_score": (
-                "Integer 0-100 LLM judgment of the combined dimensions' conceptual "
-                "scenario-space coverage for each harm."
-            ),
-            "weak_coverage_points": (
-                "Prioritized canonical coverage gaps with evidence and non-colliding "
-                "suggested dimensions containing 2-5 levels."
-            ),
-            "harm_references": harm_references,
-            "prompts": {
-                "harm_grader_system": HARM_GRADER_SYSTEM_PROMPT,
-                "harm_grader_user_template": HARM_GRADER_USER_PROMPT,
-                "adversarial_grader_system": ADVERSARIAL_GRADER_SYSTEM_PROMPT,
-                "adversarial_grader_user_template": ADVERSARIAL_GRADER_USER_PROMPT,
-                "coverage_grader_system": COVERAGE_GRADER_SYSTEM_PROMPT,
-                "coverage_grader_user_template": COVERAGE_GRADER_USER_PROMPT,
-            },
-        },
-        "verification_expectations": harm_run_counts,
-        "totals": {
-            "source_config_count": sum(
-                len(run_counts) for run_counts in harm_run_counts.values()
-            ),
-            "dimension_count": len(rows),
-            "pair_count": len(pairs),
-            "within_run_pair_count": sum(
-                pair["comparison_scope"] == "within_run" for pair in pairs
-            ),
-            "across_run_pair_count": sum(
-                pair["comparison_scope"] == "across_run" for pair in pairs
-            ),
-        },
-        "run_results": run_results,
-        "harm_results": harm_results,
-        "global_unique_metrics": global_unique_metrics,
-        "llm_harm_grades": llm_harm_grades,
-        "llm_additional_harm_grades": llm_additional_harm_grades,
-        "dimensions": serializable_rows,
-        "pairs": serializable_pairs,
-        "unique_dimension_groups": unique_groups,
-    }
-    (output_dir / "metrics.json").write_text(
-        json.dumps(metrics, indent=2) + "\n", encoding="utf-8"
+            )
+            prefix_metadata = {
+                "harm": harm,
+                "run_count": run_count,
+                "run_names": run_names,
+                "is_final_prefix": run_count == len(full_counts),
+            }
+            prefix_metrics = build_metrics(
+                args,
+                client,
+                bundle,
+                harm_references,
+                run_prefix=prefix_metadata,
+            )
+            prefix_dir = run_prefix_output_dir(analysis_dir, harm, run_count)
+            prefix_name = f"{args.experiment_dir} / {harm} / runs 1-{run_count}"
+            write_evaluation_artifacts(
+                bundle,
+                prefix_metrics,
+                prefix_name,
+                prefix_dir,
+                include_readme=False,
+            )
+            unique_summary = dict(prefix_metrics["global_unique_metrics"][harm])
+            unique_summary.pop("unique_groups", None)
+            cumulative_results[harm].append(
+                {
+                    **prefix_metadata,
+                    "metrics_path": (
+                        prefix_dir / "metrics.json"
+                    ).relative_to(analysis_dir).as_posix(),
+                    "totals": prefix_metrics["totals"],
+                    "harm_results": prefix_metrics["harm_results"][harm],
+                    "global_unique_metrics": unique_summary,
+                }
+            )
+            final_bundle = bundle
+        if final_bundle is None:
+            raise AssertionError(f"No cumulative run prefixes generated for {harm}")
+        final_bundles.append(final_bundle)
+
+    combined_bundle = combine_final_bundles(final_bundles, harm_run_counts)
+    metrics = build_metrics(
+        args,
+        client,
+        combined_bundle,
+        harm_references,
+        cumulative_run_results=cumulative_results,
     )
-    write_csvs(
-        rows,
-        pairs,
-        unique_groups,
-        harm_results,
+    write_evaluation_artifacts(
+        combined_bundle,
+        metrics,
         args.experiment_dir,
-        output_dir,
+        analysis_dir,
+        include_readme=True,
     )
-    write_report(
-        run_results,
-        harm_results,
-        global_unique_metrics,
-        args.experiment_dir,
-        output_dir,
+    print(
+        json.dumps(
+            {
+                **metrics["totals"],
+                "cumulative_prefix_count": sum(
+                    len(results) for results in cumulative_results.values()
+                ),
+            },
+            sort_keys=True,
+        )
     )
-    write_readme(args.experiment_dir, output_dir)
-    print(json.dumps(metrics["totals"], sort_keys=True))
 
 
 if __name__ == "__main__":

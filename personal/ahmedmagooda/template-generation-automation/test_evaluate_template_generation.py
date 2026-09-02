@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -187,6 +188,42 @@ class AzureMetricClientTests(unittest.TestCase):
 
 
 class ExperimentLayoutTests(unittest.TestCase):
+    def test_cumulative_run_endpoints_include_odd_checkpoints_and_final_run(self) -> None:
+        self.assertEqual(analyze.cumulative_run_endpoints(1), (1,))
+        self.assertEqual(analyze.cumulative_run_endpoints(3), (3,))
+        self.assertEqual(analyze.cumulative_run_endpoints(7), (3, 5, 7))
+        self.assertEqual(analyze.cumulative_run_endpoints(8), (3, 5, 7, 8))
+        self.assertEqual(analyze.cumulative_run_endpoints(10), (3, 5, 7, 9, 10))
+
+    def test_natural_run_order_places_run_ten_after_run_two(self) -> None:
+        names = ["run-10", "run-2", "run-1"]
+
+        self.assertEqual(
+            sorted(names, key=analyze.natural_name_key),
+            ["run-1", "run-2", "run-10"],
+        )
+
+    def test_cumulative_plan_is_independent_for_each_harm(self) -> None:
+        plan = analyze.cumulative_run_plan(
+            {
+                "seven_runs": {f"run-{index}": index for index in range(1, 8)},
+                "eight_runs": {f"run-{index}": index for index in range(1, 9)},
+            }
+        )
+
+        self.assertEqual(
+            [len(run_counts) for run_counts in plan["seven_runs"]],
+            [3, 5, 7],
+        )
+        self.assertEqual(
+            [len(run_counts) for run_counts in plan["eight_runs"]],
+            [3, 5, 7, 8],
+        )
+        self.assertEqual(
+            list(plan["eight_runs"][1]),
+            ["run-1", "run-2", "run-3", "run-4", "run-5"],
+        )
+
     def test_discovers_v1_and_v2_counts(self) -> None:
         v1 = analyze.resolve_experiment_root("templates-by-skill-v1")
         v2 = analyze.resolve_experiment_root("templates-by-skill-v2")
@@ -246,6 +283,259 @@ class ExperimentLayoutTests(unittest.TestCase):
                     "harm_b": {"attempt-z": 2},
                 },
             )
+
+    def test_loads_config_without_optional_support_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "example_harm" / "baseline"
+            run_dir.mkdir(parents=True)
+            (run_dir / "eval_config.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "context": "Example evaluation context.",
+                        "pipeline": {
+                            "test_set": {
+                                "stratify": {
+                                    "dimensions": [
+                                        {"name": "first", "description": "First axis."},
+                                        {"name": "second", "description": "Second axis."},
+                                    ]
+                                }
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            rows = analyze.load_dimensions(
+                root, {"example_harm": {"baseline": 2}}
+            )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["source_config"], "example_harm/baseline/eval_config.yaml")
+        self.assertEqual(rows[0]["source_ledger"], "")
+        self.assertEqual(rows[0]["source_validation"], "")
+
+
+class MetricsMetadataTests(unittest.TestCase):
+    def test_root_metrics_record_all_prefix_requests_and_prompts(self) -> None:
+        args = SimpleNamespace(
+            experiment_dir="experiment",
+            judge_model="judge",
+            auth_mode="aad",
+            aad_scope="cognitiveservices",
+            embedding_deployment="embedding",
+            llm_duplicate_threshold=0.9,
+            embedding_duplicate_threshold=0.9,
+            binary_relevance_threshold_percent=75,
+        )
+        client = SimpleNamespace(
+            endpoint="https://example.openai.azure.com",
+            embeddings_endpoint="https://example/embeddings",
+            responses_endpoint="https://example/responses",
+        )
+        bundle = {
+            "harm_run_counts": {"example_harm": {"run-1": 2, "run-2": 2}},
+            "rows": [],
+            "pairs": [],
+            "unique_groups": [],
+            "run_results": {},
+            "harm_results": {},
+            "global_unique_metrics": {},
+            "llm_harm_grades": {},
+            "llm_additional_harm_grades": {},
+        }
+        cumulative_results = {
+            "example_harm": [
+                {"run_count": run_count} for run_count in (3, 5, 7, 8)
+            ]
+        }
+
+        metrics = analyze.build_metrics(
+            args,
+            client,
+            bundle,
+            {"example_harm": {"harm": "example_harm"}},
+            cumulative_run_results=cumulative_results,
+        )
+
+        methodology = metrics["methodology"]
+        self.assertEqual(methodology["llm_request_count"], 12)
+        self.assertEqual(
+            methodology["cumulative_run_prefixes"]["example_harm"],
+            [3, 5, 7, 8],
+        )
+        self.assertEqual(
+            methodology["prompts"]["harm_grader_system"],
+            analyze.HARM_GRADER_SYSTEM_PROMPT,
+        )
+        self.assertIs(metrics["cumulative_run_results"], cumulative_results)
+
+    def test_prefix_evaluation_writes_complete_artifact_set(self) -> None:
+        run_names = ("run-1", "run-2", "run-3")
+        dimension_ids = [
+            f"violent_content/{run}/{index}"
+            for run in run_names
+            for index in (1, 2)
+        ]
+
+        class FakeSliceClient:
+            endpoint = TEST_ENDPOINT
+            embeddings_endpoint = f"{TEST_ENDPOINT}/embeddings"
+            responses_endpoint = f"{TEST_ENDPOINT}/responses"
+
+            def grade_json(self, **kwargs):
+                schema = kwargs["schema"]
+                if schema is analyze.HARM_GRADER_RESULT_SCHEMA:
+                    return {
+                        "dimension_results": [
+                            {
+                                "dimension_id": dimension_id,
+                                "semantic_tags": [
+                                    f"tag-{position}",
+                                    "dimension",
+                                    "test-axis",
+                                ],
+                                "canonical_concept": f"concept-{position}",
+                                "concept_family": f"family-{position}",
+                                "duplicate_group_id": f"group-{position}",
+                                "relevance_score": 4,
+                                "relevance_rationale": "Direct test axis.",
+                            }
+                            for position, dimension_id in enumerate(dimension_ids, 1)
+                        ],
+                        "mean_dimension_count": 2,
+                        "population_variance_dimension_count": 0,
+                        "sample_variance_dimension_count": 0,
+                        "within_run_diversity": [
+                            {"run": run, "score": 1, "rationale": "Distinct axes."}
+                            for run in run_names
+                        ],
+                        "across_run_union_diversity": 1,
+                        "across_run_rationale": "All axes are distinct.",
+                        "variance_rationale": "Counts are identical.",
+                    }
+                if schema is analyze.ADVERSARIAL_GRADER_RESULT_SCHEMA:
+                    return {
+                        "dimension_results": [
+                            {
+                                "dimension_id": dimension_id,
+                                "adversarial_score": 50,
+                                "adversarial_rationale": "Moderate pressure.",
+                            }
+                            for dimension_id in dimension_ids
+                        ]
+                    }
+                if schema is analyze.COVERAGE_GRADER_RESULT_SCHEMA:
+                    return {
+                        "coverage_score": 100,
+                        "coverage_rationale": "Complete synthetic coverage.",
+                        "weak_coverage_points": [],
+                    }
+                raise AssertionError("Unexpected schema")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "experiment"
+            for run in run_names:
+                run_dir = root / "violent_content" / run
+                run_dir.mkdir(parents=True)
+                (run_dir / "eval_config.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            "context": "Synthetic context.",
+                            "pipeline": {
+                                "test_set": {
+                                    "stratify": {
+                                        "dimensions": [
+                                            {
+                                                "name": f"{run}_first",
+                                                "description": "First axis.",
+                                            },
+                                            {
+                                                "name": f"{run}_second",
+                                                "description": "Second axis.",
+                                            },
+                                        ]
+                                    }
+                                }
+                            },
+                        },
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+            run_counts = {"violent_content": dict.fromkeys(run_names, 2)}
+            embedding_vectors = {
+                dimension_id: [
+                    1.0 if vector_index == position else 0.0
+                    for vector_index in range(len(dimension_ids))
+                ]
+                for position, dimension_id in enumerate(dimension_ids)
+            }
+            client = FakeSliceClient()
+            bundle = analyze.evaluate_run_slice(
+                client,
+                root,
+                run_counts,
+                {"violent_content": {"harm": "violent_content"}},
+                embedding_batch_size=64,
+                embedding_vectors=embedding_vectors,
+                llm_duplicate_threshold=0.9,
+                embedding_duplicate_threshold=0.9,
+                binary_relevance_threshold_percent=75,
+            )
+            args = SimpleNamespace(
+                experiment_dir="experiment",
+                judge_model="judge",
+                auth_mode="aad",
+                aad_scope="cognitiveservices",
+                embedding_deployment="embedding",
+                llm_duplicate_threshold=0.9,
+                embedding_duplicate_threshold=0.9,
+                binary_relevance_threshold_percent=75,
+            )
+            prefix_metadata = {
+                "harm": "violent_content",
+                "run_count": 3,
+                "run_names": list(run_names),
+                "is_final_prefix": True,
+            }
+            metrics = analyze.build_metrics(
+                args,
+                client,
+                bundle,
+                {"violent_content": {"harm": "violent_content"}},
+                run_prefix=prefix_metadata,
+            )
+            output_dir = root / "analysis" / "run-prefixes" / "violent_content" / "runs-1-to-3"
+            analyze.write_evaluation_artifacts(
+                bundle,
+                metrics,
+                "synthetic prefix",
+                output_dir,
+                include_readme=False,
+            )
+            written_metrics = json.loads(
+                (output_dir / "metrics.json").read_text(encoding="utf-8")
+            )
+            filenames = {path.name for path in output_dir.iterdir()}
+
+        self.assertEqual(written_metrics["methodology"]["run_prefix"], prefix_metadata)
+        self.assertEqual(written_metrics["totals"]["source_config_count"], 3)
+        self.assertEqual(written_metrics["totals"]["dimension_count"], 6)
+        self.assertTrue(
+            {
+                "metrics.json",
+                "report.md",
+                "dimension_inventory.csv",
+                "pairwise_similarity.csv",
+                "unique_dimension_groups.csv",
+                "coverage_weak_points.csv",
+                "coverage_dimension_suggestions.yaml",
+            }
+            <= filenames
+        )
 
 
 class CoordinatedHarmGraderTests(unittest.TestCase):

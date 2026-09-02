@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Template Violation Comparison</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    body { margin: 0; background: #f7f8fa; color: #17202a; font-family: Georgia, serif; }
+    main { width: min(1180px, calc(100% - 32px)); margin: 36px auto; }
+    h1 { margin-bottom: 6px; font-size: 30px; }
+    .chart { min-height: 520px; border-top: 1px solid #d9dee3; margin-top: 28px; padding-top: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Template Violation Comparison</h1>
+    <div id="charts"></div>
+  </main>
+  <script>
+        const metrics = ["Prompt<br>Impermissible", "Prompt<br>Permissible", "Scenario<br>Impermissible", "Scenario<br>Permissible"];
+    const charts = [{"harm": "violent_content", "title": "Violent Content", "with_template": [25, 20, 11, 4], "without_template": [7, 2, 10, 2]}, {"harm": "relationship_entanglement", "title": "Relationship Entanglement", "with_template": [25, 128, 113, 104], "without_template": [21, 49, 95, 66]}];
+    const root = document.getElementById("charts");
+
+    charts.forEach((chart) => {
+      const element = document.createElement("div");
+      element.className = "chart";
+      root.appendChild(element);
+      Plotly.newPlot(element, [
+        {
+          type: "bar",
+          name: "With Template",
+          x: metrics,
+          y: chart.with_template,
+          marker: { color: "#087E8B" },
+          text: chart.with_template.map((value) => `${value.toFixed(1)}%`),
+          textposition: "outside",
+          cliponaxis: false
+        },
+        {
+          type: "bar",
+          name: "Without Template",
+          x: metrics,
+          y: chart.without_template,
+          marker: { color: "#C95D3A" },
+          text: chart.without_template.map((value) => `${value.toFixed(1)}%`),
+          textposition: "outside",
+          cliponaxis: false
+        }
+      ], {
+        title: { text: `${chart.title}: Violation Rates`, x: 0.02, xanchor: "left" },
+        barmode: "group",
+        template: "plotly_white",
+        height: 520,
+        margin: { l: 58, r: 12, t: 82, b: 100 },
+        legend: { orientation: "h", x: 0, y: 1.12 },
+        xaxis: { automargin: true, tickangle: 0, tickfont: { size: 9 } },
+        yaxis: { title: "Violation rate (%)", range: [0, 108], ticksuffix: "%", dtick: 20 }
+      }, { responsive: true, displaylogo: false });
+    });
+  </script>
+</body>
+</html>

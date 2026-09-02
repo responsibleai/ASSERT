@@ -1,6 +1,6 @@
 ---
 name: assert-add-harm-eval-template
-description: 'Generate isolated ASSERT eval_config.yaml templates from either a named harm or a system. Detects prior same-name generations by path only and asks before using a new dated directory; never reads prior generated YAMLs. Runs evidence-backed dimension generation N times, deduplicates the results, and interactively revises and approves dimensions before writing customer-safe configs.'
+description: 'Generate isolated ASSERT eval_config.yaml templates from either a named harm or a system. Detects prior same-name generations by path only and asks before using a new dated N-runs directory; never reads prior generated YAMLs. Runs evidence-backed dimension generation N times, deduplicates the results, and interactively revises and approves dimensions before writing customer-safe configs.'
 argument-hint: '<eval_type: system|harm> <system_or_harm_name> <N: positive integer> [optional description] [optional context]'
 ---
 
@@ -37,14 +37,14 @@ harmful content** — only descriptions used for detection and refusal.
 - **`eval_type: harm`** — a single `eval_config.yaml` with all four pipeline
   stages populated: `systematize` → `test_set` (prompt + scenario + stratify
   dimensions) → `inference` → `judge`, plus `behavior`, `context`, and
-  `default_model`. A regeneration uses a new date-suffixed directory and never
-  reads prior matching generated YAMLs.
+  `default_model`. Every output directory ends in `-N-runs`; a regeneration also
+  includes the current date and never reads prior matching generated YAMLs.
 - **`eval_type: system`** — a research-backed retained/merged/rejected harm
   ledger, a sourced description for every retained harm, and one complete
   `eval_config.yaml` produced by a bounded `eval_type: harm` child run for each
   retained harm. Default child paths are
   `examples/<system_run_directory>/<harm_name>/eval_config.yaml`, where a
-  regeneration date-suffixes the system run directory.
+  system run directory includes its `N` value and, for regeneration, the date.
 
 Every generated config includes the broadest harm-relevant, evidence-supported,
 non-redundant dimension set found before research saturation. It also applies
@@ -60,7 +60,7 @@ mapping each tag to its title and URL.
 |---|---|---|
 | Eval type | Yes | Exactly `system` or `harm` (case-insensitive; normalize to lowercase). Never infer it when the request is ambiguous. |
 | System or harm name | Yes | For `harm`, e.g. `child_safety` or `violence`, and it becomes `behavior.name`. For `system`, use a stable system slug for child output paths. |
-| Generation runs (`N`) | Yes | Positive integer specifying how many complete harm dimension-generation passes to run before deduplication. Ask when it is missing or invalid; do not silently default it. In system mode, `N` applies independently to every retained-harm child, not to system-level harm discovery. |
+| Generation runs (`N`) | Yes | Positive integer specifying how many complete harm dimension-generation passes to run before deduplication and the output suffix `-N-runs`. Ask when it is missing or invalid; do not silently default it. In system mode, `N` applies independently to every retained-harm child, not to system-level harm discovery. |
 | Evaluation intent | No | Ask what decision the eval supports, its purpose(s), and the system users or affected groups it should serve. Apply answered fields to research and dimensions; skip unanswered fields without blocking or changing the default flow. |
 | Dimension criteria | Interactive | Before generation, ask for edits or criteria every pass should honor, such as clustering related dimensions, reducing granularity, limiting fictional scenarios, or prioritizing particular settings or populations. Treat the answer as cumulative criteria; `none` is valid. |
 | Description | No | For `harm`, the spec for `behavior.description`. For `system`, its purpose, architecture, tasks, users, data, tools/integrations, deployment, and constraints. Source or draft missing details and flag consequential assumptions. |
@@ -376,6 +376,14 @@ distribution planned rather than observed. Also inspect generated case semantics
 factor counts alone cannot prove positive, negative, boundary, adversarial, or
 counterfactual coverage when case type is not an explicit axis.
 
+When sizing a pairwise coverage run from explicit levels, include the reserved
+`behavior` axis in the covering-array calculation. Calling
+`build_covering_array(stratification, rng)` without `axes` intentionally excludes
+`behavior`; instead, use the production axis order `("behavior",
+*stratification_dimensions(stratification))` and pass it through `axes`. Verify
+that each prompt/scenario coverage budget is at least the resulting array length;
+larger budgets replicate complete assignments rather than adding pairwise cells.
+
 ### 7. Collect model values (offer to skip)
 
 Ask whether one model config applies to every stage or whether systematization,
@@ -410,6 +418,10 @@ the Step 3 citations:
   them with a trailing `# sources: <short title> [n]; <short title> [m]` comment.
 - Cite explicit dimension levels when their boundaries or stages rely on distinct
   evidence. Use comments only; citations are not schema fields.
+- When a description or definition uses `|` or `>`, put its citation comment on
+  the mapping key or level `name` line. A `# sources: ...` line indented inside
+  the block scalar becomes string content rather than a YAML comment. Reload the
+  written YAML and confirm citation markers are absent from structured values.
 - Append the consolidated `# References` block at the end of the file, mapping
   each tag `[n]` to its title, URL, and access date.
 

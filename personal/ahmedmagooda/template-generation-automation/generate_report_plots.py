@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import argparse
+import copy
 import csv
 import json
+import math
+import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Sequence
 
 import matplotlib
 import numpy as np
@@ -12,37 +19,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-ROOT = Path(__file__).resolve().parent
-ARTIFACTS_ROOT = ROOT.parent
-REPO_ROOT = ARTIFACTS_ROOT.parent
-DATA_PATH = ROOT / "comparison_data.csv"
-REPORT_PATH = ROOT / "report.md"
-PLOTS_DIR = ROOT / "plots"
-
-SOURCE_KEYS = ("v1", "v2")
-SOURCE_LABELS = {"v1": "Skill-v1", "v2": "Skill-v2"}
-SOURCE_COLORS = {"v1": "#315D80", "v2": "#D4553F"}
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_COMPARISON_OUTPUT_DIR = SCRIPT_DIR / "template_comparison_reports"
+SOURCE_COLORS = ("#315D80", "#D4553F")
 ADVERSARIAL_COLORS = ("#D8E3E8", "#86A9B7", "#E1B866", "#D9784A", "#9E3D36")
-METRICS_PATHS = {
-    "v1": ARTIFACTS_ROOT / "harm-template-experiment-skill-v1" / "analysis" / "metrics.json",
-    "v2": ARTIFACTS_ROOT / "harm-template-experiment-skill-v2" / "analysis" / "metrics.json",
-}
-HARMS = (
-    "violent_content",
-    "relationship_entanglement",
-    "imminent_crisis_management",
-)
-HARM_LABELS = {
-    "violent_content": "Violent\ncontent",
-    "relationship_entanglement": "Relationship\nentanglement",
-    "imminent_crisis_management": "Imminent crisis\nmanagement",
-}
+ADVERSARIAL_RANGES = ("0-20", "21-40", "41-60", "61-80", "81-100")
 
 BACKGROUND = "#FBFAF6"
 GRID = "#D9D6CD"
 TEXT = "#17212B"
 MUTED = "#5F6872"
-ADVERSARIAL_RANGES = ("0-20", "21-40", "41-60", "61-80", "81-100")
+
 CSV_FIELDS = (
     "source_key",
     "source_label",
@@ -94,65 +81,134 @@ CSV_FIELDS = (
 )
 
 
-def build_rows(
-    metrics_paths: dict[str, Path] | None = None,
-) -> dict[tuple[str, str], dict[str, object]]:
-    paths = metrics_paths or METRICS_PATHS
-    if set(paths) != set(SOURCE_KEYS):
-        raise ValueError(
-            f"Expected metrics paths for {list(SOURCE_KEYS)}, found {sorted(paths)}"
+@dataclass(frozen=True)
+class Source:
+    key: str
+    label: str
+    root: Path
+    metrics_path: Path
+    metrics: dict[str, Any]
+    harms: tuple[str, ...]
+
+
+def resolve_experiment_dir(value: str | Path) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        direct = (Path.cwd() / candidate).resolve()
+        candidate = direct if direct.is_dir() else (SCRIPT_DIR / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+    if not candidate.is_dir():
+        raise FileNotFoundError(f"Experiment directory does not exist: {candidate}")
+    return candidate
+
+
+def discover_harms(experiment_dir: Path) -> tuple[str, ...]:
+    harms = tuple(
+        path.name
+        for path in sorted(experiment_dir.iterdir())
+        if path.is_dir() and path.name != "analysis"
+    )
+    if not harms:
+        raise ValueError(f"No harm directories found in {experiment_dir}")
+    return harms
+
+
+def load_sources(experiment_dirs: Sequence[str | Path]) -> list[Source]:
+    if len(experiment_dirs) not in (1, 2):
+        raise ValueError("Expected one or two experiment directories")
+    roots = [resolve_experiment_dir(value) for value in experiment_dirs]
+    if len(set(roots)) != len(roots):
+        raise ValueError("Experiment directories must be distinct")
+
+    labels = [root.name for root in roots]
+    if len(labels) == 2 and labels[0] == labels[1]:
+        labels = [f"{label} ({index})" for index, label in enumerate(labels, 1)]
+
+    sources = []
+    for index, (root, label) in enumerate(zip(roots, labels, strict=True), 1):
+        metrics_path = root / "analysis" / "metrics.json"
+        if not metrics_path.is_file():
+            raise FileNotFoundError(f"Missing evaluation metrics: {metrics_path}")
+        sources.append(
+            Source(
+                key=f"source-{index}",
+                label=label,
+                root=root,
+                metrics_path=metrics_path,
+                metrics=json.loads(metrics_path.read_text(encoding="utf-8")),
+                harms=discover_harms(root),
+            )
         )
+    return sources
 
-    parsed: dict[tuple[str, str], dict[str, object]] = {}
-    for source in SOURCE_KEYS:
-        metrics_path = paths[source]
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        methodology = metrics["methodology"]
-        harm_results = metrics["harm_results"]
-        unique_metrics = metrics["global_unique_metrics"]
-        run_results = metrics["run_results"]
 
-        for harm in HARMS:
-            harm_result = harm_results[harm]
-            unique_result = unique_metrics[harm]
+def select_report_harms(sources: Sequence[Source]) -> tuple[str, ...]:
+    harms = set(sources[0].harms)
+    for source in sources[1:]:
+        harms.intersection_update(source.harms)
+    if not harms:
+        raise ValueError("The experiment directories have no harms to report")
+
+    for source in sources:
+        missing = {
+            section: sorted(harms - set(source.metrics.get(section, {})))
+            for section in ("harm_results", "global_unique_metrics", "run_results")
+        }
+        missing = {section: names for section, names in missing.items() if names}
+        if missing:
+            raise ValueError(
+                f"Metrics for {source.root} do not cover all report harms: {missing}. "
+                "Run evaluate_template_generation.py first."
+            )
+    return tuple(sorted(harms))
+
+
+def build_rows(
+    sources: Sequence[Source], harms: Sequence[str]
+) -> dict[tuple[str, str], dict[str, object]]:
+    rows: dict[tuple[str, str], dict[str, object]] = {}
+    for source in sources:
+        metrics = source.metrics
+        for harm in harms:
+            harm_result = metrics["harm_results"][harm]
+            unique_result = metrics["global_unique_metrics"][harm]
+            run_result = metrics["run_results"][harm]
             perfect_relevance = next(
                 item
                 for item in unique_result["relevance_threshold_metrics"]
                 if item["threshold_percent"] == 100
             )
             adversarial = harm_result["adversarial"]
-            weak_coverage_points = list(
-                harm_result["coverage"].get("weak_coverage_points", [])
-            )
             distribution = {
                 item["range"]: item for item in adversarial["distribution"]
             }
             if set(distribution) != set(ADVERSARIAL_RANGES):
                 raise ValueError(
-                    f"Unexpected adversarial ranges for {source}/{harm}: "
+                    f"Unexpected adversarial ranges for {source.label}/{harm}: "
                     f"{sorted(distribution)}"
                 )
-            parsed[(source, harm)] = {
-                "source_key": source,
-                "source_label": SOURCE_LABELS[source],
-                "source_report": metrics_path.with_name("report.md")
-                .relative_to(REPO_ROOT)
-                .as_posix(),
-                "embedded_experiment": methodology["experiment_dir"],
-                "methodology_version": methodology["version"],
+            weak_points = list(harm_result["coverage"].get("weak_coverage_points", []))
+            run_counts = {
+                run: int(values["dimension_count"])
+                for run, values in run_result.items()
+            }
+            rows[(source.key, harm)] = {
+                "source_key": source.key,
+                "source_label": source.label,
+                "source_root": source.root,
+                "source_report_path": source.metrics_path.with_name("report.md"),
+                "embedded_experiment": metrics["methodology"]["experiment_dir"],
+                "methodology_version": metrics["methodology"]["version"],
                 "harm": harm,
-                "source_configs": int(metrics["totals"]["source_config_count"]),
+                "source_configs": len(run_counts),
                 "total_dimensions": int(unique_result["total_dimension_count"]),
-                "repeated_removed": int(
-                    unique_result["repeated_dimension_count_removed"]
-                ),
+                "repeated_removed": int(unique_result["repeated_dimension_count_removed"]),
                 "unique_dimensions": int(unique_result["unique_dimension_count"]),
                 "relevant_unique_dimensions": int(
                     unique_result["relevant_unique_dimension_count"]
                 ),
-                "perfect_relevance_dimensions": int(
-                    perfect_relevance["exact_score_count"]
-                ),
+                "perfect_relevance_dimensions": int(perfect_relevance["exact_score_count"]),
                 "uniqueness_rate": float(unique_result["unique_over_total_ratio"]),
                 "relevant_unique_rate": float(
                     unique_result["relevant_unique_over_unique_ratio"]
@@ -160,7 +216,7 @@ def build_rows(
                 "perfect_relevance_rate": float(
                     perfect_relevance["exact_score_ratio_over_unique"]
                 ),
-                "run_counts": tuple(harm_result["run_dimension_counts"]),
+                "run_counts": run_counts,
                 "mean_dimensions": float(harm_result["average_dimension_count"]),
                 "population_variance": float(
                     harm_result["population_variance_dimension_count"]
@@ -181,15 +237,13 @@ def build_rows(
                 "relevance_min": int(harm_result["relevance"]["minimum"]),
                 "within_run_redundant_pairs": sum(
                     int(values["redundant_pair_count"])
-                    for values in run_results[harm].values()
+                    for values in run_result.values()
                 ),
                 "adversarial_mean": float(adversarial["mean"]),
                 "adversarial_population_variance": float(
                     adversarial["population_variance"]
                 ),
-                "adversarial_sample_variance": float(
-                    adversarial["sample_variance"]
-                ),
+                "adversarial_sample_variance": float(adversarial["sample_variance"]),
                 "adversarial_min": int(adversarial["minimum"]),
                 "adversarial_max": int(adversarial["maximum"]),
                 "adversarial_distribution_counts": tuple(
@@ -202,108 +256,204 @@ def build_rows(
                 ),
                 "coverage_score": int(harm_result["coverage"]["score"]),
                 "coverage_rationale": str(harm_result["coverage"]["rationale"]),
-                "coverage_weak_points": weak_coverage_points,
-                "coverage_gap_count": len(weak_coverage_points),
+                "coverage_weak_points": weak_points,
+                "coverage_gap_count": len(weak_points),
                 "coverage_high_priority_gap_count": sum(
-                    point["priority"] == "high" for point in weak_coverage_points
+                    point["priority"] == "high" for point in weak_points
                 ),
                 "coverage_medium_priority_gap_count": sum(
-                    point["priority"] == "medium" for point in weak_coverage_points
+                    point["priority"] == "medium" for point in weak_points
                 ),
                 "coverage_low_priority_gap_count": sum(
-                    point["priority"] == "low" for point in weak_coverage_points
+                    point["priority"] == "low" for point in weak_points
                 ),
             }
+    return rows
 
-    expected = {(source, harm) for source in SOURCE_KEYS for harm in HARMS}
-    if set(parsed) != expected:
-        raise ValueError(f"Expected rows {sorted(expected)}, found {sorted(parsed)}")
-    return parsed
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def generate_merged_config(source: Source, harm: str) -> dict[str, object]:
+    output_path = source.root / harm / "merged" / "eval_config.yaml"
+    groups = source.metrics["global_unique_metrics"][harm].get("unique_groups")
+    if not groups:
+        raise ValueError(f"No unique dimension groups found for {source.label}/{harm}")
+    if output_path.exists():
+        existing = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+        existing_dimensions = existing["pipeline"]["test_set"]["stratify"][
+            "dimensions"
+        ]
+        return {
+            "source_label": source.label,
+            "harm": harm,
+            "path": output_path,
+            "created": False,
+            "dimension_count": len(existing_dimensions),
+        }
+
+    records = {
+        item["dimension_id"]: item
+        for item in source.metrics.get("dimensions", [])
+        if item.get("harm") == harm
+    }
+    config_cache: dict[Path, dict[str, Any]] = {}
+    merged_dimensions = []
+    for group in groups:
+        representative_id = group["representative_dimension_id"]
+        if representative_id not in records:
+            raise ValueError(f"Missing representative record {representative_id!r}")
+        record = records[representative_id]
+        source_path = source.root / record["source_config"]
+        if source_path not in config_cache:
+            config_cache[source_path] = yaml.safe_load(
+                source_path.read_text(encoding="utf-8")
+            )
+        dimensions = config_cache[source_path]["pipeline"]["test_set"]["stratify"]
+        dimensions = dimensions["dimensions"]
+        index = int(record.get("index") or representative_id.rsplit("/", 1)[1])
+        try:
+            dimension = copy.deepcopy(dimensions[index - 1])
+        except IndexError as exc:
+            raise ValueError(
+                f"Representative index {index} is absent from {source_path}"
+            ) from exc
+        if dimension.get("name") != group.get("representative_name"):
+            raise ValueError(
+                f"Representative mismatch for {representative_id}: config has "
+                f"{dimension.get('name')!r}, metrics have "
+                f"{group.get('representative_name')!r}"
+            )
+        merged_dimensions.append(dimension)
+
+    run_configs = sorted(
+        directory / "eval_config.yaml"
+        for directory in (source.root / harm).iterdir()
+        if directory.is_dir() and directory.name != "merged"
+    )
+    base_path = next((path for path in run_configs if path.is_file()), None)
+    if base_path is None:
+        raise FileNotFoundError(f"No run config found for {source.label}/{harm}")
+    merged_config = copy.deepcopy(yaml.safe_load(base_path.read_text(encoding="utf-8")))
+    merged_config["suite"] = f"{_slug(harm)}-{_slug(source.root.name)}-merged"
+    merged_config["run"] = "merged"
+    merged_config["pipeline"]["test_set"]["stratify"][
+        "dimensions"
+    ] = merged_dimensions
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        yaml.safe_dump(merged_config, sort_keys=False, allow_unicode=False),
+        encoding="utf-8",
+    )
+    return {
+        "source_label": source.label,
+        "harm": harm,
+        "path": output_path,
+        "created": True,
+        "dimension_count": len(merged_dimensions),
+    }
+
+
+def generate_merged_configs(
+    sources: Sequence[Source], harms: Sequence[str]
+) -> list[dict[str, object]]:
+    return [
+        generate_merged_config(source, harm)
+        for source in sources
+        for harm in harms
+    ]
+
+
+def report_axes(
+    rows: dict[tuple[str, str], dict[str, object]],
+) -> tuple[list[str], list[str], dict[str, str], dict[str, str]]:
+    source_keys = list(dict.fromkeys(source for source, _ in rows))
+    harms = [harm for source, harm in rows if source == source_keys[0]]
+    labels = {
+        source: str(rows[(source, harms[0])]["source_label"])
+        for source in source_keys
+    }
+    colors = {
+        source: SOURCE_COLORS[index] for index, source in enumerate(source_keys)
+    }
+    return source_keys, harms, labels, colors
 
 
 def write_comparison_data(
-    rows: dict[tuple[str, str], dict[str, object]],
-    output_path: Path = DATA_PATH,
+    rows: dict[tuple[str, str], dict[str, object]], output_path: Path
 ) -> None:
+    source_keys, harms, _, _ = report_axes(rows)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        for source in SOURCE_KEYS:
-            for harm in HARMS:
+        for source in source_keys:
+            for harm in harms:
                 source_row = rows[(source, harm)]
                 serialized = {
                     field: source_row[field]
                     for field in CSV_FIELDS
                     if field in source_row
                 }
+                serialized["source_report"] = str(source_row["source_report_path"])
                 serialized["run_counts"] = "/".join(
-                    str(value) for value in source_row["run_counts"]
+                    f"{run}={count}"
+                    for run, count in source_row["run_counts"].items()
                 )
                 serialized["coverage_weak_points_json"] = json.dumps(
                     source_row["coverage_weak_points"], separators=(",", ":")
                 )
-                counts = source_row["adversarial_distribution_counts"]
-                rates = source_row["adversarial_distribution_rates"]
                 for score_range, count, rate in zip(
-                    ADVERSARIAL_RANGES, counts, rates, strict=True
+                    ADVERSARIAL_RANGES,
+                    source_row["adversarial_distribution_counts"],
+                    source_row["adversarial_distribution_rates"],
+                    strict=True,
                 ):
-                    field_suffix = score_range.replace("-", "_")
-                    serialized[f"adversarial_{field_suffix}_count"] = count
-                    serialized[f"adversarial_{field_suffix}_rate"] = rate
+                    suffix = score_range.replace("-", "_")
+                    serialized[f"adversarial_{suffix}_count"] = count
+                    serialized[f"adversarial_{suffix}_rate"] = rate
                 writer.writerow(serialized)
-    try:
-        display_path = output_path.relative_to(ROOT)
-    except ValueError:
-        display_path = output_path
-    print(f"wrote {display_path}")
+    print(f"wrote {output_path}")
 
 
 def aggregate_sources(
     rows: dict[tuple[str, str], dict[str, object]],
 ) -> dict[str, dict[str, float]]:
+    source_keys, harms, _, _ = report_axes(rows)
     totals: dict[str, dict[str, float]] = {}
-    for source in SOURCE_KEYS:
-        source_rows = [rows[(source, harm)] for harm in HARMS]
-        total_dimensions = sum(int(row["total_dimensions"]) for row in source_rows)
-        unique_dimensions = sum(int(row["unique_dimensions"]) for row in source_rows)
-        relevant_dimensions = sum(
-            int(row["relevant_unique_dimensions"]) for row in source_rows
-        )
-        perfect_dimensions = sum(
-            int(row["perfect_relevance_dimensions"]) for row in source_rows
-        )
+    for source in source_keys:
+        source_rows = [rows[(source, harm)] for harm in harms]
+        total = sum(int(row["total_dimensions"]) for row in source_rows)
+        unique = sum(int(row["unique_dimensions"]) for row in source_rows)
+        relevant = sum(int(row["relevant_unique_dimensions"]) for row in source_rows)
+        perfect = sum(int(row["perfect_relevance_dimensions"]) for row in source_rows)
         totals[source] = {
-            "source_configs": int(source_rows[0]["source_configs"]),
-            "dimensions": total_dimensions,
+            "source_configs": sum(int(row["source_configs"]) for row in source_rows),
+            "dimensions": total,
             "repeated": sum(int(row["repeated_removed"]) for row in source_rows),
-            "unique": unique_dimensions,
-            "relevant": relevant_dimensions,
-            "perfect": perfect_dimensions,
-            "unique_rate": unique_dimensions / total_dimensions * 100,
-            "relevant_rate": relevant_dimensions / unique_dimensions * 100,
-            "perfect_rate": perfect_dimensions / unique_dimensions * 100,
-            "embedding": sum(
-                float(row["embedding_diversity"]) for row in source_rows
-            )
-            / len(HARMS),
-            "llm_pair": sum(
-                float(row["llm_pair_diversity"]) for row in source_rows
-            )
-            / len(HARMS),
-            "llm_direct": sum(
-                float(row["llm_direct_diversity"]) for row in source_rows
-            )
-            / len(HARMS),
+            "unique": unique,
+            "relevant": relevant,
+            "perfect": perfect,
+            "unique_rate": unique / total * 100,
+            "relevant_rate": relevant / unique * 100,
+            "perfect_rate": perfect / unique * 100,
+            "embedding": sum(float(row["embedding_diversity"]) for row in source_rows)
+            / len(harms),
+            "llm_pair": sum(float(row["llm_pair_diversity"]) for row in source_rows)
+            / len(harms),
+            "llm_direct": sum(float(row["llm_direct_diversity"]) for row in source_rows)
+            / len(harms),
             "relevance": sum(float(row["relevance_mean"]) for row in source_rows)
-            / len(HARMS),
+            / len(harms),
             "adversarial": sum(
                 float(row["adversarial_mean"]) * int(row["total_dimensions"])
                 for row in source_rows
             )
-            / total_dimensions,
+            / total,
             "coverage": sum(float(row["coverage_score"]) for row in source_rows)
-            / len(HARMS),
+            / len(harms),
         }
     return totals
 
@@ -323,33 +473,66 @@ def markdown_table(headers: list[str], rows: list[list[object]]) -> str:
 
 
 def harm_label(harm: str) -> str:
-    return HARM_LABELS[harm].replace("\n", " ")
+    return harm.replace("_", " ").replace("-", " ").title()
+
+
+def _relative_link(target: Path, output_path: Path) -> str:
+    return Path(os.path.relpath(target, output_path.parent)).as_posix()
+
+
+def _metric_values(
+    values: dict[str, float],
+    source_keys: Sequence[str],
+    formatter,
+    delta_formatter=None,
+) -> list[str]:
+    result = [formatter(values[source]) for source in source_keys]
+    if len(source_keys) == 2:
+        delta = values[source_keys[1]] - values[source_keys[0]]
+        result.append((delta_formatter or formatter)(delta))
+    return result
 
 
 def write_report(
     rows: dict[tuple[str, str], dict[str, object]],
-    output_path: Path = REPORT_PATH,
+    merged_results: Sequence[dict[str, object]],
+    output_path: Path,
 ) -> None:
+    source_keys, harms, labels, _ = report_axes(rows)
     totals = aggregate_sources(rows)
-    v1 = totals["v1"]
-    v2 = totals["v2"]
-    overall_rows = [
-        ["Source configs", f"{v1['source_configs']:.0f}", f"{v2['source_configs']:.0f}", f"{v2['source_configs'] - v1['source_configs']:+.0f}"],
-        ["Dimension instances", f"{v1['dimensions']:.0f}", f"{v2['dimensions']:.0f}", f"{v2['dimensions'] - v1['dimensions']:+.0f}"],
-        ["Repeated dimensions removed", f"{v1['repeated']:.0f}", f"{v2['repeated']:.0f}", f"{v2['repeated'] - v1['repeated']:+.0f}"],
-        ["Globally unique dimensions", f"{v1['unique']:.0f}", f"{v2['unique']:.0f}", f"{v2['unique'] - v1['unique']:+.0f}"],
-        ["Relevant unique dimensions", f"{v1['relevant']:.0f}", f"{v2['relevant']:.0f}", f"{v2['relevant'] - v1['relevant']:+.0f}"],
-        ["Perfect-relevance unique dimensions", f"{v1['perfect']:.0f}", f"{v2['perfect']:.0f}", f"{v2['perfect'] - v1['perfect']:+.0f}"],
-        ["Unique / total", f"{v1['unique_rate']:.1f}%", f"{v2['unique_rate']:.1f}%", f"{v2['unique_rate'] - v1['unique_rate']:+.1f} pp"],
-        ["Relevance@75 / unique", f"{v1['relevant_rate']:.1f}%", f"{v2['relevant_rate']:.1f}%", f"{v2['relevant_rate'] - v1['relevant_rate']:+.1f} pp"],
-        ["Relevance@100 / unique", f"{v1['perfect_rate']:.1f}%", f"{v2['perfect_rate']:.1f}%", f"{v2['perfect_rate'] - v1['perfect_rate']:+.1f} pp"],
-        ["Macro embedding diversity", f"{v1['embedding']:.4f}", f"{v2['embedding']:.4f}", f"{v2['embedding'] - v1['embedding']:+.4f}"],
-        ["Macro LLM pair diversity", f"{v1['llm_pair']:.4f}", f"{v2['llm_pair']:.4f}", f"{v2['llm_pair'] - v1['llm_pair']:+.4f}"],
-        ["Macro LLM direct diversity", f"{v1['llm_direct']:.4f}", f"{v2['llm_direct']:.4f}", f"{v2['llm_direct'] - v1['llm_direct']:+.4f}"],
-        ["Macro relevance (0-4)", f"{v1['relevance']:.4f}", f"{v2['relevance']:.4f}", f"{v2['relevance'] - v1['relevance']:+.4f}"],
-        ["All-dimension adversarial mean (0-100)", f"{v1['adversarial']:.4f}", f"{v2['adversarial']:.4f}", f"{v2['adversarial'] - v1['adversarial']:+.4f}"],
-        ["Macro scenario-space coverage (0-100)", f"{v1['coverage']:.4f}", f"{v2['coverage']:.4f}", f"{v2['coverage'] - v1['coverage']:+.4f}"],
-    ]
+    value_headers = [labels[source] for source in source_keys]
+    if len(source_keys) == 2:
+        value_headers.append(f"Delta ({labels[source_keys[1]]} - {labels[source_keys[0]]})")
+
+    overall_specs = (
+        ("Source configs", "source_configs", ".0f", "+.0f"),
+        ("Dimension instances", "dimensions", ".0f", "+.0f"),
+        ("Repeated dimensions removed", "repeated", ".0f", "+.0f"),
+        ("Globally unique dimensions", "unique", ".0f", "+.0f"),
+        ("Relevant unique dimensions", "relevant", ".0f", "+.0f"),
+        ("Perfect-relevance unique dimensions", "perfect", ".0f", "+.0f"),
+        ("Unique / total", "unique_rate", ".1f", "+.1f"),
+        ("Relevance@75 / unique", "relevant_rate", ".1f", "+.1f"),
+        ("Relevance@100 / unique", "perfect_rate", ".1f", "+.1f"),
+        ("Macro embedding diversity", "embedding", ".4f", "+.4f"),
+        ("Macro LLM pair diversity", "llm_pair", ".4f", "+.4f"),
+        ("Macro LLM direct diversity", "llm_direct", ".4f", "+.4f"),
+        ("Macro relevance (0-4)", "relevance", ".4f", "+.4f"),
+        ("All-dimension adversarial mean (0-100)", "adversarial", ".4f", "+.4f"),
+        ("Macro scenario-space coverage (0-100)", "coverage", ".4f", "+.4f"),
+    )
+    overall_rows = []
+    for label, field, value_format, delta_format in overall_specs:
+        values = {source: totals[source][field] for source in source_keys}
+        overall_rows.append(
+            [label]
+            + _metric_values(
+                values,
+                source_keys,
+                lambda value, fmt=value_format: format(value, fmt),
+                lambda value, fmt=delta_format: format(value, fmt),
+            )
+        )
 
     dimension_rows = []
     relevance_rows = []
@@ -359,55 +542,38 @@ def write_report(
     coverage_rows = []
     run_rows = []
     coverage_details = []
-    coverage_gap_rows = []
-    coverage_suggestion_sections = []
-    for harm in HARMS:
-        left = rows[("v1", harm)]
-        right = rows[("v2", harm)]
-        label = harm_label(harm)
-        dimension_rows.append(
-            [
-                label,
-                left["total_dimensions"],
-                right["total_dimensions"],
-                f"{int(right['total_dimensions']) - int(left['total_dimensions']):+d}",
-                left["unique_dimensions"],
-                right["unique_dimensions"],
-                f"{int(right['unique_dimensions']) - int(left['unique_dimensions']):+d}",
-                left["relevant_unique_dimensions"],
-                right["relevant_unique_dimensions"],
-            ]
-        )
-        relevance_rows.append(
-            [
-                label,
-                f"{float(left['uniqueness_rate']) * 100:.1f}%",
-                f"{float(right['uniqueness_rate']) * 100:.1f}%",
-                f"{(float(right['uniqueness_rate']) - float(left['uniqueness_rate'])) * 100:+.1f} pp",
-                f"{float(left['relevant_unique_rate']) * 100:.1f}%",
-                f"{float(right['relevant_unique_rate']) * 100:.1f}%",
-                f"{(float(right['relevant_unique_rate']) - float(left['relevant_unique_rate'])) * 100:+.1f} pp",
-                f"{float(left['perfect_relevance_rate']) * 100:.1f}%",
-                f"{float(right['perfect_relevance_rate']) * 100:.1f}%",
-                f"{(float(right['perfect_relevance_rate']) - float(left['perfect_relevance_rate'])) * 100:+.1f} pp",
-            ]
-        )
-        for metric, field in (
-            ("Embedding diversity", "embedding_diversity"),
-            ("LLM pair diversity", "llm_pair_diversity"),
-            ("LLM direct diversity", "llm_direct_diversity"),
-            ("Relevance mean (0-4)", "relevance_mean"),
-        ):
-            left_value = float(left[field])
-            right_value = float(right[field])
-            diversity_rows.append(
-                [label, metric, f"{left_value:.4f}", f"{right_value:.4f}", f"{right_value - left_value:+.4f}"]
+    gap_rows = []
+    suggestion_sections = []
+    for harm in harms:
+        display_harm = harm_label(harm)
+        for source in source_keys:
+            row = rows[(source, harm)]
+            dimension_rows.append(
+                [
+                    display_harm,
+                    labels[source],
+                    row["total_dimensions"],
+                    row["repeated_removed"],
+                    row["unique_dimensions"],
+                    row["relevant_unique_dimensions"],
+                    row["perfect_relevance_dimensions"],
+                ]
             )
-        for source, row in (("v1", left), ("v2", right)):
+            relevance_rows.append(
+                [
+                    display_harm,
+                    labels[source],
+                    f"{float(row['uniqueness_rate']) * 100:.1f}%",
+                    f"{float(row['relevant_unique_rate']) * 100:.1f}%",
+                    f"{float(row['perfect_relevance_rate']) * 100:.1f}%",
+                    f"{float(row['relevance_mean']):.4f}",
+                    row["relevance_min"],
+                ]
+            )
             adversarial_rows.append(
                 [
-                    label,
-                    SOURCE_LABELS[source],
+                    display_harm,
+                    labels[source],
                     f"{float(row['adversarial_mean']):.4f}",
                     f"{float(row['adversarial_population_variance']):.4f}",
                     f"{float(row['adversarial_sample_variance']):.4f}",
@@ -416,7 +582,7 @@ def write_report(
                 ]
             )
             distribution_rows.append(
-                [label, SOURCE_LABELS[source]]
+                [display_harm, labels[source]]
                 + [
                     f"{count} ({float(rate) * 100:.1f}%)"
                     for count, rate in zip(
@@ -426,147 +592,149 @@ def write_report(
                     )
                 ]
             )
+            run_rows.append(
+                [
+                    display_harm,
+                    labels[source],
+                    ", ".join(f"{run}={count}" for run, count in row["run_counts"].items()),
+                    f"{float(row['population_variance']):.4f}",
+                    f"{float(row['sample_variance']):.4f}",
+                    row["within_run_redundant_pairs"],
+                ]
+            )
+
+        for metric, field in (
+            ("Embedding diversity", "embedding_diversity"),
+            ("LLM pair diversity", "llm_pair_diversity"),
+            ("LLM direct diversity", "llm_direct_diversity"),
+        ):
+            diversity_rows.append(
+                [display_harm, metric]
+                + _metric_values(
+                    {source: float(rows[(source, harm)][field]) for source in source_keys},
+                    source_keys,
+                    lambda value: f"{value:.4f}",
+                    lambda value: f"{value:+.4f}",
+                )
+            )
         coverage_rows.append(
-            [
-                label,
-                left["coverage_score"],
-                right["coverage_score"],
-                f"{int(right['coverage_score']) - int(left['coverage_score']):+d}",
-            ]
+            [display_harm]
+            + _metric_values(
+                {source: float(rows[(source, harm)]["coverage_score"]) for source in source_keys},
+                source_keys,
+                lambda value: f"{value:.0f}",
+                lambda value: f"{value:+.0f}",
+            )
         )
-        coverage_details.append(
-            f"### {label}\n\n"
-            f"- **{SOURCE_LABELS['v1']} ({left['coverage_score']}):** "
-            f"{' '.join(str(left['coverage_rationale']).split())}\n"
-            f"- **{SOURCE_LABELS['v2']} ({right['coverage_score']}):** "
-            f"{' '.join(str(right['coverage_rationale']).split())}"
-        )
-        for source, row in (("v1", left), ("v2", right)):
-            weak_points = row["coverage_weak_points"]
-            if not weak_points:
-                continue
-            dimensions = []
-            for weak_point in weak_points:
-                dimension = weak_point["suggested_dimension"]
-                dimensions.append(dimension)
-                coverage_gap_rows.append(
+
+        details = [f"### {display_harm}"]
+        for source in source_keys:
+            row = rows[(source, harm)]
+            rationale = " ".join(str(row["coverage_rationale"]).split())
+            details.append(f"- **{labels[source]} ({row['coverage_score']}):** {rationale}")
+            suggestions = []
+            for point in row["coverage_weak_points"]:
+                dimension = point["suggested_dimension"]
+                suggestions.append(dimension)
+                gap_rows.append(
                     [
-                        label,
-                        SOURCE_LABELS[source],
-                        weak_point["priority"],
-                        weak_point["gap_type"],
-                        weak_point["weak_coverage_point"],
+                        display_harm,
+                        labels[source],
+                        point.get("priority", ""),
+                        point.get("gap_type", ""),
+                        point.get("weak_coverage_point", ""),
                         dimension["name"],
                     ]
                 )
-            suggestion_yaml = yaml.safe_dump(
-                {
-                    "pipeline": {
-                        "test_set": {"stratify": {"dimensions": dimensions}}
-                    }
-                },
-                sort_keys=False,
-                allow_unicode=False,
-            ).strip()
-            coverage_suggestion_sections.append(
-                f"### {label} - {SOURCE_LABELS[source]}\n\n"
-                f"```yaml\n{suggestion_yaml}\n```"
-            )
-        run_rows.append(
-            [
-                label,
-                "/".join(str(value) for value in left["run_counts"]),
-                "/".join(str(value) for value in right["run_counts"]),
-                f"{float(left['population_variance']):.4f}",
-                f"{float(right['population_variance']):.4f}",
-                left["within_run_redundant_pairs"],
-                right["within_run_redundant_pairs"],
-            ]
-        )
+            if suggestions:
+                suggestion_yaml = yaml.safe_dump(
+                    {"pipeline": {"test_set": {"stratify": {"dimensions": suggestions}}}},
+                    sort_keys=False,
+                    allow_unicode=False,
+                ).strip()
+                suggestion_sections.append(
+                    f"### {display_harm} - {labels[source]}\n\n"
+                    f"```yaml\n{suggestion_yaml}\n```"
+                )
+        coverage_details.append("\n\n".join(details))
 
     source_lines = []
-    for source in SOURCE_KEYS:
-        row = rows[(source, HARMS[0])]
-        report_target = Path(str(row["source_report"])).relative_to("artifacts")
+    for source in source_keys:
+        row = rows[(source, harms[0])]
         source_lines.append(
-            f"- **{SOURCE_LABELS[source]}:** "
-            f"[`{row['embedded_experiment']}`](../{report_target.as_posix()}), "
+            f"- **{labels[source]}:** "
+            f"[`{row['embedded_experiment']}`]({_relative_link(Path(row['source_report_path']), output_path)}), "
             f"methodology `{row['methodology_version']}`."
         )
-    coverage_detail_text = "\n\n".join(coverage_details)
-    if coverage_gap_rows:
-        coverage_gap_text = (
-            markdown_table(
-                [
-                    "Harm",
-                    "Source",
-                    "Priority",
-                    "Gap type",
-                    "Weak coverage point",
-                    "Suggested dimension",
-                ],
-                coverage_gap_rows,
-            )
-            + "\n\n"
-            + "\n\n".join(coverage_suggestion_sections)
+    merged_rows = [
+        [
+            result["source_label"],
+            harm_label(str(result["harm"])),
+            result["dimension_count"],
+            "created" if result["created"] else "already existed",
+            _relative_link(Path(result["path"]), output_path),
+        ]
+        for result in merged_results
+    ]
+    gap_text = (
+        markdown_table(
+            ["Harm", "Source", "Priority", "Gap type", "Weak coverage point", "Suggested dimension"],
+            gap_rows,
         )
-    else:
-        coverage_gap_text = (
-            "No structured weak points are present in the current source artifacts. "
-            "Regenerate both analyses with methodology `3.3.0` or later to populate "
-            "this section."
-        )
+        + "\n\n"
+        + "\n\n".join(suggestion_sections)
+        if gap_rows
+        else "No structured weak points are present in the current source artifacts."
+    )
+    comparison = len(source_keys) == 2
+    title = "# Harm-template experiment comparison" if comparison else "# Harm-template experiment report"
+    intro = (
+        "This report compares harms common to both supplied experiment directories."
+        if comparison
+        else "This report summarizes every harm in the supplied experiment directory."
+    )
+    report = f"""{title}
 
-    report = f"""# Harm-template experiment comparison
-
-This report is generated directly from the two current `metrics.json` artifacts.
-Counts are summed across harms where stated; macro averages are unweighted across
-the three harms. Every delta is Skill-v2 minus Skill-v1.
+{intro} Counts are summed where stated; macro averages are unweighted across
+{len(harms)} harm-level judgments.
 
 ## Sources
 
 {chr(10).join(source_lines)}
 
-## Overall comparison
+## Overall metrics
 
-{markdown_table(["Measure", "Skill-v1", "Skill-v2", "Delta"], overall_rows)}
+{markdown_table(["Measure", *value_headers], overall_rows)}
 
-![Overall Skill-v1 and Skill-v2 comparison](plots/overall_comparison.png)
-
-The score panel normalizes metrics to their own scales for the shared axis; labels
-above bars show original values. The overall adversarial mean is weighted across
-all dimension instances, while overall scenario coverage is a macro average over
-the three harm-level judgments.
+![Overall metric summary](plots/overall_comparison.png)
 
 ## Dimension counts by harm
 
 {markdown_table(
-    ["Harm", "V1 total", "V2 total", "Delta", "V1 unique", "V2 unique", "Delta", "V1 relevant unique", "V2 relevant unique"],
+    ["Harm", "Source", "Total", "Repeated removed", "Unique", "Relevant unique", "Perfect relevance"],
     dimension_rows,
 )}
 
-![Dimension counts by harm for Skill-v1 and Skill-v2](plots/coverage_by_harm.png)
+![Dimension counts by harm](plots/coverage_by_harm.png)
 
 ## Relevance rates
 
 {markdown_table(
-    ["Harm", "V1 unique / total", "V2 unique / total", "Delta", "V1 relevant / unique", "V2 relevant / unique", "Delta", "V1 perfect / unique", "V2 perfect / unique", "Delta"],
+    ["Harm", "Source", "Unique / total", "Relevance@75 / unique", "Relevance@100 / unique", "Mean (0-4)", "Minimum"],
     relevance_rows,
 )}
 
-![Relevance rates by harm for Skill-v1 and Skill-v2](plots/relevance_rates.png)
+![Relevance rates by harm](plots/relevance_rates.png)
 
-## Diversity and mean relevance
+## Diversity
 
-{markdown_table(["Harm", "Metric", "Skill-v1", "Skill-v2", "Delta"], diversity_rows)}
+{markdown_table(["Harm", "Metric", *value_headers], diversity_rows)}
 
-![Diversity and mean relevance by harm](plots/diversity_and_relevance.png)
+![Diversity by harm](plots/diversity_and_relevance.png)
 
 ## Expected adversarial pressure
 
-These are prospective `0-100` judgments of how strongly cases along each
-dimension may pressure a model into harmful output, not observed attack-success
-rates. Variances describe the complete generated dimension set for each harm.
+These are prospective `0-100` judgments, not observed attack-success rates.
 
 {markdown_table(
     ["Harm", "Source", "Mean", "Population variance", "Sample variance", "Minimum", "Maximum"],
@@ -575,60 +743,46 @@ rates. Variances describe the complete generated dimension set for each harm.
 
 {markdown_table(["Harm", "Source", *ADVERSARIAL_RANGES], distribution_rows)}
 
-Distribution cells show `count (share of that harm's dimensions)`.
-
-![Adversarial mean, variance, and score distributions](plots/adversarial_pressure.png)
+![Adversarial metrics](plots/adversarial_pressure.png)
 
 ## Canonical harm scenario-space coverage
 
-Coverage is a grounded `0-100` judgment of the conceptual scenario space
-expressible by each union of dimensions after discounting duplication and gaps.
-It is not a literal fraction of every possible prompt or executed test-case
-coverage.
-
-{markdown_table(["Harm", "Skill-v1", "Skill-v2", "Delta"], coverage_rows)}
+{markdown_table(["Harm", *value_headers], coverage_rows)}
 
 ![Canonical harm scenario-space coverage](plots/scenario_space_coverage.png)
 
-{coverage_detail_text}
+{chr(10).join(coverage_details)}
 
 ## Prioritized weak coverage points
 
-Each item is grounded in the canonical harm definition and includes a proposed
-dimension. YAML blocks are shaped for insertion or adaptation at
-`pipeline.test_set.stratify.dimensions`.
-
-{coverage_gap_text}
+{gap_text}
 
 ## Run consistency
 
 {markdown_table(
-    ["Harm", "V1 run counts", "V2 run counts", "V1 population variance", "V2 population variance", "V1 redundant pairs", "V2 redundant pairs"],
+    ["Harm", "Source", "Run dimension counts", "Population variance", "Sample variance", "Within-run redundant pairs"],
     run_rows,
 )}
 
-![Run counts, population variance, and redundant pairs](plots/run_consistency.png)
+![Run dimension counts](plots/run_consistency.png)
+
+## Merged configurations
+
+Each generated configuration contains the evaluator-selected representative from
+every unique-dimension group. Existing files are left unchanged.
+
+{markdown_table(["Source", "Harm", "Dimensions", "Status", "Path"], merged_rows)}
 
 ## Interpretation and limitations
 
-- Skill-v2 has more dimension instances and broader canonical scenario-space
-  coverage for every harm, but count alone is not evidence of test quality.
-- Adversarial pressure, coverage, diversity, and relevance are LLM judgments, not
-  ground truth. The source reports retain prompts, model deployment, and raw
-  judgments for audit.
-- Adversarial means compare generated dimension instances and therefore weight
-  repeated concepts. Distribution tables expose that shape rather than reducing
-  the comparison to a mean alone.
-- With three generation runs per harm, run-count variance is descriptive and
-  unstable. Adversarial variance describes dimensions, not generation-run
-  consistency.
+- Adversarial pressure, coverage, diversity, relevance, and duplicate grouping
+  include LLM judgments and are not ground truth.
+- With few generation runs, run-count variance is descriptive and unstable.
+- Merged configurations require human review and schema validation before use.
 """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report, encoding="utf-8")
-    try:
-        display_path = output_path.relative_to(ROOT)
-    except ValueError:
-        display_path = output_path
-    print(f"wrote {display_path}")
+    print(f"wrote {output_path}")
 
 
 def configure_style() -> None:
@@ -661,27 +815,35 @@ def add_grouped_bars(
     axis: plt.Axes,
     categories: list[str],
     values: dict[str, list[float]],
+    source_keys: Sequence[str],
+    labels: dict[str, str],
+    colors: dict[str, str],
     *,
     formatter,
-    ylim: tuple[float, float],
     title: str,
     ylabel: str = "",
+    ylim: tuple[float, float] | None = None,
     raw_labels: dict[str, list[str]] | None = None,
 ) -> None:
     positions = np.arange(len(categories))
-    width = 0.36
-    for index, source in enumerate(SOURCE_KEYS):
-        offset = (index - 0.5) * width
+    width = 0.72 / len(source_keys)
+    for index, source in enumerate(source_keys):
+        offset = (index - (len(source_keys) - 1) / 2) * width
         bars = axis.bar(
             positions + offset,
             values[source],
             width,
-            color=SOURCE_COLORS[source],
-            label=SOURCE_LABELS[source],
+            color=colors[source],
+            label=labels[source],
         )
-        labels = raw_labels[source] if raw_labels else [formatter(value) for value in values[source]]
-        axis.bar_label(bars, labels=labels, padding=3, fontsize=8, color=TEXT)
-
+        bar_labels = raw_labels[source] if raw_labels else [formatter(value) for value in values[source]]
+        axis.bar_label(bars, labels=bar_labels, padding=3, fontsize=8, color=TEXT)
+    if ylim is None:
+        maximum = max(
+            (value for source_values in values.values() for value in source_values),
+            default=1,
+        )
+        ylim = (0, maximum * 1.18 if maximum else 1)
     axis.set_xticks(positions, categories)
     axis.set_ylim(*ylim)
     axis.set_title(title, fontsize=12, fontweight="bold", pad=12)
@@ -689,356 +851,280 @@ def add_grouped_bars(
     style_axis(axis)
 
 
-def save_figure(figure: plt.Figure, filename: str) -> None:
-    output_path = PLOTS_DIR / filename
+def save_figure(figure: plt.Figure, plots_dir: Path, filename: str) -> None:
+    output_path = plots_dir / filename
     figure.savefig(output_path, dpi=180, bbox_inches="tight", facecolor=BACKGROUND)
     plt.close(figure)
-    print(f"wrote {output_path.relative_to(ROOT)}")
+    print(f"wrote {output_path}")
 
 
-def make_overall_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
+def _finish_multi_axis_figure(
+    figure: plt.Figure,
+    axes: Sequence[plt.Axes],
+    source_count: int,
+    title: str,
+    plots_dir: Path,
+    filename: str,
+) -> None:
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        legend_labels,
+        loc="lower center",
+        ncol=source_count,
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.07),
+    )
+    figure.suptitle(title, fontsize=18, fontweight="bold", y=1.03)
+    save_figure(figure, plots_dir, filename)
+
+
+def make_overall_plot(
+    rows: dict[tuple[str, str], dict[str, object]], plots_dir: Path
+) -> None:
+    source_keys, _, labels, colors = report_axes(rows)
     totals = aggregate_sources(rows)
-
     figure, axes = plt.subplots(1, 3, figsize=(17, 6), constrained_layout=True)
-    count_fields = ("source_configs", "dimensions", "repeated", "unique", "relevant", "perfect")
-    add_grouped_bars(
-        axes[0],
-        ["Source\nconfigs", "Dimension\ninstances", "Repeated\nremoved", "Globally\nunique", "Relevant\nunique", "Perfect\nrelevance"],
-        {source: [totals[source][field] for field in count_fields] for source in SOURCE_KEYS},
-        formatter=lambda value: f"{value:.0f}",
-        ylim=(0, 88),
-        title="Counts",
-        ylabel="Count",
+    panels = (
+        (
+            ["Configs", "Dimensions", "Repeated", "Unique", "Relevant", "Perfect"],
+            ("source_configs", "dimensions", "repeated", "unique", "relevant", "perfect"),
+            "Counts",
+            lambda value: f"{value:.0f}",
+            None,
+        ),
+        (
+            ["Unique / total", "Relevant / unique", "Perfect / unique"],
+            ("unique_rate", "relevant_rate", "perfect_rate"),
+            "Rates",
+            lambda value: f"{value:.1f}%",
+            (0, 112),
+        ),
     )
-
-    rate_fields = ("unique_rate", "relevant_rate", "perfect_rate")
-    add_grouped_bars(
-        axes[1],
-        ["Unique /\ntotal", "Relevance@75 /\nunique", "Relevance@100 /\nunique"],
-        {source: [totals[source][field] for field in rate_fields] for source in SOURCE_KEYS},
-        formatter=lambda value: f"{value:.1f}%",
-        ylim=(0, 112),
-        title="Rates",
-        ylabel="Percent",
-    )
-
-    score_fields = ("embedding", "llm_pair", "relevance", "adversarial", "coverage")
-    raw_scores = {source: [totals[source][field] for field in score_fields] for source in SOURCE_KEYS}
-    normalized_scores = {
-        source: [
-            raw_scores[source][0] * 100,
-            raw_scores[source][1] * 100,
-            raw_scores[source][2] / 4 * 100,
-            raw_scores[source][3],
-            raw_scores[source][4],
-        ]
-        for source in SOURCE_KEYS
+    for axis, (categories, fields, title, formatter, ylim) in zip(axes[:2], panels, strict=True):
+        add_grouped_bars(
+            axis,
+            categories,
+            {source: [totals[source][field] for field in fields] for source in source_keys},
+            source_keys,
+            labels,
+            colors,
+            formatter=formatter,
+            title=title,
+            ylim=ylim,
+        )
+    fields = ("embedding", "llm_pair", "relevance", "adversarial", "coverage")
+    raw = {source: [totals[source][field] for field in fields] for source in source_keys}
+    normalized = {
+        source: [raw[source][0] * 100, raw[source][1] * 100, raw[source][2] / 4 * 100, raw[source][3], raw[source][4]]
+        for source in source_keys
     }
     add_grouped_bars(
         axes[2],
-        [
-            "Embedding\ndiversity",
-            "LLM pair\ndiversity",
-            "Relevance\nmean",
-            "Adversarial\nmean",
-            "Scenario\ncoverage",
-        ],
-        normalized_scores,
+        ["Embedding", "LLM pair", "Relevance", "Adversarial", "Coverage"],
+        normalized,
+        source_keys,
+        labels,
+        colors,
         formatter=lambda value: f"{value:.1f}%",
+        title="Scores normalized to scale",
         ylim=(0, 108),
-        title="Scores normalized to their scale",
-        ylabel="Percent of scale",
-        raw_labels={source: [f"{value:.4f}" for value in raw_scores[source]] for source in SOURCE_KEYS},
+        raw_labels={source: [f"{value:.4f}" for value in raw[source]] for source in source_keys},
     )
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.05))
-    figure.suptitle("Overall comparison", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "overall_comparison.png")
+    for axis in axes:
+        axis.tick_params(axis="x", labelrotation=20)
+    _finish_multi_axis_figure(figure, axes, len(source_keys), "Overall metrics", plots_dir, "overall_comparison.png")
 
 
-def make_coverage_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(16, 5.5), constrained_layout=True)
-    categories = [HARM_LABELS[harm] for harm in HARMS]
-    metrics = (
-        ("total_dimensions", "Total dimensions", (0, 31)),
-        ("unique_dimensions", "Unique dimensions", (0, 27)),
-        ("relevant_unique_dimensions", "Relevant unique dimensions", (0, 27)),
-    )
-    for axis, (field, title, ylim) in zip(axes, metrics, strict=True):
+def make_metric_panels(
+    rows: dict[tuple[str, str], dict[str, object]],
+    plots_dir: Path,
+    panels: Sequence[tuple[str, str, float | None]],
+    title: str,
+    filename: str,
+    *,
+    percent: bool = False,
+) -> None:
+    source_keys, harms, labels, colors = report_axes(rows)
+    figure, axes = plt.subplots(1, len(panels), figsize=(max(16, len(harms) * 2.2), 6), constrained_layout=True)
+    axes = np.atleast_1d(axes)
+    categories = [harm_label(harm) for harm in harms]
+    for axis, (field, panel_title, maximum) in zip(axes, panels, strict=True):
+        multiplier = 100 if percent else 1
         add_grouped_bars(
             axis,
             categories,
-            {source: [float(rows[(source, harm)][field]) for harm in HARMS] for source in SOURCE_KEYS},
-            formatter=lambda value: f"{value:.0f}",
-            ylim=ylim,
-            title=title,
-            ylabel="Count",
+            {source: [float(rows[(source, harm)][field]) * multiplier for harm in harms] for source in source_keys},
+            source_keys,
+            labels,
+            colors,
+            formatter=(lambda value: f"{value:.1f}%") if percent else (lambda value: f"{value:.4f}" if maximum is not None and maximum <= 2 else f"{value:.0f}"),
+            title=panel_title,
+            ylim=(0, maximum) if maximum is not None else None,
         )
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.06))
-    figure.suptitle("Dimension counts by harm", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "coverage_by_harm.png")
+        axis.tick_params(axis="x", labelrotation=25)
+    _finish_multi_axis_figure(figure, axes, len(source_keys), title, plots_dir, filename)
 
 
-def make_relevance_rates_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(16, 5.5), constrained_layout=True)
-    categories = [HARM_LABELS[harm] for harm in HARMS]
-    metrics = (
-        ("uniqueness_rate", "Unique / total"),
-        ("relevant_unique_rate", "Relevance@75 / unique"),
-        ("perfect_relevance_rate", "Relevance@100 / unique"),
-    )
-    for axis, (field, title) in zip(axes, metrics, strict=True):
-        add_grouped_bars(
-            axis,
-            categories,
-            {
-                source: [float(rows[(source, harm)][field]) * 100 for harm in HARMS]
-                for source in SOURCE_KEYS
-            },
-            formatter=lambda value: f"{value:.1f}%",
-            ylim=(0, 112),
-            title=title,
-            ylabel="Percent",
-        )
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.06))
-    figure.suptitle("Relevance rates by harm", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "relevance_rates.png")
-
-
-def make_diversity_relevance_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(16, 5.5), constrained_layout=True)
-    categories = [HARM_LABELS[harm] for harm in HARMS]
-    metrics = (
-        ("embedding_diversity", "Embedding diversity", (0, 0.6), "Score (0-1)"),
-        ("llm_pair_diversity", "LLM pair diversity", (0, 1.08), "Score (0-1)"),
-        ("relevance_mean", "Relevance mean", (0, 4.35), "Score (0-4)"),
-    )
-    for axis, (field, title, ylim, ylabel) in zip(axes, metrics, strict=True):
-        add_grouped_bars(
-            axis,
-            categories,
-            {source: [float(rows[(source, harm)][field]) for harm in HARMS] for source in SOURCE_KEYS},
-            formatter=lambda value: f"{value:.4f}",
-            ylim=ylim,
-            title=title,
-            ylabel=ylabel,
-        )
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.06))
-    figure.suptitle("Diversity and mean relevance", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "diversity_and_relevance.png")
-
-
-def make_adversarial_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
-    figure = plt.figure(figsize=(16, 10), constrained_layout=True)
-    grid = figure.add_gridspec(2, 2, height_ratios=(0.9, 1.25))
-    categories = [HARM_LABELS[harm] for harm in HARMS]
-
+def make_adversarial_plot(
+    rows: dict[tuple[str, str], dict[str, object]], plots_dir: Path
+) -> None:
+    source_keys, harms, labels, colors = report_axes(rows)
+    figure = plt.figure(figsize=(max(16, len(harms) * 2.2), max(10, len(harms) * len(source_keys) * 0.4 + 6)), constrained_layout=True)
+    grid = figure.add_gridspec(2, 2)
+    categories = [harm_label(harm) for harm in harms]
     mean_axis = figure.add_subplot(grid[0, 0])
-    add_grouped_bars(
-        mean_axis,
-        categories,
-        {
-            source: [float(rows[(source, harm)]["adversarial_mean"]) for harm in HARMS]
-            for source in SOURCE_KEYS
-        },
-        formatter=lambda value: f"{value:.1f}",
-        ylim=(0, 105),
-        title="Mean expected adversarial pressure",
-        ylabel="Score (0-100)",
-    )
-
     variance_axis = figure.add_subplot(grid[0, 1])
-    variance_values = {
-        source: [
-            float(rows[(source, harm)]["adversarial_population_variance"])
-            for harm in HARMS
-        ]
-        for source in SOURCE_KEYS
-    }
-    variance_limit = max(
-        value for source_values in variance_values.values() for value in source_values
-    )
-    add_grouped_bars(
-        variance_axis,
-        categories,
-        variance_values,
-        formatter=lambda value: f"{value:.1f}",
-        ylim=(0, variance_limit * 1.18),
-        title="Population variance of adversarial scores",
-        ylabel="Variance",
-    )
-
-    distribution_axis = figure.add_subplot(grid[1, :])
-    labels = [
-        f"{HARM_LABELS[harm].replace(chr(10), ' ')} · {SOURCE_LABELS[source]}"
-        for harm in HARMS
-        for source in SOURCE_KEYS
-    ]
-    positions = np.arange(len(labels))
-    left = np.zeros(len(labels))
-    for range_index, (score_range, color) in enumerate(
-        zip(ADVERSARIAL_RANGES, ADVERSARIAL_COLORS, strict=True)
+    for axis, field, title, limit in (
+        (mean_axis, "adversarial_mean", "Mean pressure", (0, 105)),
+        (variance_axis, "adversarial_population_variance", "Population variance", None),
     ):
-        rates = []
-        counts = []
-        for harm in HARMS:
-            for source in SOURCE_KEYS:
-                row = rows[(source, harm)]
-                rates.append(
-                    float(row["adversarial_distribution_rates"][range_index]) * 100
-                )
-                counts.append(int(row["adversarial_distribution_counts"][range_index]))
-        bars = distribution_axis.barh(
-            positions,
-            rates,
-            left=left,
-            color=color,
-            label=score_range,
-            edgecolor=BACKGROUND,
-            linewidth=0.8,
+        add_grouped_bars(
+            axis,
+            categories,
+            {source: [float(rows[(source, harm)][field]) for harm in harms] for source in source_keys},
+            source_keys,
+            labels,
+            colors,
+            formatter=lambda value: f"{value:.1f}",
+            title=title,
+            ylim=limit,
         )
-        distribution_axis.bar_label(
-            bars,
-            labels=[str(count) if rate >= 5 else "" for count, rate in zip(counts, rates)],
-            label_type="center",
-            fontsize=8,
-            color=TEXT,
-        )
+        axis.tick_params(axis="x", labelrotation=25)
+    distribution_axis = figure.add_subplot(grid[1, :])
+    row_labels = [f"{harm_label(harm)} - {labels[source]}" for harm in harms for source in source_keys]
+    positions = np.arange(len(row_labels))
+    left = np.zeros(len(row_labels))
+    for range_index, (score_range, color) in enumerate(zip(ADVERSARIAL_RANGES, ADVERSARIAL_COLORS, strict=True)):
+        rates = [
+            float(rows[(source, harm)]["adversarial_distribution_rates"][range_index]) * 100
+            for harm in harms
+            for source in source_keys
+        ]
+        distribution_axis.barh(positions, rates, left=left, color=color, label=score_range, edgecolor=BACKGROUND)
         left += np.array(rates)
-    distribution_axis.set_yticks(positions, labels)
+    distribution_axis.set_yticks(positions, row_labels)
     distribution_axis.invert_yaxis()
     distribution_axis.set_xlim(0, 100)
-    distribution_axis.set_xlabel("Share of dimensions")
-    distribution_axis.set_title(
-        "Adversarial-score distribution (segment labels are dimension counts)",
-        fontsize=12,
-        fontweight="bold",
-        pad=12,
-    )
-    distribution_axis.xaxis.set_major_formatter(lambda value, _: f"{value:.0f}%")
-    distribution_axis.grid(axis="x", color=GRID, linewidth=0.8, alpha=0.8)
-    distribution_axis.set_axisbelow(True)
-    distribution_axis.spines["top"].set_visible(False)
-    distribution_axis.spines["right"].set_visible(False)
-    distribution_axis.spines["left"].set_color(GRID)
-    distribution_axis.spines["bottom"].set_color(GRID)
-    distribution_axis.legend(
-        title="Score range", loc="lower center", bbox_to_anchor=(0.5, -0.24), ncol=5, frameon=False
-    )
-
-    mean_axis.legend(loc="upper left", ncol=2, frameon=False)
+    distribution_axis.set_title("Score distribution", fontweight="bold")
+    distribution_axis.legend(ncol=5, loc="lower center", bbox_to_anchor=(0.5, -0.22), frameon=False)
     figure.suptitle("Expected adversarial pressure", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "adversarial_pressure.png")
+    save_figure(figure, plots_dir, "adversarial_pressure.png")
 
 
-def make_scenario_coverage_plot(
-    rows: dict[tuple[str, str], dict[str, object]],
+def make_run_consistency_plot(
+    rows: dict[tuple[str, str], dict[str, object]], plots_dir: Path
 ) -> None:
-    figure, axis = plt.subplots(figsize=(10, 5.8), constrained_layout=True)
-    add_grouped_bars(
-        axis,
-        [HARM_LABELS[harm] for harm in HARMS],
-        {
-            source: [float(rows[(source, harm)]["coverage_score"]) for harm in HARMS]
-            for source in SOURCE_KEYS
-        },
-        formatter=lambda value: f"{value:.0f}",
-        ylim=(0, 105),
-        title="Canonical harm scenario-space coverage",
-        ylabel="Coverage score (0-100)",
-    )
-    axis.legend(loc="upper center", ncol=2, frameon=False)
-    save_figure(figure, "scenario_space_coverage.png")
-
-
-def make_run_consistency_plot(rows: dict[tuple[str, str], dict[str, object]]) -> None:
-    figure = plt.figure(figsize=(16, 9.5), constrained_layout=True)
-    grid = figure.add_gridspec(2, 3, height_ratios=(1, 0.9))
-    run_positions = np.arange(1, 4)
-
-    for column, harm in enumerate(HARMS):
-        axis = figure.add_subplot(grid[0, column])
-        for source in SOURCE_KEYS:
-            values = rows[(source, harm)]["run_counts"]
-            axis.plot(
-                run_positions,
-                values,
-                marker="o",
-                linewidth=2.2,
-                markersize=7,
-                color=SOURCE_COLORS[source],
-                label=SOURCE_LABELS[source],
-            )
-            for x_value, y_value in zip(run_positions, values, strict=True):
-                axis.annotate(
-                    str(y_value),
-                    (x_value, y_value),
-                    xytext=(0, 8),
-                    textcoords="offset points",
-                    ha="center",
-                    fontsize=9,
-                    color=SOURCE_COLORS[source],
-                )
-        axis.set_xticks(run_positions, ["Run 1", "Run 2", "Run 3"])
-        axis.set_ylim(0, 11.5)
+    source_keys, harms, labels, colors = report_axes(rows)
+    columns = min(3, len(harms))
+    row_count = math.ceil(len(harms) / columns)
+    figure, axes = plt.subplots(row_count, columns, figsize=(5.2 * columns, 4.2 * row_count), constrained_layout=True, squeeze=False)
+    for axis, harm in zip(axes.flat, harms, strict=False):
+        run_names = list(dict.fromkeys(run for source in source_keys for run in rows[(source, harm)]["run_counts"]))
+        for source in source_keys:
+            run_counts = rows[(source, harm)]["run_counts"]
+            positions = [run_names.index(run) for run in run_counts]
+            axis.plot(positions, list(run_counts.values()), marker="o", linewidth=2.2, color=colors[source], label=labels[source])
+        maximum = max(count for source in source_keys for count in rows[(source, harm)]["run_counts"].values())
+        axis.set_xticks(np.arange(len(run_names)), run_names, rotation=25)
+        axis.set_ylim(0, maximum * 1.25)
+        axis.set_title(harm_label(harm), fontweight="bold")
         axis.set_ylabel("Dimension count")
-        axis.set_title(HARM_LABELS[harm].replace("\n", " "), fontsize=12, fontweight="bold", pad=12)
         style_axis(axis)
-
-    categories = [HARM_LABELS[harm] for harm in HARMS]
-    variance_axis = figure.add_subplot(grid[1, :2])
-    add_grouped_bars(
-        variance_axis,
-        categories,
-        {
-            source: [float(rows[(source, harm)]["population_variance"]) for harm in HARMS]
-            for source in SOURCE_KEYS
-        },
-        formatter=lambda value: f"{value:.4f}",
-        ylim=(0, 0.78),
-        title="Population variance of run counts",
-        ylabel="Variance",
-    )
-
-    redundant_axis = figure.add_subplot(grid[1, 2])
-    add_grouped_bars(
-        redundant_axis,
-        categories,
-        {
-            source: [float(rows[(source, harm)]["within_run_redundant_pairs"]) for harm in HARMS]
-            for source in SOURCE_KEYS
-        },
-        formatter=lambda value: f"{value:.0f}",
-        ylim=(0, 1.25),
-        title="Within-run redundant pairs",
-        ylabel="Pair count",
-    )
-
-    figure.axes[0].legend(loc="upper center", ncol=2, frameon=False)
-    figure.suptitle("Run consistency", fontsize=18, fontweight="bold", y=1.03)
-    save_figure(figure, "run_consistency.png")
+    for axis in list(axes.flat)[len(harms):]:
+        axis.set_visible(False)
+    axes.flat[0].legend(ncol=len(source_keys), frameon=False)
+    figure.suptitle("Run dimension counts", fontsize=18, fontweight="bold", y=1.02)
+    save_figure(figure, plots_dir, "run_consistency.png")
 
 
-def main() -> None:
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+def generate_plots(
+    rows: dict[tuple[str, str], dict[str, object]], plots_dir: Path
+) -> None:
+    plots_dir.mkdir(parents=True, exist_ok=True)
     configure_style()
-    rows = build_rows()
-    write_comparison_data(rows)
-    make_overall_plot(rows)
-    make_coverage_plot(rows)
-    make_relevance_rates_plot(rows)
-    make_diversity_relevance_plot(rows)
-    make_adversarial_plot(rows)
-    make_scenario_coverage_plot(rows)
-    make_run_consistency_plot(rows)
-    write_report(rows)
+    make_overall_plot(rows, plots_dir)
+    make_metric_panels(
+        rows,
+        plots_dir,
+        (("total_dimensions", "Total", None), ("unique_dimensions", "Unique", None), ("relevant_unique_dimensions", "Relevant unique", None)),
+        "Dimension counts by harm",
+        "coverage_by_harm.png",
+    )
+    make_metric_panels(
+        rows,
+        plots_dir,
+        (("uniqueness_rate", "Unique / total", 112), ("relevant_unique_rate", "Relevance@75 / unique", 112), ("perfect_relevance_rate", "Relevance@100 / unique", 112)),
+        "Relevance rates by harm",
+        "relevance_rates.png",
+        percent=True,
+    )
+    make_metric_panels(
+        rows,
+        plots_dir,
+        (("embedding_diversity", "Embedding diversity", 1.08), ("llm_pair_diversity", "LLM pair diversity", 1.08), ("llm_direct_diversity", "LLM direct diversity", 1.08)),
+        "Diversity by harm",
+        "diversity_and_relevance.png",
+    )
+    make_adversarial_plot(rows, plots_dir)
+    make_metric_panels(
+        rows,
+        plots_dir,
+        (("coverage_score", "Scenario-space coverage", 105),),
+        "Canonical harm scenario-space coverage",
+        "scenario_space_coverage.png",
+    )
+    make_run_consistency_plot(rows, plots_dir)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Report one template-generation experiment or compare common harms "
+            "across two experiments."
+        )
+    )
+    parser.add_argument(
+        "experiment_dirs",
+        nargs="+",
+        help="One experiment directory, or two directories to compare.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "Output directory. Defaults to <experiment>/analysis/summary for one "
+            "input and template_comparison_reports for two inputs."
+        ),
+    )
+    args = parser.parse_args(argv)
+    if len(args.experiment_dirs) not in (1, 2):
+        parser.error("expected one or two experiment directories")
+    return args
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    sources = load_sources(args.experiment_dirs)
+    harms = select_report_harms(sources)
+    rows = build_rows(sources, harms)
+    merged_results = generate_merged_configs(sources, harms)
+    output_dir = (
+        args.output_dir.expanduser().resolve()
+        if args.output_dir
+        else (
+            sources[0].root / "analysis" / "summary"
+            if len(sources) == 1
+            else DEFAULT_COMPARISON_OUTPUT_DIR
+        )
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_comparison_data(rows, output_dir / "comparison_data.csv")
+    generate_plots(rows, output_dir / "plots")
+    write_report(rows, merged_results, output_dir / "report.md")
+    for result in merged_results:
+        action = "created" if result["created"] else "kept existing"
+        print(f"{action} {result['path']}")
 
 
 if __name__ == "__main__":

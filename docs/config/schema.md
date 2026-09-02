@@ -445,6 +445,7 @@ Accepted fields:
 - `temperature` — optional number
 - `max_tokens` — optional positive integer
 - `reasoning_effort` — optional non-empty string
+- `bus` — optional BUS transport mapping for inference targets, inference testers, and judges
 
 Defaults depend on the stage that reads the model:
 
@@ -464,6 +465,50 @@ default_model:
   name: azure/gpt-4o-mini
   reasoning_effort: medium
 ```
+
+### BUS transport
+
+Set `model.bus` to route an inference target, inference tester, or judge through
+`BusTokenCompleter` instead of LiteLLM. The BUS client packages must be available
+on `PYTHONPATH`; they are imported only when a BUS-backed model is invoked.
+
+```yaml
+pipeline:
+  inference:
+    target:
+      model:
+        name: bus/target-model
+        max_tokens: 10000
+        bus:
+          snapshot: az://storage/models/snapshots/target-model
+          user: target-user
+          renderer: harmony-renderer-name
+          bus_line: bus
+          top_p: 1.0
+  judge:
+    model:
+      name: bus/judge-model
+      temperature: 0.0
+      max_tokens: 12000
+      bus:
+        snapshot: az://storage/models/snapshots/judge-model
+        user: judge-user
+        renderer: harmony-renderer-name
+```
+
+BUS fields:
+
+- `snapshot` — required `az://` snapshot path
+- `user` — required BUS topic user
+- `renderer` — required renderer matching the snapshot
+- `bus_line` — optional BUS line; defaults to `bus`
+- `top_p` — optional sampling value greater than 0 and at most 1; defaults to `1.0`
+
+ASSERT always uses `QoSType.ROUND_ROBIN_BY_USER`. `temperature` and `max_tokens`
+come from the surrounding model config. BUS-backed judge calls use the judge
+prompt's JSON contract and validate the returned JSON, but BUS does not enforce
+the JSON schema at transport level. BUS-backed models do not currently support
+`target.tools` or `web_search`.
 
 ## What goes where
 

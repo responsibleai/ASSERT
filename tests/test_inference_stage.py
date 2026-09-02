@@ -9,15 +9,42 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
+from assert_ai.core.config_model import BusConfig, ModelConfig, TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
 from assert_ai.core.io import load_test_cases
 from assert_ai.core.model_client import LLMContentFilterError, LLMInputError, LLMProviderError, Message, ModelResponse
 from assert_ai.core.session import TurnResult
-from assert_ai.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
+from assert_ai.stages.inference import _build_target_session, _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
 from assert_ai.viewer_read_model import ViewerReadModelBuildError
 
 
 class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
+    def test_build_target_session_passes_bus_transport_to_model_client(self) -> None:
+        bus = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="target",
+            renderer="harmony-test",
+        )
+        target = TargetConfig(model=ModelConfig(name="bus/target", bus=bus))
+
+        with patch("assert_ai.stages.inference._build_hosted_session", return_value=object()) as build:
+            _build_target_session(
+                target=target,
+                test_case_payload={"description": "hello"},
+                inference=InferenceConfig(),
+                max_tokens=100,
+                config_path=None,
+            )
+
+        self.assertIs(build.call_args.kwargs["generate_options"].bus, bus)
+
+    async def test_run_inference_requires_hosted_vllm_api_base_before_loading_test_set(self) -> None:
+        with patch.dict(os.environ, {"HOSTED_VLLM_API_BASE": ""}):
+            with self.assertRaisesRegex(LLMInputError, "HOSTED_VLLM_API_BASE"):
+                await run_inference(
+                    test_set_path="does-not-exist.jsonl",
+                    target=TargetConfig(model="hosted_vllm/qwen-sft"),
+                )
+
     def test_inference_config_fingerprint_changes_with_seeds_content(self) -> None:
         """Fingerprint must include seed content so regenerating test_set invalidates cached transcripts.
 

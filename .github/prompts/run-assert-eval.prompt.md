@@ -113,12 +113,23 @@ assert-ai init --default-model <litellm-model> --describe-file <path> --non-inte
 - After generation, show the user the generated `behavior.description`, `context`, and `pipeline.judge` settings, plus the resolved `systematize` / `judge` models. Confirm before running.
 - **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled, so no `dimensions` block is needed. Config dimensions merge over the built-ins **by name**, so declaring one with a built-in name silently replaces that built-in's rubric. Add one only for a genuinely new metric, never reusing a built-in name.
 
+**Reusing user-supplied artifacts.** When the user already has a taxonomy, omit
+`systematize` and normalize it to the current top-level contract: `behavior`,
+`definition_of_terms`, and `behavior_categories`. The loader does not alias legacy
+`concept` / `behaviors` keys. Validate it with `assert_ai.stages.systematize.TAXONOMY_SCHEMA`,
+then place an identical compatibility copy at `artifacts/results/<suite>/taxonomy.json`;
+`results status` and the viewer read that suite-level path even when `test_set.taxonomy_path`
+or `judge.taxonomy_path` points elsewhere. Existing prompt rows must include `type: prompt`,
+`seed.description`, `dimensions.behavior`, and `permissible`. Confirm the test set contains
+both permissible and non-permissible cases before interpreting overrefusal.
+
 ### 4. Identify the target shape
 
 Help the user set the right target in the config:
 
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: use `target.callable` WITH `target.trace` so the judge can cite tool calls and routing.
 - **Hosted model** with a system prompt and optional tools: use `target.model` and `target.tools`.
+- **Forwarded vLLM model**: use `target.model.name: hosted_vllm/<served-model-id>` and export `HOSTED_VLLM_API_BASE=http://127.0.0.1:<port>/v1` in the same shell as `assert-ai`. Verify `/v1/models` and one direct `/v1/chat/completions` request before inference. After a routing failure, use a new `run` ID or force `inference`; otherwise resume logic retains completed error rows.
 - **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`; do not add a `--trace` flag to `assert-ai run`.
 - **Black-box HTTP endpoint** you cannot import as Python: use `target.endpoint` — the runtime POSTs `{"message": ..., "history": [...]}` and reads `{"response": ...}`, so no wrapper code is needed (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response shape differs. Either way the judge sees only final text, so this is a fallback, not the recommended path.
 

@@ -7,9 +7,109 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from assert_ai.core import model_client
+from assert_ai.core.bus_client import BusCompletion
+from assert_ai.core.config_model import BusConfig
 
 
 class ModelClientTest(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_routes_bus_transport_without_importing_litellm(self) -> None:
+        config = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="grader",
+            renderer="harmony-test",
+        )
+        completion = BusCompletion(
+            text='{"verdict": "pass"}',
+            reasoning="reasoning",
+            finish_reason="stop",
+            raw={"messages": []},
+        )
+
+        with (
+            patch("assert_ai.core.bus_client.complete", return_value=completion) as complete,
+            patch.object(model_client, "_get_litellm_module") as get_litellm,
+        ):
+            response = await model_client.generate(
+                "bus/grader",
+                [{"role": "user", "content": "judge this"}],
+                model_client.GenerateOptions(
+                    max_tokens=64,
+                    temperature=0.0,
+                    bus=config,
+                ),
+            )
+
+        get_litellm.assert_not_called()
+        complete.assert_awaited_once()
+        self.assertEqual(response.text, '{"verdict": "pass"}')
+        self.assertEqual(response.parsed, {"verdict": "pass"})
+        self.assertEqual(response.reasoning, "reasoning")
+        self.assertEqual(response.api_mode, "bus")
+        self.assertEqual(response.request_payload["bus"]["renderer"], "harmony-test")
+
+    async def test_generate_structured_routes_bus_and_parses_json(self) -> None:
+        config = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="judge",
+            renderer="harmony-test",
+        )
+        completion = BusCompletion(
+            text='{"verdict": "pass"}',
+            reasoning="",
+            finish_reason="stop",
+            raw={"messages": []},
+        )
+        schema = {
+            "type": "object",
+            "properties": {"verdict": {"type": "string"}},
+            "required": ["verdict"],
+        }
+
+        with patch("assert_ai.core.bus_client.complete", return_value=completion) as complete:
+            response = await model_client.generate_structured(
+                "bus/judge",
+                [{"role": "user", "content": "judge this"}],
+                schema_name="judge_output",
+                json_schema=schema,
+                options=model_client.GenerateOptions(bus=config),
+            )
+
+        complete.assert_awaited_once()
+        self.assertEqual(response.parsed, {"verdict": "pass"})
+        self.assertEqual(response.request_payload["response_format"]["type"], "json_schema")
+
+    async def test_generate_with_tools_rejects_bus_transport(self) -> None:
+        config = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="target",
+            renderer="harmony-test",
+        )
+
+        with self.assertRaisesRegex(ValueError, "does not support target.tools"):
+            await model_client.generate_with_tools(
+                "bus/target",
+                [{"role": "user", "content": "use a tool"}],
+                tools=[{"type": "function", "function": {"name": "lookup"}}],
+                options=model_client.GenerateOptions(bus=config),
+            )
+
+    async def test_generate_classifies_bus_failure_as_provider_error(self) -> None:
+        config = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="target",
+            renderer="harmony-test",
+        )
+
+        with (
+            patch("assert_ai.core.bus_client.complete", side_effect=RuntimeError("topic unavailable")),
+            self.assertRaisesRegex(model_client.LLMProviderError, "topic unavailable"),
+        ):
+            await model_client.generate(
+                "bus/target",
+                [{"role": "user", "content": "hello"}],
+                model_client.GenerateOptions(bus=config),
+            )
+
     async def test_generate_uses_acompletion_and_normalizes_response(self) -> None:
         captured: dict[str, object] = {}
 

@@ -25,6 +25,7 @@ from assert_ai.config import resolve_stage_paths
 from assert_ai.core.config_model import (
     DEFAULT_MODEL_TIMEOUT_S,
     DEFAULT_INFERENCE_MAX_TOKENS,
+    BusConfig,
     EvaluationConfig,
     ModelConfig,
     InferenceConfig,
@@ -75,6 +76,19 @@ _TESTER_RETRY_GUIDANCE = "Your last reply looked like hidden setup or a scenario
 _INFERENCE_CONFIG_HASH_FILE = ".inference_config_hash"
 
 _JUDGE_ARTIFACTS_TO_CLEAN = ("scores.jsonl", ".judge_config_hash")
+
+
+def _require_hosted_vllm_api_base(target: TargetConfig) -> None:
+    if not target.model or not target.model.name.lower().startswith("hosted_vllm/"):
+        return
+    if os.environ.get("HOSTED_VLLM_API_BASE", "").strip():
+        return
+    raise LLMInputError(
+        f"hosted_vllm target '{target.model.name}' requires HOSTED_VLLM_API_BASE. "
+        "Set it to the OpenAI-compatible base URL, for example "
+        "http://127.0.0.1:18000/v1. Without it, LiteLLM defaults to "
+        "https://api.openai.com/chat/completions."
+    )
 
 
 def _remove_stale_judge_artifacts(run_dir: Path) -> None:
@@ -182,10 +196,12 @@ def _inference_config_fingerprint(
     key = json_module.dumps(
         {
             "target": target_name,
+            "target_bus": asdict(target.model.bus) if isinstance(target.model, ModelConfig) and target.model.bus else None,
             "max_tokens": max_tokens,
             "max_turns": evaluation.inference.max_turns if evaluation else None,
             "concurrency": evaluation.inference.concurrency if evaluation else None,
             "tester": evaluation.tester.model.name if evaluation and evaluation.tester else None,
+            "tester_bus": asdict(evaluation.tester.model.bus) if evaluation and evaluation.tester and evaluation.tester.model.bus else None,
             "test_set_sha": test_set_sha,
             "sandbox_sha": sandbox_sha,
         },
@@ -640,6 +656,7 @@ def _build_target_session(
             reasoning_effort=target.model.reasoning_effort,
             timeout_s=DEFAULT_MODEL_TIMEOUT_S,
             call_label=call_label,
+            bus=target.model.bus,
         ),
         max_tool_calls=inference.max_tool_calls,
         synthetic_prompt_template=TOOL_SIM_PROMPT,
@@ -792,6 +809,7 @@ async def _run_tester_target_loop(
     tester_reasoning_effort: str | None = None,
     target_runtime: HostedSession | ExternalSession | CallableSession | HTTPEndpointSession,
     max_turns: int,
+    tester_bus: BusConfig | None = None,
 ) -> tuple[str | None, list[Message], list[Message]]:
     """Run the alternating tester and target loop for one scenario test case."""
     stop_reason = None
@@ -817,6 +835,7 @@ async def _run_tester_target_loop(
                         timeout_s=DEFAULT_MODEL_TIMEOUT_S,
                         call_label=f"tester:{test_case_id}:turn{turn_index}",
                         extra_kwargs={"extra_body": {"store": True}},
+                        bus=tester_bus,
                     ),
                 )
                 action_message = (tester_response.text or "").strip()
@@ -1053,6 +1072,7 @@ async def _run_scenario_test_case(
             tester_reasoning_effort=tester.model.reasoning_effort,
             target_runtime=runtime,
             max_turns=evaluation.inference.max_turns,
+            tester_bus=tester.model.bus,
         )
     except Exception as exc:  # noqa: BLE001
         runtime_error = exc
@@ -1097,6 +1117,7 @@ async def run_inference(
         raise ValueError(
             "inference requires target.model, target.connector, target.callable, target.endpoint, or target.sandbox"
         )
+    _require_hosted_vllm_api_base(target)
 
     tool_source = _infer_tool_source(target)
 

@@ -21,7 +21,7 @@ SPEC.loader.exec_module(PLANNER)
 
 
 class GenerationPathPlannerTest(unittest.TestCase):
-    def test_new_harm_uses_unsuffixed_directory(self) -> None:
+    def test_new_harm_uses_run_count_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "examples"
             root.mkdir()
@@ -31,11 +31,15 @@ class GenerationPathPlannerTest(unittest.TestCase):
                 name="violent_content",
                 root=root,
                 run_date="2026-08-13",
+                runs=3,
             )
 
             self.assertFalse(plan["requires_confirmation"])
             self.assertFalse(plan["uses_date_suffix"])
-            self.assertEqual(plan["proposed_directory"], str(root / "violent_content"))
+            self.assertEqual(plan["runs"], 3)
+            self.assertEqual(
+                plan["proposed_directory"], str(root / "violent_content-3-runs")
+            )
 
     def test_prior_yaml_is_detected_without_opening_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +61,7 @@ class GenerationPathPlannerTest(unittest.TestCase):
                     name="violent_content",
                     root=root,
                     run_date="2026-08-13",
+                    runs=3,
                 )
 
             self.assertTrue(plan["requires_confirmation"])
@@ -64,7 +69,8 @@ class GenerationPathPlannerTest(unittest.TestCase):
                 plan["prior_generation_directories"][0]["yaml_file_count"], 1
             )
             self.assertEqual(
-                plan["proposed_directory"], str(root / "violent_content_2026-08-13")
+                plan["proposed_directory"],
+                str(root / "violent_content_2026-08-13-3-runs"),
             )
 
     def test_same_day_collisions_receive_an_ordinal_suffix(self) -> None:
@@ -72,8 +78,8 @@ class GenerationPathPlannerTest(unittest.TestCase):
             root = Path(directory) / "examples"
             for name in (
                 "violent_content",
-                "violent_content_2026-08-13",
-                "violent_content_2026-08-13_2",
+                "violent_content_2026-08-13-3-runs",
+                "violent_content_2026-08-13-3-runs_2",
             ):
                 (root / name).mkdir(parents=True)
             (root / "violent_content" / "eval_config.yaml").touch()
@@ -83,10 +89,12 @@ class GenerationPathPlannerTest(unittest.TestCase):
                 name="violent_content",
                 root=root,
                 run_date="2026-08-13",
+                runs=3,
             )
 
             self.assertEqual(
-                plan["proposed_directory"], str(root / "violent_content_2026-08-13_3")
+                plan["proposed_directory"],
+                str(root / "violent_content_2026-08-13-3-runs_3"),
             )
 
     def test_system_generation_counts_nested_yaml_filenames(self) -> None:
@@ -104,11 +112,16 @@ class GenerationPathPlannerTest(unittest.TestCase):
                 name="travel_agent",
                 root=root,
                 run_date="2026-08-13",
+                runs=4,
             )
 
             self.assertEqual(len(plan["matching_paths"]), 1)
             self.assertEqual(
                 plan["prior_generation_directories"][0]["yaml_file_count"], 2
+            )
+            self.assertEqual(
+                plan["proposed_directory"],
+                str(root / "travel_agent_2026-08-13-4-runs"),
             )
 
     def test_invalid_slug_is_rejected(self) -> None:
@@ -119,7 +132,23 @@ class GenerationPathPlannerTest(unittest.TestCase):
                     name="../violent_content",
                     root=Path(directory),
                     run_date="2026-08-13",
+                    runs=3,
                 )
+
+    def test_invalid_run_count_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for runs in (0, -1, True):
+                with self.subTest(runs=runs):
+                    with self.assertRaisesRegex(
+                        PLANNER.GenerationPathError, "runs must be a positive integer"
+                    ):
+                        PLANNER.plan_generation(
+                            eval_type="harm",
+                            name="violent_content",
+                            root=Path(directory),
+                            run_date="2026-08-13",
+                            runs=runs,
+                        )
 
 
 if __name__ == "__main__":

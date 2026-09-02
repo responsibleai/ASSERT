@@ -13,6 +13,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+from assert_ai.core.config_model import BusConfig
 from assert_ai.core.model_client import Message, ModelResponse
 from assert_ai.core.session import TurnResult
 from assert_ai.core.transcript import Transcript, TranscriptMetadata
@@ -77,6 +78,7 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         max_turns: int = 10,
         initial_system_message: str | None = None,
         initial_target_messages: list[Message] | None = None,
+        tester_bus: BusConfig | None = None,
     ) -> dict[str, Any]:
         """Helper that wires up fakes and runs the loop."""
         target_session = FakeTargetSession(replies=target_replies or ["Target reply"])
@@ -91,8 +93,10 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         if initial_system_message is not None:
             target_messages = [Message(role="system", content=initial_system_message), *target_messages]
         call_counter = {"n": 0}
+        captured_options = []
 
         async def fake_generate(model, messages, options):
+            captured_options.append(options)
             idx = call_counter["n"]
             call_counter["n"] += 1
             if idx >= len(tester_responses):
@@ -117,6 +121,7 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
                 tester_max_tokens=None,
                 target_runtime=target_session,
                 max_turns=max_turns,
+                tester_bus=tester_bus,
             )
 
         return {
@@ -125,9 +130,24 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             "target_messages": final_target,
             "transcript": transcript,
             "target_session": target_session,
+            "tester_options": captured_options,
         }
 
     # ── Message routing ──────────────────────────────────────────
+
+    async def test_tester_passes_bus_transport_to_model_client(self) -> None:
+        bus = BusConfig(
+            snapshot="az://container/models/snapshot",
+            user="tester",
+            renderer="harmony-test",
+        )
+        result = await self._run_loop(
+            tester_responses=[_tester_response("Hello target")],
+            max_turns=1,
+            tester_bus=bus,
+        )
+
+        self.assertIs(result["tester_options"][0].bus, bus)
 
     async def test_target_receives_tester_message_as_user_role(self) -> None:
         result = await self._run_loop(

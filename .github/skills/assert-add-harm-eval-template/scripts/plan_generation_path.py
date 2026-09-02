@@ -40,8 +40,20 @@ def _validate_date(value: str) -> str:
         raise GenerationPathError("date must use YYYY-MM-DD") from error
 
 
+def _validate_runs(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise GenerationPathError("runs must be a positive integer")
+    return value
+
+
 def _matches_generation_directory(name: str, candidate: str) -> bool:
-    pattern = rf"^{re.escape(name)}(?:_[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}(?:_[1-9][0-9]*)?)?$"
+    run_suffix = r"-[1-9][0-9]*-runs"
+    date_suffix = r"_[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    ordinal_suffix = r"_[1-9][0-9]*"
+    pattern = (
+        rf"^{re.escape(name)}(?:{run_suffix}|"
+        rf"{date_suffix}(?:{run_suffix})?(?:{ordinal_suffix})?)?$"
+    )
     return re.fullmatch(pattern, candidate) is not None
 
 
@@ -76,11 +88,13 @@ def plan_generation(
     name: str,
     root: Path,
     run_date: str,
+    runs: int,
 ) -> dict[str, Any]:
     if eval_type not in {"harm", "system"}:
         raise GenerationPathError("eval_type must be harm or system")
     name = _validate_slug(name)
     run_date = _validate_date(run_date)
+    runs = _validate_runs(runs)
     root = Path(root)
     if root.is_symlink():
         raise GenerationPathError("generation root must not be a symlink")
@@ -106,19 +120,20 @@ def plan_generation(
     unknown_matches = [match for match in matches if match["yaml_file_count"] is None]
 
     if not matches:
-        proposed = root / name
+        proposed = root / f"{name}-{runs}-runs"
         dated = False
     else:
         dated = True
-        proposed = root / f"{name}_{run_date}"
+        proposed = root / f"{name}_{run_date}-{runs}-runs"
         ordinal = 2
         while proposed.exists() or proposed.is_symlink():
-            proposed = root / f"{name}_{run_date}_{ordinal}"
+            proposed = root / f"{name}_{run_date}-{runs}-runs_{ordinal}"
             ordinal += 1
 
     return {
         "eval_type": eval_type,
         "name": name,
+        "runs": runs,
         "root": str(root),
         "matching_paths": matches,
         "prior_generation_directories": prior_generations,
@@ -139,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--name", required=True, help="Stable lowercase harm or system slug")
     parser.add_argument("--root", type=Path, default=Path("examples"))
     parser.add_argument("--date", default=date.today().isoformat(), help="Run date (YYYY-MM-DD)")
+    parser.add_argument("--runs", required=True, type=int, help="Number of generation runs")
     return parser
 
 
@@ -150,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             name=args.name,
             root=args.root,
             run_date=args.date,
+            runs=args.runs,
         )
     except (OSError, GenerationPathError) as error:
         print(f"error: {error}", file=sys.stderr)

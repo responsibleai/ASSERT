@@ -55,11 +55,31 @@ def _require_nonempty_string(value: str, *, field_name: str) -> str:
 
 
 @dataclass
+class BusConfig:
+    snapshot: str
+    user: str
+    renderer: str
+    bus_line: str = "bus"
+    top_p: float = 1.0
+
+    def __post_init__(self) -> None:
+        self.snapshot = _require_nonempty_string(self.snapshot, field_name="model.bus.snapshot")
+        if not self.snapshot.startswith("az://"):
+            raise ValueError("model.bus.snapshot must start with az://")
+        self.user = _require_nonempty_string(self.user, field_name="model.bus.user")
+        self.renderer = _require_nonempty_string(self.renderer, field_name="model.bus.renderer")
+        self.bus_line = _require_nonempty_string(self.bus_line, field_name="model.bus.bus_line")
+        if not 0 < self.top_p <= 1:
+            raise ValueError("model.bus.top_p must be > 0 and <= 1")
+
+
+@dataclass
 class ModelConfig:
     name: str
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
+    bus: BusConfig | None = None
 
     def __post_init__(self) -> None:
         self.name = _require_nonempty_string(self.name, field_name="model.name")
@@ -158,6 +178,8 @@ class TargetConfig:
         # users into thinking those fields apply when they do not.
         if has_model:
             assert isinstance(self.model, ModelConfig)
+            if self.model.bus is not None and self.tools is not None:
+                raise ValueError("target.tools is not supported with model.bus")
             model_name = self.model.name.strip().lower()
             if model_name.startswith("azure_ai/agents/"):
                 if self.tools is not None:

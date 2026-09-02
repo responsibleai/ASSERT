@@ -15,12 +15,13 @@ contents.
 python .github/skills/assert-add-harm-eval-template/scripts/plan_generation_path.py \
   --eval-type <harm-or-system> \
   --name <stable_slug> \
+  --runs <N> \
   --root examples
 ```
 
-For a custom output root, pass that root instead of `examples`. Matching
-generation directories are limited to `<slug>`, `<slug>_YYYY-MM-DD`, and
-same-day ordinal variants such as `<slug>_YYYY-MM-DD_2`.
+For a custom output root, pass that root instead of `examples`. The planner
+recognizes legacy names plus current `<slug>-N-runs` and
+`<slug>_YYYY-MM-DD-N-runs[_ordinal]` names when detecting prior generations.
 
 Treat the planner's JSON as path metadata only:
 
@@ -28,13 +29,22 @@ Treat the planner's JSON as path metadata only:
   counts without exposing file contents;
 - `requires_confirmation` says whether a prior YAML generation or an unsafe
   path type was found; and
-- `proposed_directory` is a path that did not exist when the planner ran.
+- `proposed_directory` is a path that did not exist when the planner ran and
+  ends in the requested `-N-runs` suffix before any collision ordinal.
 
 Do not replace this helper with a content-search tool. For matching prior YAMLs,
 never call `read_file`, a parser, `load_config`, `cat`, `sed`, `head`, content
 grep/search, `git diff`, `git show`, `git blame`, hashing, or any command that
 could inspect or reveal their contents. Do not infer content from file size,
 timestamps, commit history, generated artifacts, or surrounding reports.
+
+After this preflight, do not run content searches scoped broadly enough to include
+`examples/**`; another process can claim the proposed directory before pre-write.
+Restrict implementation lookups to `docs/`, `assert_ai/`, `tests/`, skill assets,
+or an exact curated source path. If a search accidentally reveals content from a
+matching generated YAML, stop without using it, rerun the path-only planner, and
+require an isolated regeneration path. Restart affected research when the exposed
+content could have influenced its candidates, evidence, or deduplication.
 
 ## G2. Ask before regenerating
 
@@ -57,10 +67,11 @@ the path and use the planner's non-colliding proposal.
 
 ## G3. Select the run directory
 
-With no prior matching generation, use the unsuffixed directory
-`examples/<slug>/`. When the user approves regeneration, use the proposed dated
-directory `examples/<slug>_YYYY-MM-DD/`. If that date already exists, the planner
-adds `_2`, `_3`, and so on while preserving the date.
+With no prior matching generation, use `examples/<slug>-N-runs/`. When the user
+approves regeneration, use `examples/<slug>_YYYY-MM-DD-N-runs/`. For example,
+`violent_content` with `N=3` on 2026-08-17 becomes
+`violent_content_2026-08-17-3-runs`. If that exact run directory already exists,
+the planner adds `_2`, `_3`, and so on after `-N-runs`.
 
 Record the selected directory once and use it consistently for the config,
 review ledger, approval stamp, final command, and report. Run the planner again
