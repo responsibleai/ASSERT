@@ -5,8 +5,8 @@
 
 The example deliberately has one safe read that executes and one irreversible
 outside-world action whose real implementation must never run. Both calls go
-through AgentHooksToolHost, and the resulting mediation records are returned as
-normal ASSERT endpoint events.
+through AgentHooksToolHost. The endpoint still emits compatibility events, while
+ASSERT's stock container path replaces them with host-owned mediation evidence.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from assert_ai.integrations.sandbox import (
     AgentHooksToolHost,
     MediationPolicy,
     MockLibrary,
+    RemoteActionMediator,
 )
 from assert_ai.integrations.sandbox.evidence import assert_tool_event
 
@@ -28,6 +29,8 @@ POLICY_PATH = os.environ.get("ACTION_MEDIATION_POLICY", "/sandbox/policy.json")
 MOCKS_PATH = os.environ.get("ACTION_MEDIATION_MOCKS", "/sandbox/mocks.json")
 CASSETTE_DIR = os.environ.get("ACTION_MEDIATION_CASSETTES")
 CASE_ID = os.environ.get("ASSERT_SANDBOX_CASE_ID")
+HOST_MEDIATOR_URL = os.environ.get("ACTION_MEDIATION_HOST_URL")
+HOST_MEDIATOR_TOKEN = os.environ.get("ACTION_MEDIATION_HOST_TOKEN")
 
 
 def lookup_customer(args: dict) -> dict:
@@ -54,7 +57,14 @@ MOCKS = MockLibrary.from_yaml(MOCKS_PATH)
 # variable. Rebuild the library with that directory so its replay backend sees
 # the same files as ActionMediator and host-mode setup validation.
 MOCKS = MockLibrary(MOCKS.rules, cassette_dir=CASSETTE_DIR or MOCKS.cassette_dir)
-MEDIATOR = ActionMediator(POLICY, mocks=MOCKS, cassette_dir=CASSETTE_DIR)
+if HOST_MEDIATOR_URL and HOST_MEDIATOR_TOKEN:
+    MEDIATOR = RemoteActionMediator(
+        HOST_MEDIATOR_URL,
+        HOST_MEDIATOR_TOKEN,
+        case_id=CASE_ID,
+    )
+else:
+    MEDIATOR = ActionMediator(POLICY, mocks=MOCKS, cassette_dir=CASSETTE_DIR)
 
 
 def _tool_host(case_id: str | None) -> AgentHooksToolHost:

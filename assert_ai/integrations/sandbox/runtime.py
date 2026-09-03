@@ -17,7 +17,8 @@ complementary process and network boundary for everything else:
   container.
 
 The untrusted target sees only a narrow trusted relay for endpoint ingress,
-audited egress, and optional model traffic. Raw sockets or clients that ignore
+audited egress, optional host action mediation, and optional model traffic. Raw
+sockets or clients that ignore
 HTTP_PROXY are still blocked by the Docker network but cannot be attributed in
 the HTTP audit ledger. That boundary is reported explicitly in runtime metadata.
 """
@@ -48,6 +49,8 @@ import yaml
 
 from assert_ai.core.security import validate_endpoint_url
 
+from .host_mediator import HostActionBatch, HostMediationLedger, start_host_mediator
+
 log = logging.getLogger(__name__)
 
 _RELAY_IMAGE = "python:3.11-slim"
@@ -56,6 +59,7 @@ _TARGET_ALIAS = "assert-sandbox-target"
 _RELAY_TARGET_PORT = 18080
 _RELAY_EGRESS_PORT = 18081
 _RELAY_MODEL_PORT = 18082
+_RELAY_MEDIATOR_PORT = 18083
 
 
 class SandboxRuntimeError(RuntimeError):
@@ -489,6 +493,7 @@ class ContainerSpec:
     pids_limit: int = 256
     user: str = "65534:65534"
     case_id: str | None = None
+    host_action_mediation: bool = False
 
 
 _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
@@ -496,6 +501,8 @@ _RUNTIME_OWNED_CONTAINER_ENV = frozenset({
     "ACTION_MEDIATION_MOCKS",
     "ACTION_MEDIATION_CASSETTES",
     "ACTION_MEDIATION_LEDGER",
+    "ACTION_MEDIATION_HOST_URL",
+    "ACTION_MEDIATION_HOST_TOKEN",
     "ASSERT_SANDBOX_CASE_ID",
     "ASSERT_SANDBOX_OUTPUT",
     "HTTP_PROXY",
@@ -546,11 +553,27 @@ class SandboxHandle:
     egress_thread: threading.Thread
     model_server: ThreadingHTTPServer | None = None
     model_thread: threading.Thread | None = None
+    action_server: ThreadingHTTPServer | None = None
+    action_thread: threading.Thread | None = None
+    action_ledger: HostMediationLedger | None = None
     egress_offset: int = 0
 
     def new_egress_rows(self) -> list[dict[str, Any]]:
         rows, self.egress_offset = _read_jsonl(self.egress_log, self.egress_offset)
         return rows
+
+    def new_action_rows(self) -> list[dict[str, Any]]:
+        return self.action_ledger.drain() if self.action_ledger is not None else []
+
+    def new_action_batch(self) -> HostActionBatch:
+        if self.action_ledger is None:
+            return HostActionBatch(rows=[], claims=[])
+        return self.action_ledger.drain_batch()
+
+    def new_ready_action_batch(self) -> HostActionBatch:
+        if self.action_ledger is None:
+            return HostActionBatch(rows=[], claims=[])
+        return self.action_ledger.drain_ready_batch()
 
     def stop(self) -> None:
         commands = (
@@ -560,12 +583,19 @@ class SandboxHandle:
             ("network", "rm", self.relay_network),
         )
         errors = _cleanup_docker(commands)
-        for server in (self.egress_server, self.model_server):
+        for server in (self.egress_server, self.model_server, self.action_server):
             if server is None:
                 continue
             try:
                 server.shutdown()
-                server.server_close()
+                wait_for_idle = getattr(server, "wait_for_idle", None)
+                try:
+                    if callable(wait_for_idle) and not wait_for_idle():
+                        raise SandboxRuntimeError(
+                            "host mediator requests did not quiesce before cleanup"
+                        )
+                finally:
+                    server.server_close()
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
         if errors:
@@ -647,6 +677,7 @@ def start_container(
     relay_container = f"assert-sandbox-relay-{token}"
     relay_network = f"assert-sandbox-relay-net-{token}"
     egress_token = secrets.token_hex(16)
+    action_token: str | None = None
     egress_server, egress_thread, egress_port = _start_egress_proxy(
         audit_log=egress_log,
         allow_hosts=spec.egress_allow_hosts,
@@ -654,8 +685,22 @@ def start_container(
     )
     model_server: ThreadingHTTPServer | None = None
     model_thread: threading.Thread | None = None
+    action_server: ThreadingHTTPServer | None = None
+    action_thread: threading.Thread | None = None
+    action_ledger: HostMediationLedger | None = None
 
     try:
+        action_port: int | None = None
+        if spec.host_action_mediation:
+            action_token = secrets.token_hex(16)
+            action_server, action_thread, action_port, action_ledger = start_host_mediator(
+                policy_path=policy_path,
+                mocks_path=mocks_path,
+                cassette_dir=cassette_dir,
+                ledger_path=output_dir.parent / "host-action-ledger.jsonl",
+                access_token=action_token,
+                case_id=spec.case_id,
+            )
         _docker(
             "network",
             "create",
@@ -680,6 +725,12 @@ def start_container(
                 "upstream_port": egress_port,
             },
         ]
+        if action_port is not None:
+            relay_specs.append({
+                "listen_port": _RELAY_MEDIATOR_PORT,
+                "upstream": "host",
+                "upstream_port": action_port,
+            })
 
         synthetic_key: str | None = None
         if spec.model_proxy is not None:
@@ -777,8 +828,6 @@ def start_container(
             "-e",
             "ASSERT_SANDBOX_OUTPUT=/sandbox/output",
             "-e",
-            "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl",
-            "-e",
             f"HTTP_PROXY=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
             "-e",
             f"HTTPS_PROXY=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
@@ -787,6 +836,18 @@ def start_container(
             "-e",
             f"https_proxy=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
         ]
+        if action_token is not None:
+            args += [
+                "-e",
+                f"ACTION_MEDIATION_HOST_URL=http://{_RELAY_ALIAS}:{_RELAY_MEDIATOR_PORT}",
+                "-e",
+                f"ACTION_MEDIATION_HOST_TOKEN={action_token}",
+            ]
+        else:
+            args += [
+                "-e",
+                "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl",
+            ]
         if spec.case_id:
             args += ["-e", f"ASSERT_SANDBOX_CASE_ID={spec.case_id}"]
         if cassette_dir is not None:
@@ -796,6 +857,8 @@ def start_container(
             ]
 
         no_proxy = ["localhost", "127.0.0.1"]
+        if action_token is not None:
+            no_proxy.append(_RELAY_ALIAS)
         if spec.model_proxy is not None:
             base_url = f"http://{_RELAY_ALIAS}:{_RELAY_MODEL_PORT}/v1"
             args += [
@@ -804,7 +867,8 @@ def start_container(
                 "-e",
                 f"{spec.model_proxy.container_key_env}={synthetic_key}",
             ]
-            no_proxy.append(_RELAY_ALIAS)
+            if _RELAY_ALIAS not in no_proxy:
+                no_proxy.append(_RELAY_ALIAS)
 
         joined_no_proxy = ",".join(no_proxy)
         args += ["-e", f"NO_PROXY={joined_no_proxy}", "-e", f"no_proxy={joined_no_proxy}"]
@@ -824,6 +888,11 @@ def start_container(
             f"http://127.0.0.1:{host_port}{spec.health_path}",
             spec.startup_timeout_s,
         )
+        if action_ledger is not None and not action_ledger.registered:
+            raise SandboxRuntimeError(
+                "host_action_mediation is enabled, but the target did not register "
+                "RemoteActionMediator during startup"
+            )
         return SandboxHandle(
             container=container_name,
             network=network_name,
@@ -838,6 +907,9 @@ def start_container(
             egress_thread=egress_thread,
             model_server=model_server,
             model_thread=model_thread,
+            action_server=action_server,
+            action_thread=action_thread,
+            action_ledger=action_ledger,
         )
     except Exception:
         # Preserve the startup error while releasing every resource that was
@@ -852,7 +924,7 @@ def start_container(
         cleanup_errors = _cleanup_docker(commands)
         for cleanup_error in cleanup_errors:
             log.warning("sandbox Docker cleanup also failed after startup error: %s", cleanup_error)
-        for server in (egress_server, model_server):
+        for server in (egress_server, model_server, action_server):
             if server is not None:
                 try:
                     server.shutdown()
@@ -885,4 +957,9 @@ def egress_event(row: dict[str, Any], *, case_id: str | None = None) -> dict[str
         },
         "tool_call_id": f"egress-{secrets.token_hex(8)}",
         "content": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+        "raw": {
+            "sandbox": "network_egress",
+            "authoritative": True,
+            "evidence_source": "host_proxy",
+        },
     }

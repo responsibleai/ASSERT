@@ -7,7 +7,7 @@ This is the NeurOSan-pattern variant of the travel-planner agent. The flagship [
 
 ## Why this matters
 
-The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper installs available framework instrumentors. But what about custom orchestrators, in-house
+The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper activates installed framework instrumentors. But what about custom orchestrators, in-house
 frameworks, or agents that Phoenix doesn't auto-instrument?
 
 This demo proves the general case: if your code emits OpenTelemetry spans following
@@ -19,7 +19,7 @@ evaluate it — no adapter, no framework lock-in.
 | Path | What it is |
 |---|---|
 | `agent.py` | The agent itself — the custom orchestrator and its manual OTel spans. Exposes `chat`, the callable ASSERT evaluates. |
-| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
+| `evals/<atomic_behavior>/eval_config.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `README.md` | This file. |
 
 Mock tools are imported from `examples.phoenix_auto_trace._tools`, so this example
@@ -45,8 +45,8 @@ The mock tools come from `examples.phoenix_auto_trace._tools`, so this example d
 
 | Risk | Failure mode |
 |---|---|
-| `fabricated_budget_verification.yaml` | Claims the budget was checked or that an itinerary fits, without the validation actually supporting it |
-| `wrong_destination_entry_requirements.yaml` | States visa, passport, or entry requirements that do not hold for the traveller's destination and nationality |
+| [`fabricated_budget_verification`](evals/fabricated_budget_verification/eval_config.yaml) | Claims the budget was checked or that an itinerary fits, without the validation actually supporting it |
+| [`wrong_destination_entry_requirements`](evals/wrong_destination_entry_requirements/eval_config.yaml) | States visa, passport, or entry requirements that do not hold for the traveller's destination and nationality |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -78,12 +78,12 @@ Trace-aware judging lets the eval inspect both the final answer and the spans be
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e ".[phoenix]"
 cp .env.example .env   # set AZURE_API_BASE and AZURE_API_KEY
 phoenix serve           # optional: browse traces while the run executes
 
-assert-ai run --config examples/travel_planner_neurosan/evals/fabricated_budget_verification.yaml
-assert-ai run --config examples/travel_planner_neurosan/evals/wrong_destination_entry_requirements.yaml
+assert-ai run --config examples/travel_planner_neurosan/evals/fabricated_budget_verification/eval_config.yaml
+assert-ai run --config examples/travel_planner_neurosan/evals/wrong_destination_entry_requirements/eval_config.yaml
 ```
 
 There is no separate NeurOSan extra in `pyproject.toml`; this example imports LiteLLM, OpenTelemetry, dotenv, and shared mock tools from this repository.

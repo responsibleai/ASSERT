@@ -2,6 +2,7 @@ version: 1
 
 target:
   kind: container
+  host_action_mediation: true
   image: assert-sandbox-stock-agent:local
   port: 8080
   health_path: /health

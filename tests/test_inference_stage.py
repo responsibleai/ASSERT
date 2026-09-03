@@ -18,6 +18,76 @@ from assert_ai.viewer_read_model import ViewerReadModelBuildError
 
 
 class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_run_inference_persists_span_validation_for_empty_response(self) -> None:
+        warning = (
+            "No OpenTelemetry spans were captured. Install the matching "
+            "openinference-instrumentation-* package."
+        )
+
+        class FakeSession:
+            runtime_mode = "otel_traced"
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def run_turn(self, initial_messages):
+                validation = {"valid": False, "warnings": [warning]}
+                return TurnResult(
+                    text="",
+                    state_messages=list(initial_messages) + [Message(role="assistant", content="")],
+                    interaction_messages=[
+                        {"role": "user", "content": "seed prompt"},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "raw": {
+                                "trace_events": [],
+                                "trace_metadata": {},
+                                "span_validation": validation,
+                            },
+                        },
+                    ],
+                    raw={"span_validation": validation},
+                )
+
+        test_case_row = {
+            "type": "prompt",
+            "test_case_id": "test-case-1",
+            "seed": {"description": "seed prompt"},
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            test_set_path = tmp_path / "test_set.jsonl"
+            out_dir = tmp_path / "run"
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
+
+            with patch("assert_ai.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
+                    test_set_path=str(test_set_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
+                    save_dir=str(out_dir),
+                    run_id="run-span-validation",
+                )
+
+            row = json.loads((out_dir / "inference_set.jsonl").read_text(encoding="utf-8"))
+
+        assistant_events = [
+            event
+            for event in row["events"]
+            if event["actor"] == "target"
+            and event["edit"]["type"] == "add_message"
+            and event["edit"]["message"]["role"] == "assistant"
+        ]
+        self.assertEqual(
+            assistant_events[-1]["raw"]["span_validation"],
+            {"valid": False, "warnings": [warning]},
+        )
+
     def test_inference_config_fingerprint_changes_with_seeds_content(self) -> None:
         """Fingerprint must include seed content so regenerating test_set invalidates cached transcripts.
 

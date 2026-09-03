@@ -19,7 +19,8 @@ cd ASSERT
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph,dev]"
+python -m pip install uv
+uv sync --group dev
 cp .env.example .env
 ```
 
@@ -31,7 +32,8 @@ cd ASSERT
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph,dev]"
+python -m pip install uv
+uv sync --group dev
 Copy-Item .env.example .env
 ```
 

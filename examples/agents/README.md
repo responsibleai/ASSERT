@@ -33,7 +33,8 @@ pipeline:
 # external agent (advanced — prefer target.callable)
 pipeline:
   inference:
-    connector: examples.agents.openclaw
+    target:
+      connector: examples.agents.openclaw
 ```
 
 Toolsets use file paths:

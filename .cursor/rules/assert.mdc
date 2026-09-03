@@ -38,9 +38,17 @@ Clarity discovery (recommended — present it first, but never alone):** an exis
 `run_clarity` run; its value is finding failure modes the user has *not* thought of, plus severity and
 causal chains. Recommend it whenever they're unsure what to measure or want coverage rather than one
 known bug. **Path B — user-supplied risks:** the user names the risk themselves, as prose or by
-pointing at a PRD, design doc, threat model, incident report, or test plan. Right when they already
-know what they want measured. **Whenever you need a new risk to measure**, and the user has not
-already named one, offer the choice explicitly. An existing `.clarity-protocol/` changes the
+pointing at a PRD, design doc, threat model, red-team finding, incident report, or risk assessment.
+Right when they already know what they want measured. **Both paths answer *what* to test for;
+neither answers *how*** — that is Step 3's job: once a risk is named, the research procedure reviews
+**how that risk has actually been evaluated** and converts the findings into the test-set design (the
+timescale it becomes observable on — psychosocial harms usually need `scenario`, not one answer;
+whose viewpoint the probes are authored from — a hospital helpdesk is
+exercised by patients, nurses, and schedulers, not one adversarial persona; and which conditions the
+evidence says change it). **The skill does not invent risks** — risk identification is Clarity's job
+or the user's, and the Step 3 research never substitutes for deciding what to measure.
+**Whenever you need a new risk to measure**, and the user has not
+already named one, offer both options explicitly. An existing `.clarity-protocol/` changes the
 **default**, never the **choice** — offer it as the recommended option ("I found an existing Clarity
 protocol with these risks — measure one of those, or is there a different risk you have in mind?"),
 then take the user's answer. **An explicit user-supplied risk always wins:** if the user names a
@@ -51,7 +59,7 @@ stall the user on Clarity setup — if the MCP tools are missing and they'd
 rather not set them up now, take Path B. Do not imitate Clarity's questioning from your own head:
 on Path A drive the real `run_clarity` tool (it returns Clarity's genuine process guide inlined);
 Path B is a distinct structured intake (Step 1b), not a hand-rolled impression of Clarity. Path B meets
-the same quality bar (atomic behaviors, explicit permissible boundary, variant-derived dimensions,
+the same quality bar (atomic behaviors, explicit permissible boundary, researched and cited dimensions,
 pinned models, explicit `sample_size`) — Steps 3-6 are risk-source agnostic. Offer Clarity again later;
 declining once is not a permanent opt-out. Clarity write-backs degrade to no-ops when no protocol
 exists — skip them and say so once, never treat their absence as an error.
@@ -65,7 +73,9 @@ stepping with citations highlighted). Answer in chat for "what / why / which"; h
 ### Preconditions (check, don't assume)
 
 1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
-   `python -m pip install -e ".[otel,langgraph]"`.
+    `python -m pip install "assert-ai[phoenix]"`. The target project owns its agent
+    framework dependencies; repository examples declare them in adjacent
+    `requirements.txt` files.
 2. **Clarity MCP server available** (needed only for Path A): the `clarity-agent` MCP tools
    (`run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`, …) are callable.
    Clarity is the risk-discovery engine — the skill drives its real MCP tools, it does not reimplement
@@ -146,13 +156,64 @@ ASSERT performs best with **one atomic behavior per eval**. Never bundle multipl
 — bundling makes `policy_violation` a fuzzy logical-OR and hides per-behavior signal.
 
 - **1 selected risk** → one config, run once.
-- **N selected risks** → N flat `evals/<atomic_behavior>.yaml` files, run sequentially, one per behavior.
+- **N selected risks** → N configs, run sequentially, one per behavior.
 
-Map each selected risk → `behavior.name` + `behavior.description`, use its context for `context`:
-`assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o evals/<atomic_behavior>.yaml`. Write the failure-mode text (failure mode + how it arises + target context) to a file and pass `--describe-file` rather than interpolating prose you did not author (Clarity-derived, or the user's own words / a doc excerpt) into `--describe "<text>"`, where a quote, backtick, or `$(...)` would break the command or inject into the shell. `--default-model` seeds the generated config's `pipeline.default_model` (the model the **eval** runs against); `--model` is only the init assistant's own conversation model (default `azure/gpt-5.4-mini`) and does not affect the eval. **Then pin the two ground-truth stages to the strong model by hand** — `init` has no `--systematize-model` / `--judge-model` flag, so everything inherits `default_model` unless you edit the config: keep `default_model.name: azure/gpt-5.4-mini` for target/test-set/tester, but set `pipeline.systematize.model: azure/gpt-5.4` and `pipeline.judge.model: azure/gpt-5.4` (the convention in the repo's own `examples/` configs). `systematize` authors the behavior tree and the permissible / non-permissible split every metric is computed against, and `judge` decides applicability *and* violation per row on a single sample (`judge.n` defaults to `1`, temperature unpinned) — a weak model there moves the target rather than adding noise around it, and inflates run-to-run applicability drift. Verify via `assert-ai results status <suite> <run> --json` → `prompt_metrics.judge_model`.
-To extend an existing config, use `--from <path>`. **Check the built-in presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …) and `assert-ai library show <name>` prints one; if one matches the risk, seed with `--behavior <name>` / `--judge-preset <name>` rather than generating from scratch. **Ask the user for the `sample_size` — do not pick it silently:** each rate is `violations / sample_size`, so at `10` one flipped case = ±10pp of noise, and inference is non-deterministic (agent temperature 1.0; gpt-5 can't be pinned lower) so two runs of the same config drift by chance. Before generating, ask e.g. *"How many cases per behavior? `10` = fast/noisy, `25` = stable (recommended), `50`+ = tightest — same size for prompt and scenario."* Recommend `25`, and **`≥25` for any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size — see `govern-and-remeasure.md`); default to `25` if the user has no preference. After generation, show the user the generated
-`behavior.description`, `context`, and `pipeline.judge` settings, plus the resolved `systematize` / `judge` models. Confirm before running.
-**Do not author judge `dimensions`:** `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled, so no `dimensions` block is needed. Config dimensions merge over the built-ins **by name**, so declaring one with a built-in name silently replaces that built-in's rubric. Add one only for a genuinely new metric, never reusing a built-in name.
+Configs are **researched, cited, and user-approved** — not scaffolded and hoped for. Follow
+`.claude/skills/run-assert-eval/workflows/research-eval-dimensions.md` for each selected risk; it owns
+the whole of config generation. The risk is already named by the time you get here — what the research
+supplies is **how that risk has been evaluated**, converted into the test-set design. Collect one input
+first and **never silently default it**: `N`
+(positive integer — how many complete dimension-generation passes to run before deduplication).
+That workflow reuses a repo behavior preset where one matches (which settles the harm's stable
+slug); runs a path-only isolation preflight on that slug (`plan_generation_path.py`, which never
+reads a prior generated YAML); researches the dimension model against
+retrieved primary sources under a **≥2-independent-source gate**; runs `N` complete passes and semantically
+deduplicates across three namespaces (behavior categories, stratify dimensions, judge dimensions); blocks on
+**explicit user approval** (silence is not approval, enforced by `validate_dimension_review.py pre-write`);
+then writes a cited config to `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml` with inline `# sources:` comments
+and a `# References` block. Prefix the eval **suite name** with a domain slug (`<domain>-<risk>`) so
+`artifacts/results/<suite>/` and `artifacts/acs/<suite>/` don't collide across domains.
+**Pin the two ground-truth stages to the strong model** — keep `default_model.name: azure/gpt-5.4-mini` for
+target/test-set/tester, but set `pipeline.systematize.model: azure/gpt-5.4` and `pipeline.judge.model: azure/gpt-5.4`
+(the convention in the repo's own `examples/` configs). `systematize` authors the behavior tree and the
+permissible / non-permissible split every metric is computed against, and `judge` decides applicability *and*
+violation per row on a single sample (`judge.n` defaults to `1`, temperature unpinned) — a weak model there moves
+the target rather than adding noise around it, and inflates run-to-run applicability drift. Verify via
+`assert-ai results status <suite> <run> --json` → `prompt_metrics.judge_model`.
+**Reuse repo presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`,
+`doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `violent_content`, `sexual_content`,
+`hate_speech_harassment`, `malicious_cyber_activity`, …) and `assert-ai library show <name>` prints one; prefer
+`behavior.preset` or a copy-in spec from `examples/behavior_specs/` over reinventing a description.
+**`behavior_category_count` is `25`** (also ASSERT's own default). **Ask the user for the `sample_size` — do not pick
+it silently, and never accept a value below `behavior_category_count` (so `≥25`):** below it some behavior categories
+get zero cases and `coverage_at_k(k=1)` can't reach `1.0`, and each rate is `violations / sample_size`, so even at the
+`25` floor one flipped case = ±4pp of noise, growing as the sample shrinks. Inference is non-deterministic (agent
+temperature 1.0; gpt-5 can't be pinned lower) so two runs of the same config drift by chance. Ask e.g. *"How many
+cases per behavior? `25` = the floor and the recommendation, `50`+ = tightest — same size for prompt and scenario."*
+The floor protects coverage, not precision — prefer `50`+ for a small expected delta. The governed config is a
+byte-identical copy that inherits this size — see `govern-and-remeasure.md`. **`max_turns` is fixed at `6`** —
+ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value, not research-derived, and
+**identical in baseline and governed configs** or the "only ACS
+differs" comparison breaks. A genuinely single-turn harm uses `prompt` cases, which ignore the knob.
+After generation, show the user the resolved `behavior.description`, `context`,
+`pipeline.judge` settings, the `systematize` / `judge` models, and the reference list. Confirm before running.
+**If live source retrieval is unavailable**, say so and stop at the ledger — the evidence gate can't be met without
+it, and a config with remembered or invented citations is worse than no config.
+`assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o <path>` remains available
+as an explicitly unvalidated scaffold — never for a measurement you intend to report or govern
+against. (`--describe-file` over `--describe "<text>"` for prose you did not author: a quote, backtick, or `$(...)`
+would break the command or inject into the shell. `--from <path>` extends an existing config.)
+**Author researched judge `dimensions`, but never reuse a built-in name:** `policy_violation` and `overrefusal` are
+`BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled; researched
+harm-specific dimensions are added **on top** of them. Config dimensions merge over the built-ins **by name** into the
+same dict, so declaring one called `policy_violation` or `overrefusal` silently replaces the built-in rubric. That does
+**not** move the headline permissibility split — `assert_ai/results.py` recomputes it from the per-behavior
+`node_judgments`, never from a dimension verdict — but it does change the verdict stored in the run JSON and
+`DEFAULT_COMPARE_METRIC`. **The same applies to `judge.preset`, which expands into that
+same merged list: do not use `safety-core`** — its only two dimensions are named exactly `policy_violation` and
+`overrefusal`, so it replaces both built-in rubrics and buys nothing: `_SUPERSEDED_DISPLAY_METRICS`
+(`assert_ai/cli.py`) hides that pair whenever the split is available.
+`safety-extended` is additive (`harm_actionability`, `pii_leakage`) and is safe. The post-write gate rejects both forms.
 
 ### 4. Identify the target shape
 
@@ -183,11 +244,11 @@ callable that raises on its first tool call, tool-schema mismatch, undeployed ju
 surface only once inference starts. Validate on 3 real cases:
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config evals/<atomic_behavior>.yaml --count 3
-assert-ai run --config evals/<atomic_behavior>.yaml \
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke --override inference.test_set_path=<out path>
 ```
 
@@ -196,7 +257,7 @@ so never report a rate from it. Never lower `test_set.sample_size` instead: that
 the cached test set and does not produce a subset. Detail in
 `.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` Step 5a.
 
-`assert-ai run --config evals/<atomic_behavior>.yaml --output json`
+`assert-ai run --config examples/<domain>/<risk>/eval_config.yaml --output json`
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status as each stage
 completes. After a smoke run the first two stages report CACHED. For N configs, run them sequentially and track each `suite`/`run`. Re-run from a stage with
@@ -268,6 +329,10 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
   and permissible behavior violated X% (N/M) [`permissible_policy_violation_rate`], from `results status --json`;
   overrefusal rate X% (N/M) alongside as the separate availability check. The raw `policy_violation` rate ORs
   over all violated nodes and couples the two — quote it only as context, never as the headline.
+- **Researched judge dimensions** (when the config declares them): each on its own line with its flagged
+  rate and a one-line gloss of what its rubric scores — beside the headline pair, never merged into it.
+- **Evidence base**: the config's `# References` list (tag → title → URL), so the provenance of the
+  dimensions being reported is visible alongside the numbers.
 - **Top failing cases** (3-5 per dimension): requirement cited (behavior category from taxonomy),
   action cited (specific turn or tool call from judge rationale), judge rationale (verbatim from
   `dimension_justifications`).
@@ -286,11 +351,15 @@ product behavior.
 
 ### Guardrails
 
-- **Clarity is the recommended risk source, not a gate** — present **both** options together whenever the user needs a new risk: Clarity discovery (existing `.clarity-protocol/` or a fresh `run_clarity` run) *and* risks they supply themselves. Recommend Clarity, because it surfaces failure modes they haven't considered — but never present it as the only route. Any menu, list, or question you offer that includes a Clarity option must carry the user-supplied option beside it; a user who doesn't know Path B exists cannot ask for it. Hold the user-supplied path (Step 1b) to the same bar: atomic behaviors, an explicit permissible boundary, variant-derived dimensions. Never block a measurement on Clarity setup.
+- **Clarity is the recommended risk source, not a gate** — present **both** options together whenever the user needs a new risk: Clarity discovery (existing `.clarity-protocol/` or a fresh `run_clarity` run) *and* risks they supply themselves. Recommend Clarity, because it surfaces failure modes they haven't considered — but never present it as the only route. Any menu, list, or question you offer that includes a Clarity option must carry the user-supplied option beside it; a user who doesn't know Path B exists cannot ask for it. Hold the user-supplied path (Step 1b) to the same bar: atomic behaviors, an explicit permissible boundary, researched and cited dimensions. Never block a measurement on Clarity setup.
 - **Never imitate Clarity's interview from your own head** — if the user chose Clarity, drive the real MCP tools (`run_clarity` returns its genuine process guide inlined). Step 1b is a distinct structured intake, not a hand-rolled impression of Clarity.
 - **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
 - **Close the loop when a protocol exists** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives. With no protocol, skip it silently — and consider offering Clarity as a next step for finding risks this pass didn't cover.
 - **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
+- **Config generation is owned by the research workflow** — `research-eval-dimensions.md` runs the isolation preflight, the ≥2-source evidence gate, the `N` deduplicated passes, and the blocking approval step. Do not hand-write a config around it, and do not treat `assert-ai init` as the default path.
+- **Never emit an uncited dimension** — every behavior category, stratify dimension, and judge dimension carries inline `# sources:` tags resolving to the config's `# References` block. If live retrieval is unavailable, stop at the ledger rather than shipping remembered citations.
+- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` merge by name into the same dict, so a collision silently replaces the built-in rubric. It does not move the headline split (recomputed from `node_judgments`), but it changes the verdict stored in the run JSON and the default compare metric. `validate_dimension_review.py pre-write` rejects it.
+- **Never read a prior generated config to "align" with it** — the isolation preflight is path-only by design. No `read_file`, `cat`, `grep`, `git show`, hashing, or inferring content from size, timestamps, or commit history.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.

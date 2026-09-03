@@ -365,6 +365,7 @@ def _record_interaction_messages(
 
         if role == "assistant":
             tool_calls = message.get("tool_calls")
+            raw = message.get("raw") if isinstance(message.get("raw"), dict) else None
             if isinstance(tool_calls, list) and tool_calls:
                 pending_target_llm_call_id = llm_call_id
                 for tool_call in tool_calls:
@@ -375,13 +376,13 @@ def _record_interaction_messages(
                     tool_args = tool_call.get("arguments") if isinstance(tool_call.get("arguments"), dict) else {}
                     if tool_call_id:
                         pending_tool_calls[tool_call_id] = (tool_name, tool_args)
-            if content:
+            if content or raw:
                 message_id = f"event:{len(transcript.events)}"
                 transcript.add_event(TranscriptEvent(
                     view=["target", "combined"],
                     actor="target",
                     edit=AddMessageEdit(message=TranscriptMessage(role="assistant", content=content)),
-                    raw=message.get("raw") if isinstance(message.get("raw"), dict) else None,
+                    raw=raw,
                 ))
                 if llm_call_id is not None:
                     transcript.link_llm_call_to_message(llm_call_id, message_id)
@@ -726,6 +727,10 @@ async def _run_prompt_test_case(
             await runtime.close()
         except Exception as exc:  # noqa: BLE001
             close_error = exc
+        try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve final runtime interaction evidence")
         _record_runtime_metadata(
             transcript,
             runtime=runtime,
@@ -1069,6 +1074,10 @@ async def _run_scenario_test_case(
             await runtime.close()
         except Exception as exc:  # noqa: BLE001
             close_error = exc
+        try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve final runtime interaction evidence")
         _record_runtime_metadata(
             transcript,
             runtime=runtime,

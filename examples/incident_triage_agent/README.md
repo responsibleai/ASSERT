@@ -43,7 +43,7 @@ From the repo root:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 cp examples/incident_triage_agent/.env.example examples/incident_triage_agent/.env
 # Set AZURE_API_KEY and AZURE_API_BASE.
 

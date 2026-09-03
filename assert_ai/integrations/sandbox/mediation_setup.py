@@ -78,6 +78,7 @@ class TargetSpec:
     pids_limit: int = 256
     user: str = "65534:65534"
     model_proxy: dict[str, Any] | None = None
+    host_action_mediation: bool = False
 
     def describe(self) -> str:
         if self.kind == "endpoint":
@@ -152,6 +153,10 @@ def _load_target(data: Any) -> TargetSpec:
         raise SetupError(f"`target.kind` must be one of {sorted(TARGET_KINDS)}, got {kind or '(missing)'}")
 
     if kind == "endpoint":
+        if "host_action_mediation" in data:
+            raise SetupError(
+                "`target.host_action_mediation` is only supported for container targets"
+            )
         url = str(data.get("url") or "").strip()
         if not url:
             raise SetupError("`target.kind: endpoint` requires `url:`")
@@ -169,6 +174,9 @@ def _load_target(data: Any) -> TargetSpec:
     model_proxy = data.get("model_proxy")
     if model_proxy is not None and not isinstance(model_proxy, Mapping):
         raise SetupError("`target.model_proxy` must be a mapping")
+    host_action_mediation = data.get("host_action_mediation", False)
+    if not isinstance(host_action_mediation, bool):
+        raise SetupError("`target.host_action_mediation` must be true or false")
     egress = data.get("egress") or {}
     if not isinstance(egress, Mapping):
         raise SetupError("`target.egress` must be a mapping")
@@ -194,6 +202,7 @@ def _load_target(data: Any) -> TargetSpec:
         pids_limit=int(data.get("pids_limit") or 256),
         user=str(data.get("user") or "65534:65534"),
         model_proxy={str(key): value for key, value in model_proxy.items()} if model_proxy else None,
+        host_action_mediation=host_action_mediation,
     )
 
 

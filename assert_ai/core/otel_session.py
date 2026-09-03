@@ -21,8 +21,12 @@ capturing the target's internal execution traces.
 from __future__ import annotations
 
 import inspect
+import logging
+import threading
 import uuid
+import weakref
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +35,14 @@ from assert_ai.core.collector import SpanCollector
 from assert_ai.core.model_client import Message
 from assert_ai.core.otel import (
     InMemoryTraceExporter,
-    OTelSpan,
     TraceExporter,
     _spans_to_events,
     compress_trace_for_judge,
     validate_spans,
 )
 from assert_ai.core.session import TurnResult
+
+log = logging.getLogger(__name__)
 
 
 class OTelTracedSession:
@@ -62,8 +67,13 @@ class OTelTracedSession:
     The ``collector`` parameter accepts any :class:`SpanCollector` — the
     preferred, Protocol-based interface.  ``exporter`` (the older
     :class:`TraceExporter` interface) is still supported for backward
-    compatibility.
+    compatibility. When both are supplied, ``collector`` takes precedence.
+    A collector instance is owned by one open session at a time; use a separate
+    collector for each concurrently running session.
     """
+
+    _collector_owners: dict[int, weakref.ReferenceType[OTelTracedSession]] = {}
+    _collector_owners_lock = threading.Lock()
 
     def __init__(
         self,
@@ -89,7 +99,9 @@ class OTelTracedSession:
         self._supports_history = False
         self._session_id = ""
         self._turn_traces: list[dict[str, Any]] = []
+        self._consumed_collector_spans: set[tuple[str, str]] = set()
         self._live_otel = live_otel
+        self._warned_no_spans = False
 
         if live_otel:
             from assert_ai.core.otel import LiveOTelExporter
@@ -144,12 +156,43 @@ class OTelTracedSession:
         self._supports_history = "history" in sig.parameters
         self._session_id = uuid.uuid4().hex[:12]
         self._turn_traces = []
-        if self._live_exporter is not None:
-            self._live_exporter.setup()
+        self._consumed_collector_spans = set()
+        self._warned_no_spans = False
+        self._claim_collector()
+        try:
+            if self._live_exporter is not None:
+                self._live_exporter.setup()
+        except Exception:
+            self._release_collector()
+            raise
 
     async def close(self) -> None:
+        self._release_collector()
         self._callable = None
         self._turn_traces = []
+
+    def _claim_collector(self) -> None:
+        if self._collector is None:
+            return
+        collector_id = id(self._collector)
+        with self._collector_owners_lock:
+            owner_ref = self._collector_owners.get(collector_id)
+            owner = owner_ref() if owner_ref is not None else None
+            if owner is not None and owner is not self:
+                raise RuntimeError(
+                    "A SpanCollector instance can belong to only one open "
+                    "OTelTracedSession. Create a separate collector per session."
+                )
+            self._collector_owners[collector_id] = weakref.ref(self)
+
+    def _release_collector(self) -> None:
+        if self._collector is None:
+            return
+        collector_id = id(self._collector)
+        with self._collector_owners_lock:
+            owner_ref = self._collector_owners.get(collector_id)
+            if owner_ref is not None and owner_ref() is self:
+                self._collector_owners.pop(collector_id, None)
 
     async def run_turn(self, messages: list[Message]) -> TurnResult:
         """Execute one turn: invoke target, capture traces, return rich result.
@@ -181,6 +224,7 @@ class OTelTracedSession:
                     break
 
             turn_id = f"{self._session_id}_turn_{len(self._turn_traces)}"
+            collection_start = datetime.now(UTC).isoformat()
 
             # Invoke the callable (which triggers the instrumented agent)
             if self._supports_history:
@@ -206,9 +250,34 @@ class OTelTracedSession:
                 response_text = str(response_text)
 
             # Collect traces for this turn
-            turn_spans = self._exporter.export_session(turn_id)
+            if self._collector is not None:
+                turn_spans = self._collector.get_spans(
+                    project_name=None,
+                    start_time=collection_start,
+                    end_time=datetime.now(UTC).isoformat(),
+                )
+                turn_spans = [
+                    span
+                    for span in turn_spans
+                    if (span.trace_id, span.span_id) not in self._consumed_collector_spans
+                ]
+                self._consumed_collector_spans.update(
+                    (span.trace_id, span.span_id) for span in turn_spans
+                )
+            else:
+                turn_spans = self._exporter.export_session(turn_id)
 
         validation = validate_spans(turn_spans)
+        if self._collector is not None:
+            collector_warnings = self._collector.validate(turn_spans)
+            validation.warnings = list(dict.fromkeys([
+                *validation.warnings,
+                *collector_warnings,
+            ]))
+            validation.valid = not validation.warnings
+        if not turn_spans and not self._warned_no_spans:
+            log.warning(validation.warnings[0])
+            self._warned_no_spans = True
 
         # Convert spans to events (tool call visibility + judge metadata)
         if turn_spans:
@@ -272,6 +341,7 @@ class OTelTracedSession:
             "raw": {
                 "trace_events": all_conversation_events,
                 "trace_metadata": full_aggregate,
+                "span_validation": turn_trace["validation"],
             },
         })
 
