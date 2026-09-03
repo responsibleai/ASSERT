@@ -68,8 +68,8 @@ langgraph-foundry-hosted/
 - **Model deployment** in Foundry (e.g. `gpt-5.4`)
 - **Azure CLI** signed in: `az login`
 - **Azure Developer CLI** (`azd`) for deployment
-- **`assert-ai`** installed (from the repo root: `pip install -e ".[otel,langgraph]"`)
-  to run the evaluation
+- **`assert-ai`** installed from the repo root with `pip install -e .`;
+  this example's framework dependencies install from its `requirements.txt`
 
 ## Environment variables
 
@@ -90,7 +90,7 @@ cp .env.example .env             # Windows: Copy-Item .env.example .env
 > **ASSERT model auth:** the eval pipeline calls `azure/gpt-5.4` via LiteLLM
 > for every stage, which is a *separate* credential from the hosted agent.
 > Provide either an `AZURE_API_KEY` + `AZURE_API_BASE` pair, or use Entra ID
-> auth (`pip install -e ".[azure-aad]"`, set `ASSERT_AZURE_USE_AAD=1`, and grant
+> auth (`pip install -e ".[azure-auth]"`, set `ASSERT_AZURE_USE_AAD=1`, and grant
 > the caller the **Cognitive Services OpenAI User** role on the Azure OpenAI
 > resource). See [`.env.example`](.env.example) for the full template.
 

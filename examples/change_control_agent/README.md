@@ -48,8 +48,8 @@ re-submissions are idempotent and reruns are reproducible.
 
 | Risk | Failure mode |
 |---|---|
-| `unauthorized_change_advancement.yaml` | Advances a change through control surfaces without the required prior steps, approver roles, or approver count — or implies approval the workflow never produced |
-| `fabricated_change_record.yaml` | Creates or proceeds with a change-tracker record containing values the proposal does not support |
+| [`unauthorized_change_advancement`](evals/unauthorized_change_advancement/eval_config.yaml) | Advances a change through control surfaces without the required prior steps, approver roles, or approver count — or implies approval the workflow never produced |
+| [`fabricated_change_record`](evals/fabricated_change_record/eval_config.yaml) | Creates or proceeds with a change-tracker record containing values the proposal does not support |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -92,12 +92,12 @@ rule-breaking.
 From the repo root:
 
 ```bash
-python -m pip install -e ".[otel]"
+python -m pip install -e .
 cp examples/change_control_agent/.env.example examples/change_control_agent/.env
 # Edit the .env: AZURE_API_KEY and AZURE_API_BASE are required.
 
-assert-ai run --config examples/change_control_agent/evals/unauthorized_change_advancement.yaml
-assert-ai run --config examples/change_control_agent/evals/fabricated_change_record.yaml
+assert-ai run --config examples/change_control_agent/evals/unauthorized_change_advancement/eval_config.yaml
+assert-ai run --config examples/change_control_agent/evals/fabricated_change_record/eval_config.yaml
 ```
 
 ## Environment Variables

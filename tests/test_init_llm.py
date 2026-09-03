@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import types
 import unittest
 from typing import Any
@@ -105,6 +106,35 @@ class InitChatCompletionAzureAadTest(unittest.TestCase):
             )
 
         self.assertNotIn("azure_ad_token_provider", captured)
+
+
+class InitChatCompletionImportFallbackTest(unittest.TestCase):
+    """The LiteLLM loader should recover from tiktoken import conflicts."""
+
+    def test_get_litellm_module_retries_after_tiktoken_conflict(self) -> None:
+        from assert_ai.core import model_client
+
+        self.addCleanup(lambda: setattr(model_client, "_LITELLM_MODULE", None))
+        model_client._LITELLM_MODULE = None
+        fake_litellm = types.SimpleNamespace(suppress_debug_info=False, num_retries=0)
+        calls: list[str] = []
+
+        def fake_import(name: str, package: str | None = None) -> Any:
+            calls.append(name)
+            if name == "litellm" and len(calls) == 1:
+                raise RuntimeError(
+                    "Could not find any credentials that grant access to storage account"
+                )
+            if name == "litellm":
+                return fake_litellm
+            raise ModuleNotFoundError(name)
+
+        with patch("assert_ai.core.model_client.importlib.import_module", side_effect=fake_import):
+            result = model_client._get_litellm_module()
+
+        self.assertIs(result, fake_litellm)
+        self.assertEqual(calls, ["litellm", "litellm"])
+        self.assertNotIn("litellm", sys.modules)
 
 
 class InitChatCompletionAzureKeyModeTest(unittest.TestCase):

@@ -6,7 +6,7 @@
 
 Owns the customer-facing experience of the `responsibleai/ASSERT` documentation site, the bundled examples, and the local viewer. Runs structured UX audits against the golden path that new users walk through:
 
-1. Install (`pip install -e ".[otel,langgraph]"` or equivalent)
+1. Install (`pip install -e ".[phoenix]"` plus the selected example's `requirements.txt`, or equivalent)
 2. Write or generate an eval spec (`assert-ai init` or hand-authored YAML)
 3. Create or select a dataset (`pipeline.test_set`)
 4. Run the evaluation (`assert-ai run --config ...`)

@@ -21,7 +21,7 @@ Pick a target based on how your agent is built.
 
 For any agent or multi-agent system you can invoke from Python — LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, or any other framework — use the **callable target with OpenTelemetry trace capture**. This is the universal integration boundary, and the OTel spans give the judge the tool calls, routing, and intermediate decisions it needs to score real behavior.
 
-For 33+ supported frameworks the instrumentation is two lines:
+Install the target framework's matching `openinference-instrumentation-*` package first. For 33+ supported frameworks, activating that installed instrumentor is then two lines:
 
 ```python
 from assert_ai import auto_trace
