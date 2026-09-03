@@ -181,7 +181,10 @@ For black-box services, that response text is all the judge sees. An instrumente
 }
 ```
 
-This is the recommended HTTP shape for a sandboxed or mediated agent: the agent owns its real tool loop, the endpoint controls execution, and ASSERT receives the ordered action evidence through its existing transcript event stream.
+This is the compatibility HTTP shape for an externally managed sandbox or
+mediated agent: the agent owns its real tool loop, the endpoint controls
+execution, and ASSERT receives target-reported action evidence through its
+existing transcript event stream.
 
 #### Stock Docker sandbox (`target.sandbox`)
 
@@ -197,8 +200,10 @@ pipeline:
 ```
 
 The setup declares the configured image, endpoint contract, policy, mocks,
-resource limits, egress allow-list, and optional host-side model proxy. ASSERT
-starts a fresh disposable container per test case, waits for readiness, and
-removes the target, its trusted network relay, and their networks after the
-case. See the
+resource limits, egress allow-list, optional host action mediation, and optional
+host-side model proxy. With `host_action_mediation: true`, ASSERT owns the action
+attempt and pass/mock/block decision ledger; results from passed tools remain
+explicitly target-reported. ASSERT starts a fresh disposable container per test
+case, waits for readiness, and removes the target, its trusted network relay, and
+their networks after the case. See the
 [sandboxed action-mediation example](../../examples/sandbox_action_mediation/README.md).

@@ -42,7 +42,7 @@ jobs:
       - name: Run real Docker sandbox tests
         # Keep this exact: the receipt below must be satisfiable only by the
         # tests that start real containers, never by static workflow checks.
-        run: pytest tests/test_sandbox_runtime_docker.py --runxfail -x -q --junitxml=sandbox-docker-results.xml
+        run: pytest tests/test_sandbox_runtime_docker.py tests/test_sandbox_multiturn_docker.py --runxfail -x -q --junitxml=sandbox-docker-results.xml
 
       - name: Verify Docker test receipt
         if: always()

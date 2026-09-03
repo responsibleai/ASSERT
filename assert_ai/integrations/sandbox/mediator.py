@@ -33,6 +33,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,16 @@ class ActionMediator:
         self.mocks = mocks
 
     def mediate(self, pre_context: dict[str, Any], execute_effective: Execute) -> MediationDecision:
+        decision = self.plan(pre_context)
+        if decision.mode != "pass":
+            return decision
+        tool_call = pre_context.get("tool_call") or {}
+        args = dict(tool_call.get("args") or {})
+        returned = execute_effective(args)
+        return replace(decision, returned=returned, real_executed=True)
+
+    def plan(self, pre_context: dict[str, Any]) -> MediationDecision:
+        """Choose pass/mock/block without executing target-owned tool code."""
         if pre_context.get("interception_point") != "pre_tool_call":
             raise ValueError("ActionMediator expects a pre_tool_call context")
         case_id_from_context(pre_context)
@@ -118,11 +129,10 @@ class ActionMediator:
         matched = str(rule.get("match", ""))
 
         if mode == "pass":
-            returned = execute_effective(args)
             return MediationDecision(
                 mode="pass",
-                returned=returned,
-                real_executed=True,
+                returned=None,
+                real_executed=False,
                 reason=_decision_reason("pass", matched),
                 policy_note=note,
                 matched=matched,
