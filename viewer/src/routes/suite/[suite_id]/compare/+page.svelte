@@ -62,11 +62,18 @@ let activeMetric = $state(untrack(() => primaryMetricName(data.allMetrics ?? [])
 // Short label for a run's target. Callable targets ("module.path:function_name")
 // reduce to "function_name"; provider/model strings ("provider/model-name")
 // reduce to "model-name". Avoids overflowing column headers and per-run cards.
-function runLabel(model: string | null | undefined): string {
-	const m = model ?? '';
-	if (m.includes(':')) return m.split(':').pop() || m;
-	if (m.includes('/')) return m.split('/').pop() || m;
-	return m;
+function targetLabel(target: string | null | undefined): string {
+	const t = target ?? '';
+	if (t.includes(':')) return t.split(':').pop() || t;
+	if (t.includes('/')) return t.split('/').pop() || t;
+	return t;
+}
+
+// A run id and its target are independent names: the run id comes from the results
+// directory, the target from the config entrypoint. Panels that label runs by only one
+// of them carry both in hover text so the mapping stays recoverable.
+function runTitle(run: { display_name: string; target: string }): string {
+	return run.target ? `${run.display_name} (target: ${run.target})` : run.display_name;
 }
 
 // Re-sort comparisons by active metric's delta
@@ -336,8 +343,8 @@ function sampleGridMinWidth(runCount: number): string {
 						<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{run.total} samples</span>
 					</div>
 
-					<!-- Model name -->
-					<div class="mt-1 font-mono text-xs text-text-muted truncate" title={run.model}>{runLabel(run.model)}</div>
+					<!-- Target entrypoint -->
+					<div class="mt-1 font-mono text-xs text-text-muted truncate" title={runTitle(run)}>{targetLabel(run.target)}</div>
 
 					<!-- Big number -->
 					<div class="mt-3 flex items-baseline gap-1.5">
@@ -427,7 +434,7 @@ function sampleGridMinWidth(runCount: number): string {
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
 					{#each orderedRuns as run (run.run_id)}
-						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
+						<span class="text-center font-mono font-medium truncate" title={runTitle(run)} style="color: {runColor[run.run_id]}">{run.display_name}</span>
 					{/each}
 				</div>
 
@@ -502,11 +509,11 @@ function sampleGridMinWidth(runCount: number): string {
 																{@const sample = pair.samples[run.run_id]}
 																{@const convo = conversationMessages(sample)}
 																<div class="p-3 space-y-2">
-																	<!-- Model + score -->
+																	<!-- Run + score -->
 																	<div class="flex items-center justify-between">
 																		<div class="flex items-center gap-1.5 min-w-0">
 																			<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
-																			<span class="text-xs font-mono truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
+																			<span class="text-xs font-mono truncate" title={runTitle(run)} style="color: {runColor[run.run_id]}">{run.display_name}</span>
 																		</div>
 																		{#if sample}
 																			{@const sampleScore = getRecordFlag(sample, activeMetric)}
@@ -576,11 +583,11 @@ function sampleGridMinWidth(runCount: number): string {
 														{#each orderedRuns as run (run.run_id)}
 															{@const sample = pair.samples[run.run_id]}
 															<div class="p-3 space-y-2">
-														<!-- Model + score -->
+														<!-- Run + score -->
 														<div class="flex items-center justify-between">
 															<div class="flex items-center gap-1.5 min-w-0">
 																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
-																<span class="text-xs font-mono truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
+																<span class="text-xs font-mono truncate" title={runTitle(run)} style="color: {runColor[run.run_id]}">{run.display_name}</span>
 															</div>
 															{#if sample}
 																{@const sampleScore = getRecordFlag(sample, activeMetric)}

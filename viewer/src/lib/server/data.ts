@@ -109,7 +109,7 @@ interface CompareDimensionSummary {
 interface CompareRunSummary {
 	run_id: string;
 	display_name: string;
-	model: string;
+	target: string;
 	judge_model: string;
 	date: string;
 	total: number;
@@ -954,7 +954,7 @@ function buildCompareRunSummary(
 	return {
 		run_id: runId,
 		display_name: runId,
-		model: metrics.target,
+		target: metrics.target,
 		judge_model: metrics.judge_model,
 		date: formatRunDate(manifest),
 		total: metrics.total,
