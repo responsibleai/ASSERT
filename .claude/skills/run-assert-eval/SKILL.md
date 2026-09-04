@@ -597,6 +597,18 @@ around X behavior", "add a stratify dimension for Y", or **govern the failure wi
 re-measure to prove the rate dropped** — see Step 8 and
 `workflows/govern-and-remeasure.md`).
 
+**Non-ACS fixes are the user's call, outside this skill.** Troubleshooting a failure
+may lead a coding agent to a non-ACS fix — upgrading or swapping the target model,
+rewriting the agent's system prompt, or otherwise changing the agent itself. Those
+are legitimate but are *agent changes*, not ACS governance: ACS can constrain inputs,
+outputs, and tool calls, but it cannot add a capability the agent lacks. **Never fold
+one into the ACS-governed run.** Step 8's A/B is readable only because the governed
+run differs from the baseline in nothing but `run:` and `target.callable`; change the
+model or the prompt inside it and two variables moved at once, so the delta is
+attributable to neither — relabelling the run does not recover it. Measure an agent
+change as its own arm instead: branch from the same baseline, reuse its exact test
+set, and name that run for the change (e.g. `model-upgrade`).
+
 ## Authoritative references
 
 Team-maintained docs on `main`. Prefer linking these over restating their content here —
