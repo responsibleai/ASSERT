@@ -36,6 +36,40 @@
   let highlightedIndex = $state(-1);
   let triggerButton: HTMLButtonElement;
   let menuList: HTMLUListElement;
+  // Anchor the fixed-position menu to the trigger so it can escape table
+  // scroll and clipping contexts without inflating their scroll width.
+  let menuStyle = $state('');
+
+  const VIEWPORT_MARGIN = 8;
+  const TRIGGER_GAP = 4;
+  const MIN_MENU_WIDTH = 192;
+
+  function positionMenu() {
+    if (!triggerButton || !menuList) return;
+    const anchor = triggerButton.getBoundingClientRect();
+    const menu = menuList.getBoundingClientRect();
+
+    let left = anchor.left;
+    if (left + menu.width > window.innerWidth - VIEWPORT_MARGIN) {
+      left = anchor.right - menu.width;
+    }
+    left = Math.max(
+      VIEWPORT_MARGIN,
+      Math.min(left, window.innerWidth - menu.width - VIEWPORT_MARGIN)
+    );
+
+    let top = anchor.bottom + TRIGGER_GAP;
+    const overflowsBottom = top + menu.height > window.innerHeight - VIEWPORT_MARGIN;
+    const fitsAbove = anchor.top - TRIGGER_GAP - menu.height >= VIEWPORT_MARGIN;
+    if (overflowsBottom && fitsAbove) {
+      top = anchor.top - TRIGGER_GAP - menu.height;
+    }
+    top = Math.max(VIEWPORT_MARGIN, top);
+
+    menuStyle =
+      `position: fixed; top: ${Math.round(top)}px; left: ${Math.round(left)}px; ` +
+      `min-width: ${Math.round(Math.max(MIN_MENU_WIDTH, anchor.width))}px;`;
+  }
 
   function handleSelect(value: string) {
     selected = value;
@@ -108,6 +142,25 @@
   });
 
   $effect(() => {
+    if (!open) {
+      menuStyle = '';
+      return;
+    }
+
+    positionMenu();
+    const frame = requestAnimationFrame(positionMenu);
+    const reposition = () => positionMenu();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  });
+
+  $effect(() => {
     if (open && highlightedIndex >= 0 && menuList) {
       const items = menuList.querySelectorAll('[role="option"]');
       const item = items[highlightedIndex] as HTMLElement;
@@ -146,6 +199,7 @@
       bind:this={menuList}
       class="ActionList ActionMenu-list"
       role="listbox"
+      style={menuStyle}
       onkeydown={handleKeyDown}
       onblur={handleMenuBlur}
       tabindex={-1}
