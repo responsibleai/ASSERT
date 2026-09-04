@@ -126,6 +126,10 @@ jobs:
             assert_extras: acs
             requirements: examples/bank_manager_agent_control/requirements.txt
             import: examples.bank_manager_agent_control.agent
+          - example: agent-framework-travel-planner
+            assert_extras: ''
+            requirements: examples/agent_framework_travel_planner/requirements.txt
+            import: examples.agent_framework_travel_planner.agent
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -165,6 +169,10 @@ jobs:
         if: matrix.example == 'science-research-agent'
         working-directory: source
         run: python -m unittest discover -s examples/science_research_agent/tests -p 'test_tools.py' -v
+      - name: Test Agent Framework travel planner workflow
+        if: matrix.example == 'agent-framework-travel-planner'
+        working-directory: source
+        run: python -m unittest discover -s examples/agent_framework_travel_planner/tests -p 'test_workflow.py' -v
 
   test-foundry-host-install:
     name: "Example install: langgraph-foundry-hosted server"
