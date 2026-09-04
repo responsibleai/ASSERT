@@ -16,7 +16,7 @@ from assert_ai.core.config_model import (
     DEFAULT_SYSTEMATIZE_MAX_TOKENS,
     DEFAULT_SYSTEMATIZE_TEMPERATURE,
 )
-from assert_ai.core.io import load_prompt_text, write_json
+from assert_ai.core.io import ARTIFACT_SCHEMA_VERSION, load_prompt_text, write_json
 from assert_ai.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -128,6 +128,9 @@ async def run_systematize(
 
     save_path.mkdir(parents=True, exist_ok=True)
     taxonomy_path = save_path / "taxonomy.json"
+    # Self-describing, so a future change to the taxonomy contract is visible to
+    # an older viewer or analysis script rather than silently misread.
+    taxonomy_json.setdefault("schema_version", ARTIFACT_SCHEMA_VERSION)
     write_json(taxonomy_path, taxonomy_json)
 
     return {

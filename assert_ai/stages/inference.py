@@ -33,12 +33,15 @@ from assert_ai.core.config_model import (
 from assert_ai.core.io import (
     INFERENCE_SET_FILE,
     append_jsonl_row,
+    archive_artifact,
+    assert_version,
     get_permissible_flag,
     load_jsonl,
     load_prompt_text,
     load_test_cases,
     normalize_test_case_rows,
     resolve_path,
+    write_artifact_schema,
     write_jsonl,
     row_factors,
 )
@@ -78,12 +81,11 @@ _JUDGE_ARTIFACTS_TO_CLEAN = ("scores.jsonl", ".judge_config_hash")
 
 
 def _remove_stale_judge_artifacts(run_dir: Path) -> None:
-    """Remove judge-stage outputs that depend on the inference data being replaced."""
+    """Move judge-stage outputs aside when the inference data they describe is replaced."""
     for name in _JUDGE_ARTIFACTS_TO_CLEAN:
         path = run_dir / name
         if path.exists():
-            log.info("[inference] Removing stale %s from %s", name, run_dir)
-            path.unlink()
+            archive_artifact(path, reason="inference data replaced")
 
 
 _VERSIONED_ARTIFACT_RE = re.compile(r"^v\d{4}$")
@@ -1168,16 +1170,16 @@ async def run_inference(
             # don't trust the hash because regenerated upstream artifacts may
             # be byte-identical (deterministic test-case generation, no stratification
             # dimensions, etc.) which would otherwise leave the cache intact.
-            inference_set_path.unlink()
+            archive_artifact(inference_set_path, reason="stage forced")
             _remove_stale_judge_artifacts(out_dir)
         else:
             # Check that existing inference rows were produced with the same config.
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    f"Inference config changed since last run - discarding {inference_set_path} and starting fresh"
+                    f"Inference config changed since last run - replacing {inference_set_path} and starting fresh"
                 )
-                inference_set_path.unlink()
+                archive_artifact(inference_set_path, reason="inference config changed")
                 _remove_stale_judge_artifacts(out_dir)
             else:
                 for row in load_jsonl(inference_set_path):
@@ -1475,6 +1477,18 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     target_model = ""
     if target_obj and target_obj.model:
         target_model = target_obj.model.name or ""
+    inference_set_out = Path(result["inference_set_path"])
+    if inference_set_out.exists():
+        write_artifact_schema(
+            inference_set_out,
+            artifact="inference_set",
+            produced_by={
+                "stage": "inference",
+                "assert_version": assert_version(),
+                "target_model": target_model,
+                "run_id": str(ctx.get("run_id") or ""),
+            },
+        )
     return {
         "inference_set_path": result["inference_set_path"],
         "test_set_artifact_version": test_set_artifact_ref,

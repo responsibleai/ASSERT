@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from assert_ai.core.io import PROMPTS_DIR, write_json
+from assert_ai.core.io import file_sha256 as _file_sha256
 
 
 log = logging.getLogger(__name__)
@@ -293,7 +294,7 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
             else resolved_metadata_path
         )
         metadata = _load_json_object(metadata_path)
-        if metadata and _metadata_outputs_exist(stage_name, artifact_dir, metadata):
+        if metadata and _metadata_outputs_valid(stage_name, artifact_dir, metadata):
             output_paths = _metadata_output_paths(stage_name, artifact_dir, metadata)
             # If the original ref's path entries pointed at locations that no
             # longer exist, rebuild the ref with the resolved on-disk paths so
@@ -652,8 +653,10 @@ def hash_payload(payload: Any) -> str:
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# Re-exported so existing callers keep working. The implementation lives in
+# core.io, reads in chunks rather than loading the whole file, and is shared
+# with the artifact provenance sidecars so both compute the digest identically.
+file_sha256 = _file_sha256
 
 
 def _stage_descriptor(
@@ -808,7 +811,7 @@ def _latest_matching_metadata(
             continue
         hashes = metadata.get("hashes")
         if isinstance(hashes, dict) and hashes.get("input_hash") == input_hash:
-            if _metadata_outputs_exist(stage_name, version_dir, metadata):
+            if _metadata_outputs_valid(stage_name, version_dir, metadata):
                 matches.append((version_dir.name, metadata))
     return matches[-1] if matches else None
 
@@ -821,7 +824,7 @@ def _recover_latest_valid_version(
 
     for version_dir in reversed(_iter_version_dirs(stage_root)):
         metadata = _load_json_object(version_dir / ARTIFACT_METADATA_FILE)
-        if metadata and _metadata_outputs_exist(stage_name, version_dir, metadata):
+        if metadata and _metadata_outputs_valid(stage_name, version_dir, metadata):
             return version_dir.name, version_dir, metadata
     return None
 
@@ -839,14 +842,26 @@ def _is_safe_artifact_basename(filename: Any) -> bool:
     return True
 
 
-def _metadata_outputs_exist(
+def _metadata_outputs_valid(
     stage_name: str, version_dir: Path, metadata: dict[str, Any]
 ) -> bool:
-    """Return True iff every expected output file for ``stage_name`` exists.
+    """Return True iff every expected output for ``stage_name`` exists and is intact.
 
     Uses the merged path map from :func:`_metadata_output_paths` so a partial
     or missing ``metadata['files']`` cannot trick the cache into activating a
     half-written artifact (or one that is missing the primary output file).
+
+    Existence alone is not enough. ``finalize_artifact_plan`` records a sha256
+    for every output in ``file_hashes``, but nothing compared them on the way
+    back in, so a cached artifact altered after it was written — by an
+    interrupted run, a stray editor save, or anyone with write access to the
+    suite directory — was reused as though it were the computed result, and the
+    scores derived from it looked legitimate.
+
+    A mismatch is treated as a cache miss rather than an error: the stage
+    recomputes, which is the outcome the operator wanted anyway. Set
+    ``ASSERT_SKIP_CACHE_VERIFY=1`` to skip hashing if it is too slow on very
+    large artifacts, accepting that the cache is then unverified.
     """
 
     output_paths = _metadata_output_paths(stage_name, version_dir, metadata)
@@ -856,6 +871,43 @@ def _metadata_outputs_exist(
     for key in expected_keys:
         path = output_paths.get(key)
         if path is None or not path.exists():
+            return False
+
+    if os.environ.get("ASSERT_SKIP_CACHE_VERIFY", "").lower() in ("1", "true", "yes"):
+        return True
+
+    file_hashes = metadata.get("file_hashes")
+    if not isinstance(file_hashes, dict):
+        # Written by a version that predates hash recording. Nothing to verify
+        # against, so fall back to the existence check rather than discarding a
+        # cache the user legitimately built.
+        return True
+
+    for key in expected_keys:
+        recorded = file_hashes.get(key)
+        if not isinstance(recorded, str):
+            continue
+        path = output_paths.get(key)
+        if path is None:
+            continue
+        try:
+            actual = file_sha256(path)
+        except OSError as e:
+            log.warning(
+                "Artifact cache: cannot read '%s' to verify it (%s); treating as a miss",
+                path,
+                e,
+            )
+            return False
+        if actual != recorded:
+            log.warning(
+                "Artifact cache: '%s' does not match the hash recorded when it was "
+                "created (expected %s, found %s). The artifact changed after caching, "
+                "so it will be recomputed instead of reused.",
+                path,
+                recorded[:12],
+                actual[:12],
+            )
             return False
     return True
 
