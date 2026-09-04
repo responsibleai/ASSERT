@@ -1,0 +1,95 @@
+# Dependency update automation.
+#
+# Addresses the gap that nothing currently alerts on a known-vulnerable
+# dependency: all runtime requirements in pyproject.toml are unbounded (`>=`),
+# and the npm trees under viewer/ and website/ carry advisories that no job
+# reports today.
+#
+# Grouping keeps the PR volume manageable: patch and minor updates arrive as one
+# PR per ecosystem per week, while majors stay separate so they get a real review.
+version: 2
+
+updates:
+  # ---- Python -------------------------------------------------------------
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(deps-dev)"
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ---- Viewer (SvelteKit) -------------------------------------------------
+  - package-ecosystem: npm
+    directory: /viewer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+      - viewer
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(deps-dev)"
+    groups:
+      viewer-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ---- Website (Next.js) --------------------------------------------------
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+      - website
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(deps-dev)"
+    groups:
+      website-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ---- GitHub Actions -----------------------------------------------------
+  # Most workflows pin actions by mutable tag (@v4, @v5). A tag can be moved to
+  # a different commit by whoever controls the action, so keeping these current
+  # — and eventually pinning by SHA — is what makes the supply chain reviewable.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-all:
+        update-types:
+          - minor
+          - patch
