@@ -54,7 +54,11 @@ from assert_ai.core.session import (
     serialize_response,
 )
 from assert_ai.core.tool_backend import ToolBackendResolver, inspect_tool_module
-from assert_ai.core.tools import load_toolset_file, normalize_tool_defs
+from assert_ai.core.tools import (
+    load_toolset_file,
+    normalize_tool_defs,
+    resolve_toolset_path,
+)
 from assert_ai.core.transcript import (
     AddMessageEdit,
     Message as TranscriptMessage,
@@ -147,6 +151,7 @@ def _inference_config_fingerprint(
     max_tokens: int,
     test_set_path: Path | None = None,
     config_path: Path | None = None,
+    test_set_content: bytes | None = None,
 ) -> str:
     """Deterministic hash of config values that affect inference output.
 
@@ -157,7 +162,9 @@ def _inference_config_fingerprint(
     """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or "")
     test_set_sha = ""
-    if test_set_path is not None and test_set_path.exists():
+    if test_set_content is not None:
+        test_set_sha = hashlib.sha256(test_set_content).hexdigest()
+    elif test_set_path is not None and test_set_path.exists():
         test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
     sandbox_sha = ""
     if target.sandbox:
@@ -532,14 +539,10 @@ def _build_hosted_session(
         if tools is None:
             if not isinstance(toolset_path, str) or not toolset_path.strip():
                 raise ValueError("simulated tools require target.tools.toolset or per-test-case tools")
-            resolved_path = Path(toolset_path).expanduser()
-            if not resolved_path.is_absolute():
-                candidates = []
-                if config_path is not None:
-                    candidates.append((config_path.parent / resolved_path).resolve())
-                candidates.append((Path.cwd() / resolved_path).resolve())
-                found = next((c for c in candidates if c.exists()), None)
-                resolved_path = found if found is not None else candidates[0]
+            resolved_path = resolve_toolset_path(
+                toolset_path,
+                config_path=config_path,
+            )
             tools = load_toolset_file(resolved_path)
         return HostedSession(
             model=model,

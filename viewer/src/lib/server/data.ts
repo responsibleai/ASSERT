@@ -7,6 +7,7 @@ import { loadDimensions } from './dimensions.js';
 import {
 	RUN_CONFIG_FILE,
 	RUN_MANIFEST_FILE,
+	RUN_METRICS_FILE,
 	ViewerReadModelError,
 	loadIndexedRunScoreRow,
 	loadIndexedRunTranscriptRow,
@@ -61,6 +62,11 @@ import type {
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
+	TokenActualUsageView,
+	TokenEstimateAccuracyView,
+	TokenEstimateView,
+	TokenStageEstimateView,
+	TokenUsageView,
 	Behavior,
 	ViewerResultItem
 } from '$lib/types.js';
@@ -143,6 +149,149 @@ function readObject(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === 'object' && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: null;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readNonNegativeNumber(value: unknown): number | null {
+	const parsed = readFiniteNumber(value);
+	return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function readInteger(value: unknown): number | null {
+	const parsed = readFiniteNumber(value);
+	return parsed === null ? null : Math.trunc(parsed);
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+	const parsed = readInteger(value);
+	return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function normalizeTokenStageEstimate(value: unknown): TokenStageEstimateView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	const calls = readNonNegativeInteger(record.calls) ?? 0;
+	const inputTokens = readNonNegativeInteger(record.input_tokens) ?? 0;
+	const outputTokens = readNonNegativeInteger(record.output_tokens) ?? 0;
+	const totalTokens = readNonNegativeInteger(record.total_tokens) ?? inputTokens + outputTokens;
+	if (calls === 0 && inputTokens === 0 && outputTokens === 0 && totalTokens === 0) return null;
+	return { calls, inputTokens, outputTokens, totalTokens };
+}
+
+function normalizeTokenEstimate(value: unknown): TokenEstimateView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	const aggregate = normalizeTokenStageEstimate(record);
+	if (!aggregate) return null;
+
+	const stages: Record<string, TokenStageEstimateView> = {};
+	for (const [name, stageValue] of Object.entries(readObject(record.stages) ?? {})) {
+		const stage = normalizeTokenStageEstimate(stageValue);
+		if (stage) stages[name] = stage;
+	}
+
+	return {
+		...aggregate,
+		lowerBoundTokens:
+			readNonNegativeInteger(record.lower_bound_tokens) ?? aggregate.totalTokens,
+		upperBoundTokens:
+			readNonNegativeInteger(record.upper_bound_tokens) ?? aggregate.totalTokens,
+		stages,
+		notes: Array.isArray(record.notes)
+			? record.notes.filter((note): note is string => typeof note === 'string' && note.length > 0)
+			: []
+	};
+}
+
+function normalizeActualTokenUsage(value: unknown): TokenActualUsageView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	const requests = readNonNegativeInteger(record.requests) ?? 0;
+	const calls = readNonNegativeInteger(record.calls) ?? 0;
+	const missingUsageCalls = readNonNegativeInteger(record.missing_usage_calls) ?? 0;
+	const inputTokens = readNonNegativeInteger(record.input_tokens) ?? 0;
+	const outputTokens = readNonNegativeInteger(record.output_tokens) ?? 0;
+	const totalTokens = readNonNegativeInteger(record.total_tokens) ?? inputTokens + outputTokens;
+	const cachedInputTokens = readNonNegativeInteger(record.cached_input_tokens) ?? 0;
+	const cacheCreationInputTokens =
+		readNonNegativeInteger(record.cache_creation_input_tokens) ?? 0;
+	if (
+		requests === 0 &&
+		calls === 0 &&
+		inputTokens === 0 &&
+		outputTokens === 0 &&
+		totalTokens === 0
+	) {
+		return null;
+	}
+	return {
+		requests,
+		calls,
+		missingUsageCalls,
+		inputTokens,
+		outputTokens,
+		totalTokens,
+		cachedInputTokens,
+		cacheCreationInputTokens,
+		cacheHitRate:
+			readNonNegativeNumber(record.cache_hit_rate) ??
+			(inputTokens > 0 ? cachedInputTokens / inputTokens : 0),
+		usageCoverage:
+			readNonNegativeNumber(record.usage_coverage) ??
+			(requests > 0 ? calls / requests : 0)
+	};
+}
+
+function normalizeTokenEstimateAccuracy(value: unknown): TokenEstimateAccuracyView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	if (record.status === 'available' || record.status === undefined) {
+		const actualTotalTokens = readNonNegativeInteger(record.actual_total_tokens);
+		const estimatedTotalTokens = readNonNegativeInteger(record.estimated_total_tokens);
+		const differenceTokens = readInteger(record.difference_tokens);
+		const differenceRatio = readFiniteNumber(record.difference_ratio);
+		const absolutePercentageError = readNonNegativeNumber(record.absolute_percentage_error);
+		if (
+			actualTotalTokens === null ||
+			estimatedTotalTokens === null ||
+			differenceTokens === null ||
+			differenceRatio === null ||
+			absolutePercentageError === null
+		) {
+			return null;
+		}
+		return {
+			status: 'available',
+			actualTotalTokens,
+			estimatedTotalTokens,
+			differenceTokens,
+			differenceRatio,
+			absolutePercentageError
+		};
+	}
+	if (record.status === 'unavailable') {
+		return {
+			status: 'unavailable',
+			reason: typeof record.reason === 'string' ? record.reason : 'unknown',
+			usageCoverage: readNonNegativeNumber(record.usage_coverage)
+		};
+	}
+	return null;
+}
+
+function loadRunTokenUsage(suiteId: string, runId: string): TokenUsageView | null {
+	const payload = readJsonFile<Record<string, unknown>>(
+		`${runDirPath(suiteId, runId)}/${RUN_METRICS_FILE}`,
+		{ missingOk: true }
+	);
+	if (!payload) return null;
+	const estimate = normalizeTokenEstimate(payload.token_estimate);
+	const actual = normalizeActualTokenUsage(payload.totals);
+	const accuracy = normalizeTokenEstimateAccuracy(payload.token_estimate_accuracy);
+	return estimate || actual ? { estimate, actual, accuracy } : null;
 }
 
 function readSeedPayload(row: UnifiedSeedRow | undefined): Record<string, unknown> | null {
@@ -1351,6 +1500,7 @@ function loadCompletedRunPageData(
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
 	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
 	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
+	const tokenUsage = loadRunTokenUsage(suiteId, runId);
 
 	return {
 		suite_id: suiteId,
@@ -1371,7 +1521,8 @@ function loadCompletedRunPageData(
 		dimensionDefs: loadDimensions(),
 		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
 		metrics: toPromptMetricView(promptMetrics),
-		auditMetrics: toAuditMetricView(auditMetrics)
+		auditMetrics: toAuditMetricView(auditMetrics),
+		tokenUsage
 	};
 }
 
@@ -1415,8 +1566,15 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		resolvedTab === 'audit' && auditScores.length === 0
 			? buildInferencePreviewRowsFromSnapshot(runSnapshot)
 			: [];
+	const tokenUsage = loadRunTokenUsage(suiteId, runId);
 
-	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && inferencePreviewRows.length === 0) {
+	if (
+		!runSnapshot.manifest &&
+		promptCount === 0 &&
+		auditCount === 0 &&
+		inferencePreviewRows.length === 0 &&
+		!tokenUsage
+	) {
 		return null;
 	}
 
@@ -1445,7 +1603,8 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		dimensionDefs: loadDimensions(),
 		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
 		metrics: toPromptMetricView(promptMetrics),
-		auditMetrics: toAuditMetricView(auditMetrics)
+		auditMetrics: toAuditMetricView(auditMetrics),
+		tokenUsage
 	};
 }
 
