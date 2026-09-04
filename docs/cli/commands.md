@@ -120,7 +120,7 @@ assert-ai results compare <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPT
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when that exact metric has a non-empty denominator in every compared run, otherwise `policy_violation`
 - `--limit <int>` optional, default `8`
 - `--json` optional flag
 - `--no-color` optional flag
@@ -136,9 +136,34 @@ assert-ai results compare-suites <suite1>/<run1> <suite2>/<run2> [OPTIONS]
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when that exact metric has a non-empty denominator in every compared run, otherwise `policy_violation`
 - `--json` optional flag
 - `--no-color` optional flag
+
+## `results matrix`
+
+Compare multiple behavior suites and target arms in one table.
+
+```bash
+assert-ai results matrix <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPTIONS]
+assert-ai results matrix --suite <suite1> [--suite <suite2> ...] [OPTIONS]
+```
+
+Rows are behavior names, columns are arm labels derived from run IDs, and cells
+are pooled rates across the run's prompt and scenario judgments. `--suite`
+expands every scored run in that suite and may be repeated.
+
+Options:
+
+- `--results-dir <path>` optional
+- `--suite <suite-id>` repeatable; expands all scored runs in the suite
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` only when that exact metric has a non-empty denominator in every run, otherwise `policy_violation`
+- `--json` optional flag
+- `--no-color` optional flag
+
+Permissibility-split rates use only rows where a behavior in that bucket was
+relevant. The permissible and not-permissible rates can therefore have
+different denominators and do not sum to the union `policy_violation` rate.
 
 ## `analysis test-set-metrics`
 

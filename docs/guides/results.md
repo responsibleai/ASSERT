@@ -56,9 +56,43 @@ assert-ai results status <suite>
 assert-ai results status <suite> <run>
 assert-ai results compare <suite> <run-a> <run-b>
 assert-ai results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
+assert-ai results matrix --suite <behavior-suite-a> --suite <behavior-suite-b>
 ```
 
 See [CLI Commands](../cli/commands.md) for full options.
+
+## Compare behaviors across arms
+
+Use `results matrix` when each behavior has multiple runs representing arms
+such as `baseline`, `prompted`, and `acs`:
+
+```bash
+assert-ai results matrix \
+  --suite travel-budget \
+  --suite travel-grounding
+```
+
+The command renders one row per behavior and one column per arm. It pools prompt
+and scenario judgments from each run using their scored counts rather than
+averaging two rates. You can also select runs explicitly:
+
+```bash
+assert-ai results matrix \
+  travel-budget/travel-budget-baseline \
+  travel-budget/travel-budget-prompted \
+  travel-grounding/travel-grounding-baseline \
+  travel-grounding/travel-grounding-prompted
+```
+
+By default, the matrix shows `policy_violation_not_permissible` only when every
+selected run has a non-empty denominator for that exact metric. Otherwise it
+falls back to the union `policy_violation` rate, avoiding an all-empty table for
+one-sided taxonomies. Use `--metric <dimension>` to choose another Boolean
+judge dimension and `--json` for machine-readable output.
+
+Historical runs use the versioned taxonomy recorded in each run's
+`manifest.json`. This keeps permissibility labels stable if the suite's current
+taxonomy is regenerated or reordered later.
 
 ## View evaluation suite artifacts and run results in a local UI app
 

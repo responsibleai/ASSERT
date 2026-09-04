@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `assert-ai results matrix` for behavior-by-arm comparison across multiple runs and suites, with count-weighted prompt/scenario pooling and safe fallback when the impermissible split has no denominator.
 - Clean-install checks for every documented ASSERT/example environment, including `pip check` and credential-free target imports.
 
 ### Changed
