@@ -47,6 +47,15 @@ Adds evidence-backed eval authoring, stronger host-authoritative sandbox mediati
 - Sandbox policy evaluation, mock resolution, and action evidence can now run in an authenticated host service instead of trusting the evaluated target to report its own decisions (#329).
 - Sandbox mediation now propagates and validates one case ID across policy selection, mocks, execution, and evidence (#327).
 - Proxy-generated network evidence is stored in a host-only directory outside the evaluated target's writable mount (#326).
+- Restore `PhoenixCollector` compatibility with the supported Phoenix client API, including bounded turn-time queries and conversion of Phoenix DataFrame timestamps and indexed span IDs (#339).
+- `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version (#334).
+- Declare `aiohttp`, which is directly used by the HTTP endpoint target, instead of relying on LiteLLM to install it transitively (#336).
+- Update LiteLLM to patched version 1.84.1 and cap it below 2.0 (#330).
+- Update vulnerable website, viewer, and Python dependencies to patched releases (#335, #336).
+- Keep Bank Manager's GPT and non-GPT Azure routes compatible with ASSERT's OpenAI dependency range, and verify its documented installation with `pip check` (#336).
+- Traced callable targets that capture no spans now record an actionable invalid-trace warning instead of silently reporting valid trace metadata (#337).
+- Keep viewer result tables within their containers, wrap or truncate long labels, and position metric dropdowns so overflow cannot clip their options (#342).
+- Proxy-generated network evidence is stored in a host-only directory outside the evaluated target's writable mount (#326).
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version (#334).
 - Declare `aiohttp`, which is directly used by the HTTP endpoint target, instead of relying on LiteLLM to install it transitively (#336).
 - Update LiteLLM to patched version 1.84.1 and cap it below 2.0 (#330).
