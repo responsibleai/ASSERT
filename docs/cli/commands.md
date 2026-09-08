@@ -95,6 +95,22 @@ callable, connector, endpoint, and sandbox targets, model usage inside the
 target is opaque to ASSERT and is explicitly excluded; tester and judge usage
 is still estimated.
 
+The estimator counts known prompts and tool schemas locally, then projects
+completion lengths and their reuse in later conversation turns and judge inputs.
+Small target output limits use 87.5% of the configured cap rather than assuming
+every answer exhausts it. Larger prompt answers retain a 512-token baseline,
+75% budget scaling, and a 768-token projection ceiling; scenario answers use
+384 tokens, subject to the same 87.5% cap. Judge outputs use the larger of
+512 tokens or a representative response shaped by the scoring contract, capped
+by the judge's output limit.
+
+Tool-enabled targets assume one tool round trip per turn: one schema-shaped
+tool-call response, one tool result, and one final answer. Tool history is
+retained in later requests and projected judge transcripts. Simulated-tool
+requests use the same prompt builder as execution. These are planning
+heuristics, not guaranteed upper bounds: longer responses, extra tool calls,
+retries, and hidden provider overhead can exceed the estimate.
+
 ## `results list`
 
 List suites or list runs for one suite.

@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import yaml
 
@@ -31,7 +33,24 @@ from assert_ai.core.io import (
     normalize_test_case_rows,
     write_jsonl,
 )
-from assert_ai.core.token_estimator import estimate_pipeline_tokens
+from assert_ai.core.model_client import estimate_token_count
+from assert_ai.core.token_estimator import (
+    _CaseProfile,
+    _high_side_prompt_output,
+    _project_prompt_case,
+    _project_scenario_case,
+    _representative_tool_value,
+    _target_output,
+    _transcript_xml,
+    estimate_pipeline_tokens,
+)
+from assert_ai.core.transcript import (
+    AddMessageEdit,
+    Message as TranscriptMessage,
+    Transcript,
+    TranscriptEvent,
+    TranscriptMetadata,
+)
 from assert_ai.runner import estimate_pipeline_usage
 from assert_ai.stages import inference as inference_stage
 from assert_ai.stages import judge as judge_stage
@@ -108,7 +127,164 @@ def _record_cached_compatibility_file(
     )
 
 
+def _tool_profile(kind: str) -> _CaseProfile:
+    return _CaseProfile(
+        kind=kind,
+        test_case_id="tool-case",
+        description="Calculate the sum of two numbers.",
+        system_prompt="Use the calculator.",
+        tools=({
+            "name": "calculate",
+            "parameters": [
+                {"name": "left", "type": "integer"},
+                {"name": "right", "type": "integer"},
+            ],
+        },),
+    )
+
+
 class TokenEstimatorTest(unittest.TestCase):
+    def test_target_output_leaves_headroom_without_lowering_large_budget_baseline(
+        self,
+    ) -> None:
+        for limit, expected in [
+            (1, 1), (64, 56), (256, 224), (512, 448),
+            (900, 675), (1_000, 750), (4_000, 768), (None, 512),
+        ]:
+            with self.subTest(limit=limit):
+                self.assertEqual(_high_side_prompt_output(limit), expected)
+        self.assertEqual(_target_output(384, 256), 224)
+        self.assertEqual(_target_output(384, 1_000), 384)
+
+    def test_projected_transcript_matches_runtime_escaping_and_truncation(self) -> None:
+        messages = [
+            ("system", 'Keep "quotes" & <tags>.'),
+            ("user", "x" * 10_001),
+            ("assistant", ""),
+            ("tool", "An ordinary tool result."),
+        ]
+        runtime = Transcript(
+            metadata=TranscriptMetadata(
+                kind="prompt", test_case_id="p1", behavior="", target="", tester_model="",
+            ),
+            events=[
+                TranscriptEvent(
+                    view=["target"], actor="target",
+                    edit=AddMessageEdit(message=TranscriptMessage(role=role, content=content)),
+                )
+                for role, content in messages
+            ],
+        )
+        expected, _ = runtime.format_transcript_xml("target", skip_system=False)
+        projected = _transcript_xml(messages)
+        self.assertEqual(projected, expected)
+        self.assertIn('truncated="true"', projected)
+        self.assertIn("10001 chars total", projected)
+        self.assertIn("&lt;tags&gt;", projected)
+        self.assertNotIn("x" * 10_001, projected)
+        self.assertEqual(_transcript_xml([]), "<transcript>\n</transcript>")
+
+    def test_representative_tool_arguments_preserve_schema_shape(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "count": {"type": "integer"},
+                "ratio": {"type": "number"},
+                "enabled": {"type": "boolean"},
+                "mode": {"enum": ["fast", "slow"]},
+                "items": {"type": "array", "items": {"type": "object", "properties": {}}},
+                "unconstrained": {"type": "array", "items": True},
+            },
+        }
+        self.assertEqual(_representative_tool_value(schema), {
+            "city": "representative value", "count": 1, "ratio": 1,
+            "enabled": True, "mode": "fast", "items": [{}],
+            "unconstrained": ["representative value"],
+        })
+
+    def test_tool_projection_counts_call_json_instead_of_two_final_answers(self) -> None:
+        for simulator in (None, "openai/gpt-4o-mini"):
+            with self.subTest(simulator=simulator):
+                target = TargetConfig(
+                    model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=400),
+                    tools=(
+                        ToolsConfig(simulator=simulator)
+                        if simulator
+                        else ToolsConfig(module="example.tools")
+                    ),
+                )
+                estimate, transcript, notes = _project_prompt_case(
+                    _tool_profile("prompt"), ctx={}, target=target, max_tokens=400,
+                )
+                call_tokens = estimate_token_count(
+                    target.model.name,
+                    text=json.dumps({
+                        "name": "calculate", "arguments": {"left": 1, "right": 1},
+                    }),
+                )
+                self.assertEqual(estimate.calls, 3 if simulator else 2)
+                self.assertEqual(
+                    estimate.output_tokens,
+                    350 + call_tokens + (90 if simulator else 0),
+                )
+                self.assertIn("[Tool call: calculate(", transcript.transcript_xml)
+                self.assertIn("&quot;left&quot;: 1", transcript.transcript_xml)
+                self.assertIn("<tool ", transcript.transcript_xml)
+                self.assertTrue(any("one round trip" in note for note in notes))
+
+    def test_scenario_projection_preserves_tool_history_and_fills_simulator_prompt(
+        self,
+    ) -> None:
+        target = TargetConfig(
+            model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=400),
+            tools=ToolsConfig(simulator="openai/gpt-4o"),
+        )
+        evaluation = EvaluationConfig(
+            tester=TesterConfig(model=ModelConfig(name="openai/gpt-4o-mini")),
+            inference=InferenceConfig(max_turns=2),
+        )
+        requests = []
+
+        def record_request(model, messages, **kwargs):
+            requests.append((model, deepcopy(messages), kwargs))
+            return 100
+
+        with (
+            patch("assert_ai.core.token_estimator._request_tokens", side_effect=record_request),
+            patch("assert_ai.core.session.generate", side_effect=AssertionError("Provider called")),
+        ):
+            estimate, transcript, _ = _project_scenario_case(
+                _tool_profile("scenario"), ctx={}, target=target,
+                evaluation=evaluation, max_tokens=400,
+            )
+
+        self.assertEqual(estimate.calls, 8)
+        self.assertEqual(estimate.input_tokens, 800)
+        target_requests = [
+            messages for _, messages, kwargs in requests if kwargs.get("tools")
+        ]
+        self.assertEqual(
+            [sum(message.role == "tool" for message in messages) for messages in target_requests],
+            [0, 1, 1, 2],
+        )
+        self.assertEqual(target_requests[1][2].tool_calls[0].arguments, {"left": 1, "right": 1})
+        self.assertEqual(target_requests[1][3].tool_call_id, target_requests[1][2].tool_calls[0].id)
+        self.assertNotEqual(target_requests[3][-1].tool_call_id, target_requests[1][-1].tool_call_id)
+        simulator_prompts = [
+            messages for model, messages, _ in requests if model == target.tools.simulator
+        ]
+        self.assertEqual(len(simulator_prompts), 2)
+        for prompt in simulator_prompts:
+            self.assertNotIn("{{", prompt)
+            self.assertIn("Calculate the sum of two numbers.", prompt)
+            self.assertIn("User: request", prompt)
+            self.assertNotIn("Use the calculator.", prompt)
+        self.assertIn("(none yet)", simulator_prompts[0])
+        self.assertIn('- calculate({"left": 1, "right": 1}) -> result', simulator_prompts[1])
+        self.assertIn("Target: response", simulator_prompts[1])
+        self.assertEqual(transcript.transcript_xml.count("[Tool call: calculate("), 2)
+
     def test_config_estimate_is_read_only(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -397,7 +573,7 @@ class TokenEstimatorTest(unittest.TestCase):
         self.assertEqual(estimate.stages["inference"].calls, 2)
         self.assertEqual(estimate.stages["judge"].calls, 2)
         self.assertEqual(estimate.stages["inference"].output_tokens, 1_500)
-        self.assertEqual(estimate.stages["judge"].output_tokens, 1_280)
+        self.assertEqual(estimate.stages["judge"].output_tokens, 1_024)
         self.assertGreater(estimate.input_tokens, 0)
         self.assertGreater(estimate.output_tokens, 0)
         self.assertEqual(estimate.uncertainty, 0.35)
@@ -412,6 +588,35 @@ class TokenEstimatorTest(unittest.TestCase):
             estimate.upper_bound_tokens,
             estimate.total_tokens,
         )
+
+    def test_judge_output_grows_with_contract_and_respects_completion_limit(self) -> None:
+        outputs = {}
+        with TemporaryDirectory() as tmp_dir:
+            ctx = _base_context(Path(tmp_dir))
+            suite_root = Path(ctx["suite_root"])
+            _write_jsonl(
+                suite_root / "test_set.jsonl",
+                [{"type": "prompt", "test_case_id": "p1", "seed": {"description": "Answer."}}],
+            )
+            ctx["target"] = TargetConfig(
+                model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=256),
+            )
+            for categories, limit in [(1, 1_000), (20, 1_000), (20, 128)]:
+                _write_taxonomy(suite_root / "taxonomy.json", categories)
+                ctx["evaluation"] = EvaluationConfig(
+                    judge=JudgeConfig(
+                        model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=limit),
+                    ),
+                )
+                estimate = estimate_pipeline_tokens(
+                    ctx, [("inference", object(), {}), ("judge", object(), {})],
+                )
+                outputs[(categories, limit)] = estimate.stages["judge"].output_tokens
+
+        self.assertEqual(outputs[(1, 1_000)], 512)
+        self.assertGreater(outputs[(20, 1_000)], outputs[(1, 1_000)])
+        self.assertLessEqual(outputs[(20, 1_000)], 1_000)
+        self.assertEqual(outputs[(20, 128)], 128)
 
     def test_callable_scenario_excludes_unknown_target_usage(self) -> None:
         with TemporaryDirectory() as tmp_dir:

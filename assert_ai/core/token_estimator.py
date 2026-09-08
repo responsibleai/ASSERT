@@ -9,7 +9,6 @@ import json
 import os
 import random
 from dataclasses import dataclass, field
-from html import escape
 from pathlib import Path
 from typing import Any, Callable, Sequence, TypeVar
 
@@ -37,6 +36,7 @@ from assert_ai.core.io import (
 )
 from assert_ai.core.judge import NODE_JUDGMENTS_KEY, build_judge_contract
 from assert_ai.core.model_client import Message, ToolCall, estimate_token_count
+from assert_ai.core.session import ResolverContext, SimulatedResolver
 from assert_ai.core.tools import (
     build_target_tools,
     load_toolset_file,
@@ -44,9 +44,12 @@ from assert_ai.core.tools import (
     resolve_toolset_path,
 )
 from assert_ai.core.transcript import (
+    AddMessageEdit,
+    Message as TranscriptMessage,
     Transcript,
     TranscriptEvent,
     TranscriptMetadata,
+    _format_tool_call_content,
 )
 from assert_ai.stages import inference as inference_stage
 from assert_ai.stages import judge as judge_stage
@@ -61,8 +64,9 @@ _TESTER_OUTPUT_TOKENS = 55
 _PROMPT_TARGET_OUTPUT_TOKENS = 512
 _PROMPT_TARGET_OUTPUT_BUDGET_RATIO = 0.75
 _PROMPT_TARGET_OUTPUT_TOKEN_CAP = 768
+_TARGET_OUTPUT_BUDGET_RATIO = 0.875
 _SCENARIO_TARGET_OUTPUT_TOKENS = 384
-_JUDGE_OUTPUT_TOKENS = 640
+_JUDGE_OUTPUT_TOKENS = 512
 _SIMULATOR_OUTPUT_TOKENS = 90
 _UNSCORABLE_STOP_REASONS = {
     "tester_input_refused",
@@ -207,7 +211,17 @@ def _high_side_prompt_output(max_tokens: int | None) -> int:
                 round(max_tokens * _PROMPT_TARGET_OUTPUT_BUDGET_RATIO),
             ),
         )
-    return _bounded_output(expected, max_tokens)
+    return _target_output(expected, max_tokens)
+
+
+def _target_output(expected: int, max_tokens: int | None) -> int:
+    # A completion limit is a ceiling, not an expected response length.
+    limit = (
+        round(max_tokens * _TARGET_OUTPUT_BUDGET_RATIO)
+        if max_tokens is not None
+        else None
+    )
+    return _bounded_output(expected, limit)
 
 
 def _request_tokens(
@@ -1011,14 +1025,133 @@ def _target_tools(
 
 
 def _transcript_xml(messages: list[tuple[str, str]]) -> str:
-    parts = ["<transcript>"]
-    for index, (role, content) in enumerate(messages, start=1):
-        tag = "assistant" if role == "assistant" else role
-        parts.append(
-            f'<{tag} index="{index}">\n{escape(content)}\n</{tag}>'
-        )
-    parts.append("</transcript>")
-    return "\n\n".join(parts)
+    transcript = Transcript(
+        metadata=TranscriptMetadata(
+            kind="estimated",
+            test_case_id="",
+            behavior="",
+            target="",
+            tester_model="",
+        ),
+        events=[
+            TranscriptEvent(
+                view=["target"],
+                actor="target",
+                edit=AddMessageEdit(message=TranscriptMessage(role=role, content=content)),
+            )
+            for role, content in messages
+        ],
+    )
+    xml, _ = transcript.format_transcript_xml("target", skip_system=False)
+    return xml
+
+
+def _representative_tool_value(schema: dict[str, Any] | bool) -> Any:
+    """Project argument shape, without trying to satisfy every schema constraint."""
+    if isinstance(schema, bool):
+        return "representative value"
+    values = schema.get("enum")
+    if isinstance(values, list) and values:
+        return values[0]
+    kind = schema.get("type")
+    if kind == "object":
+        return {
+            name: _representative_tool_value(value)
+            for name, value in (schema.get("properties") or {}).items()
+            if isinstance(value, (dict, bool))
+        }
+    if kind == "array":
+        return [_representative_tool_value(schema.get("items") or {})]
+    if kind in {"number", "integer"}:
+        return 1
+    if kind == "boolean":
+        return True
+    return "representative value"
+
+
+def _project_target_turn(
+    *,
+    estimate: StageTokenEstimate,
+    target: TargetConfig,
+    messages: list[Message],
+    transcript_messages: list[tuple[str, str]],
+    tools: list[dict[str, Any]] | None,
+    tool_history: list[dict[str, Any]],
+    description: str,
+    output_tokens: int,
+) -> str:
+    """Project one final answer and, when tools exist, one tool round trip."""
+
+    model = target.model
+    if isinstance(model, ModelConfig):
+        estimate.calls += 1
+        estimate.input_tokens += _request_tokens(model.name, messages, tools=tools)
+        if tools:
+            function = tools[0]["function"]
+            parameters = function.get("parameters") or {}
+            tool_call = ToolCall(
+                name=str(function["name"]),
+                arguments={
+                    name: _representative_tool_value(schema)
+                    for name, schema in (parameters.get("properties") or {}).items()
+                    if isinstance(schema, (dict, bool))
+                },
+                call_id=f"estimated_tool_call_{len(tool_history) + 1}",
+            )
+            estimate.output_tokens += _bounded_output(
+                estimate_token_count(
+                    model.name,
+                    text=json.dumps({
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    }),
+                ),
+                model.max_tokens,
+            )
+            messages.append(
+                Message(role="assistant", content="", tool_calls=[tool_call]),
+            )
+            transcript_messages.append(("assistant", ""))
+            simulator = target.tools.simulator if target.tools is not None else None
+            tool_result = _synthetic_text(
+                _SIMULATOR_OUTPUT_TOKENS if simulator else 80,
+                "result",
+            )
+            if simulator:
+                resolver = SimulatedResolver(
+                    model=simulator,
+                    prompt_template=inference_stage.TOOL_SIM_PROMPT,
+                    scenario={"description": description},
+                )
+                simulator_prompt = resolver.build_prompt(
+                    tool_name=tool_call.name,
+                    tool_args=tool_call.arguments,
+                    context=ResolverContext(
+                        conversation_messages=messages,
+                        tool_history=tool_history,
+                    ),
+                )
+                estimate.calls += 1
+                estimate.input_tokens += _request_tokens(simulator, simulator_prompt)
+                estimate.output_tokens += _SIMULATOR_OUTPUT_TOKENS
+            messages.append(Message(role="tool", content=tool_result, tool_call_id=tool_call.id))
+            transcript_messages.append(
+                ("tool", _format_tool_call_content(
+                    tool_call.name, tool_call.arguments, tool_result,
+                )),
+            )
+            tool_history.append({
+                "tool_name": tool_call.name,
+                "tool_args": tool_call.arguments,
+                "tool_result": tool_result,
+            })
+            estimate.calls += 1
+            estimate.input_tokens += _request_tokens(model.name, messages, tools=tools)
+        estimate.output_tokens += output_tokens
+    target_text = _synthetic_text(output_tokens, "response")
+    messages.append(Message(role="assistant", content=target_text))
+    transcript_messages.append(("assistant", target_text))
+    return target_text
 
 
 def _project_prompt_case(
@@ -1042,63 +1175,26 @@ def _project_prompt_case(
     target_output = _high_side_prompt_output(
         target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens
     )
-    target_text = _synthetic_text(target_output, "response")
+    tools = None
     if isinstance(target.model, ModelConfig):
         tools, tool_note = _target_tools(target, profile, ctx)
         if tool_note:
             notes.append(tool_note)
-        estimate.calls += 1
-        estimate.input_tokens += _request_tokens(
-            target.model.name,
-            request_messages,
-            tools=tools,
+    _project_target_turn(
+        estimate=estimate,
+        target=target,
+        messages=request_messages,
+        transcript_messages=transcript_messages,
+        tools=tools,
+        tool_history=[],
+        description=profile.description,
+        output_tokens=target_output,
+    )
+    if tools:
+        notes.append(
+            "Tool usage assumes one round trip per target turn with representative "
+            "arguments; additional calls are not included."
         )
-        estimate.output_tokens += target_output
-        if tools:
-            tool_call = ToolCall(
-                name=str(tools[0]["function"]["name"]),
-                arguments={"query": "representative value"},
-                call_id="estimated_tool_call",
-            )
-            follow_up = list(request_messages)
-            follow_up.append(
-                Message(
-                    role="assistant",
-                    content="",
-                    tool_calls=[tool_call],
-                )
-            )
-            tool_result = _synthetic_text(80, "result")
-            follow_up.append(
-                Message(
-                    role="tool",
-                    content=tool_result,
-                    tool_call_id=tool_call.id,
-                )
-            )
-            estimate.calls += 1
-            estimate.input_tokens += _request_tokens(
-                target.model.name,
-                follow_up,
-                tools=tools,
-            )
-            estimate.output_tokens += target_output
-            if target.tools is not None and target.tools.simulator:
-                simulator_prompt = (
-                    inference_stage.TOOL_SIM_PROMPT
-                    .replace("{{description}}", profile.description)
-                    .replace("{{tool_name}}", tool_call.name)
-                    .replace("{{tool_args}}", json.dumps(tool_call.arguments))
-                    .replace("{{conversation}}", profile.description)
-                    .replace("{{tool_history}}", "[]")
-                )
-                estimate.calls += 1
-                estimate.input_tokens += _request_tokens(
-                    target.tools.simulator,
-                    simulator_prompt,
-                )
-                estimate.output_tokens += _SIMULATOR_OUTPUT_TOKENS
-    transcript_messages.append(("assistant", target_text))
     return (
         estimate,
         _TranscriptProfile(
@@ -1150,7 +1246,7 @@ def _project_scenario_case(
         target_messages.append(Message(role="system", content=system_prompt))
         transcript_messages.append(("system", system_prompt))
 
-    target_output = _bounded_output(
+    target_output = _target_output(
         _SCENARIO_TARGET_OUTPUT_TOKENS,
         target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens,
     )
@@ -1163,6 +1259,12 @@ def _project_scenario_case(
         fixed_tools, tool_note = _target_tools(target, profile, ctx)
         if tool_note:
             notes.append(tool_note)
+    tool_history: list[dict[str, Any]] = []
+    if fixed_tools:
+        notes.append(
+            "Tool usage assumes one round trip per target turn with representative "
+            "arguments; additional calls are not included."
+        )
 
     for turn_index in range(evaluation.inference.max_turns):
         estimate.calls += 1
@@ -1176,39 +1278,16 @@ def _project_scenario_case(
         target_messages.append(Message(role="user", content=user_turn))
         transcript_messages.append(("user", user_turn))
 
-        target_text = _synthetic_text(target_output, "response")
-        if isinstance(target.model, ModelConfig):
-            estimate.calls += 1
-            estimate.input_tokens += _request_tokens(
-                target.model.name,
-                target_messages,
-                tools=fixed_tools,
-            )
-            estimate.output_tokens += target_output
-            if fixed_tools:
-                estimate.calls += 1
-                estimate.input_tokens += _request_tokens(
-                    target.model.name,
-                    target_messages
-                    + [
-                        Message(role="assistant", content=""),
-                        Message(role="tool", content=_synthetic_text(80, "result")),
-                    ],
-                    tools=fixed_tools,
-                )
-                estimate.output_tokens += target_output
-                if target.tools is not None and target.tools.simulator:
-                    estimate.calls += 1
-                    estimate.input_tokens += _request_tokens(
-                        target.tools.simulator,
-                        inference_stage.TOOL_SIM_PROMPT.replace(
-                            "{{description}}",
-                            profile.description,
-                        ),
-                    )
-                    estimate.output_tokens += _SIMULATOR_OUTPUT_TOKENS
-        target_messages.append(Message(role="assistant", content=target_text))
-        transcript_messages.append(("assistant", target_text))
+        target_text = _project_target_turn(
+            estimate=estimate,
+            target=target,
+            messages=target_messages,
+            transcript_messages=transcript_messages,
+            tools=fixed_tools,
+            tool_history=tool_history,
+            description=profile.description,
+            output_tokens=target_output,
+        )
         tester_messages.append(
             Message(
                 role="user",
