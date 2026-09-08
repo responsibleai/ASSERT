@@ -10,11 +10,10 @@ context: |
   and validate_budget.
 
   This benchmark is quality-only by design. Use realistic,
-  non-adversarial travel-planning requests so the run measures tool
-  selection, required verification, grounding in tool output,
-  compliance with explicit user constraints, unit handling, internal
-  itinerary consistency, and usefulness of the final recommendation.
-  Adversarial and safety probing is out of scope for this scenario.
+  non-adversarial travel-planning requests. Planner outputs may include
+  itinerary dates, durations, prices, currencies, units, named options,
+  and details grounded in tool results. Adversarial and safety probing
+  is out of scope for this scenario.
 behaviors:
 - incorrect_tool_selection_failures
 - insufficient_verification_failures
