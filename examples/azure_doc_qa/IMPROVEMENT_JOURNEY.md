@@ -9,9 +9,9 @@ that makes agent development systematic rather than guesswork.
 > `eval_config.yaml` that scored 9 judge dimensions over 56 test cases in a
 > single run. That config has since been split into one config per risk under
 > [`evals/`](evals/) — see
-> [`evals/fabricated_ungrounded_answer.yaml`](evals/fabricated_ungrounded_answer.yaml)
+> [`evals/ungrounded_fabricated_answer/`](evals/ungrounded_fabricated_answer/eval_config.yaml)
 > and
-> [`evals/confidential_internal_leakage.yaml`](evals/confidential_internal_leakage.yaml).
+> [`evals/unauthorized_internal_disclosure/`](evals/unauthorized_internal_disclosure/eval_config.yaml).
 > The rates below are preserved as historical results and will not reproduce
 > verbatim against the split configs; the loop they demonstrate is unchanged.
 
@@ -41,8 +41,8 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/ungrounded_fabricated_answer/eval_config.yaml
 ```
 
 The initial run showed a **~80% policy_violation rate** — nearly every test case
@@ -94,8 +94,8 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/ungrounded_fabricated_answer/eval_config.yaml
 ```
 
 Result: **34/56 passing (61%)**, up from ~20%. The routing JSON leak was
@@ -435,19 +435,19 @@ pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
 # Run eval (one config per risk; this is the grounding suite)
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/ungrounded_fabricated_answer/eval_config.yaml
 
 # Check results
-cat artifacts/results/azure-doc-qa-fabricated-answer/baseline/metrics.json
-# Read individual failures
+cat artifacts/results/azure-doc-qa-fabrication/baseline/metrics.json
+# Read individual failures (verdict.dimensions maps judge dimension -> violated)
 python -c "
 import json
-with open('artifacts/results/azure-doc-qa-fabricated-answer/baseline/scores.jsonl') as f:
+with open('artifacts/results/azure-doc-qa-fabrication/baseline/scores.jsonl') as f:
     for line in f:
         row = json.loads(line)
-        fails = {k: v for k, v in row.get('scores', {}).items() if v.get('pass') == False}
+        fails = [k for k, v in (row.get('verdict') or {}).get('dimensions', {}).items() if v]
         if fails:
-            print(f\"{row['test_case_id']}: {list(fails.keys())}\")
+            print(f\"{row['test_case_id']}: {fails}\")
 "
 ```
 

@@ -50,14 +50,14 @@ bash (macOS / Linux):
 
 ```bash
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 PowerShell (Windows):
 
 ```powershell
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 Check run status:
@@ -65,19 +65,19 @@ Check run status:
 PowerShell (Windows):
 
 ```powershell
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 bash (macOS / Linux):
 
 ```bash
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 Artifacts are written under:
 
 ```text
-artifacts/results/travel-planner-langgraph-v1/demo-1/
+artifacts/results/travel-planner-budget-overrun/baseline/
 ```
 
 ### Codespaces / VS Code Dev Containers
@@ -97,8 +97,8 @@ python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
 phoenix serve  # optional
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 ## What just happened
@@ -129,7 +129,7 @@ assert-ai init --model azure/gpt-5.4
 # or skip the first question:
 assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
-assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 See [CLI Commands](cli/commands.md) for the full option reference.

@@ -4,17 +4,40 @@
 """A sandbox tool host that emits Agent Hooks-shaped contexts around tool calls."""
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, Protocol
 
 from .agent_hooks_context import AgentHooksContextBuilder
-from .mediator import ActionMediator
-from .records import MediationRecord
+from .records import MediationDecision, MediationRecord
 
 ToolImpl = Callable[[dict[str, Any]], Any]
+
+
+def _canonicalize_tool_args(args: dict[str, Any] | None) -> dict[str, Any]:
+    """Create the one JSON-native argument snapshot used by every boundary."""
+    raw_args = {} if args is None else args
+    if not isinstance(raw_args, dict):
+        raise ValueError("tool arguments must be a JSON object")
+    try:
+        encoded = json.dumps(raw_args, ensure_ascii=False, allow_nan=False)
+        canonical = json.loads(encoded)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("tool arguments must contain only JSON-native values") from exc
+    if not isinstance(canonical, dict):
+        raise ValueError("tool arguments must be a JSON object")
+    return canonical
+
+
+class Mediator(Protocol):
+    def mediate(
+        self,
+        pre_context: dict[str, Any],
+        execute_effective: Callable[[dict[str, Any]], Any],
+    ) -> MediationDecision: ...
 
 
 class AgentHooksToolHost:
@@ -30,7 +53,7 @@ class AgentHooksToolHost:
         self,
         *,
         tools: Mapping[str, ToolImpl],
-        mediator: ActionMediator,
+        mediator: Mediator,
         agent_id: str,
         session_id: str,
         case_id: str | None = None,
@@ -47,21 +70,24 @@ class AgentHooksToolHost:
         self.records: list[MediationRecord] = []
 
     def call_tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
-        args = dict(args or {})
+        args = _canonicalize_tool_args(args)
         call_id = f"tc-{int(time.time() * 1000):x}-{secrets.token_hex(3)}"
         pre = self._builder.pre_tool_call(call_id=call_id, name=name, args=args)
-        real_tool_executed = False
+        impl = self._tools.get(name)
 
-        def execute_effective(effective_args: dict[str, Any]) -> Any:
-            nonlocal real_tool_executed
-            impl = self._tools.get(name)
-            if impl is None:
-                return {"status": "not_found", "message": f"No tool named {name}"}
-            real_tool_executed = True
-            return impl(dict(effective_args))
+        class TrackedExecutor:
+            real_executed = False
+
+            def __call__(self, effective_args: dict[str, Any]) -> Any:
+                if impl is None:
+                    return {"status": "not_found", "message": f"No tool named {name}"}
+                self.real_executed = True
+                return impl(dict(effective_args))
+
+        execute_effective = TrackedExecutor()
 
         decision = self._mediator.mediate(pre, execute_effective)
-        if decision.mode == "pass" and not real_tool_executed:
+        if decision.mode == "pass" and not execute_effective.real_executed:
             # The policy allowed the request, but no implementation existed to
             # execute. Do not claim a real side effect occurred merely because
             # the mediation mode was pass-through.

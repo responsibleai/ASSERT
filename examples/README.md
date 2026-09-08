@@ -15,18 +15,18 @@ python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY.
 
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
-assert-ai results status travel-langgraph-budget-overrun baseline
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 Artifacts are written to
-`artifacts/results/travel-langgraph-budget-overrun/baseline/`.
+`artifacts/results/travel-planner-budget-overrun/baseline/`.
 
 ## Create your own config
 
 ```powershell
 assert-ai init --model azure/gpt-5.4-mini
-assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.

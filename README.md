@@ -178,7 +178,7 @@ python -m pip install --upgrade pip      # requires pip >= 24.1
 pip install -e ".[phoenix]"              # install ASSERT + local Phoenix tracing
 pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env                     # add your provider key
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 The pip upgrade is required on fresh devcontainers/base images: older pip

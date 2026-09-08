@@ -64,3 +64,24 @@ def assert_tool_event(record: MediationRecord) -> dict[str, Any]:
         "content": json.dumps(evidence, sort_keys=True),
         "raw": {"action_mediation": evidence},
     }
+
+
+def host_action_event(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert one trusted-host ledger row into normal ASSERT tool evidence."""
+    evidence = {
+        key: value
+        for key, value in row.items()
+        if key not in {"id"} and value is not None
+    }
+    evidence["evidence_source"] = "host_mediator"
+    evidence["attempt_authoritative"] = True
+    evidence["decision_authoritative"] = True
+    evidence["result_authoritative"] = row.get("result_source") == "host_mediator"
+    return {
+        "role": "tool_result",
+        "tool_name": str(row.get("tool") or "tool"),
+        "tool_args": dict(row.get("args") or {}),
+        "tool_call_id": str(row.get("id") or "host-action"),
+        "content": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+        "raw": {"action_mediation": evidence},
+    }

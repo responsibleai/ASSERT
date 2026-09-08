@@ -54,7 +54,7 @@ permissions:
 env:
   AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
   AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
-  AZURE_API_VERSION: "2024-12-01-preview"
+  AZURE_API_VERSION: "2025-03-01-preview"
   # Long-context judge required — gpt-5.4-nano/mini fail mechanically on
   # realistic agent transcripts (>10 turns) by not returning the required
   # verdict schema. See user note 2026-05-09.

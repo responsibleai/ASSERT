@@ -11,17 +11,33 @@ attempted action.
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import asdict
 
 import aiohttp
+import pytest
 
+from assert_ai.core.action_claims import make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, _normalize_connector_response
+
+
+class _Content:
+    def __init__(self, payload):
+        self.body = json.dumps(payload).encode()
+
+    async def readexactly(self, size):
+        if len(self.body) < size:
+            raise asyncio.IncompleteReadError(self.body, size)
+        return self.body[:size]
 
 
 class _Response:
     def __init__(self, payload, *, status=200):
         self.payload = payload
         self.status = status
+        self.content = _Content(payload)
+        self.content_length = len(self.content.body)
 
     async def __aenter__(self):
         return self
@@ -48,10 +64,18 @@ class _Client:
         return _Response(self.payload)
 
 
-async def _run(payload, *, case_id=None):
+async def _run(
+    payload,
+    *,
+    case_id=None,
+    capture_action_claims=False,
+    max_response_bytes=None,
+):
     session = HTTPEndpointSession(
         endpoint="http://localhost:8080/chat",
         case_id=case_id,
+        capture_action_claims=capture_action_claims,
+        max_response_bytes=max_response_bytes,
     )
     client = _Client(payload)
     setattr(session, "_aiohttp", aiohttp)
@@ -97,12 +121,12 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
     tool_call = result.interaction_messages[1]
     tool_result = result.interaction_messages[2]
     assert tool_call["tool_calls"] == [{
-        "id": "tc-1",
+        "id": "endpoint-action-0",
         "function": "resume_line",
         "arguments": {"line_id": "L1002"},
     }]
     assert tool_result["function"] == "resume_line"
-    assert tool_result["tool_call_id"] == "tc-1"
+    assert tool_result["tool_call_id"] == "endpoint-action-0"
     assert tool_result["raw"] == {
         "endpoint": "http://localhost:8080/chat",
         "action_mediation": {
@@ -145,6 +169,80 @@ def test_endpoint_does_not_duplicate_final_assistant_event():
     assert [m["content"] for m in assistants] == ["Done."]
 
 
+def test_endpoint_preserves_omitted_tool_result_arguments():
+    result, _ = asyncio.run(_run({
+        "response": "Done.",
+        "events": [
+            {
+                "role": "tool_call",
+                "tool_name": "lookup",
+                "tool_args": {"customer_id": "C1001"},
+                "tool_call_id": "lookup-1",
+                "content": "",
+            },
+            {
+                "role": "tool_result",
+                "tool_name": "lookup",
+                "tool_call_id": "lookup-1",
+                "content": '{"status":"ok"}',
+            },
+        ],
+    }))
+
+    tool_result = next(
+        message for message in result.interaction_messages if message["role"] == "tool"
+    )
+    assert "arguments" not in tool_result
+
+
+def test_endpoint_captures_private_claims_before_sanitizing_artifacts():
+    call_id = "token-" + "a" * 24
+    tool_name = "secret-" + "b" * 24
+    arguments = {"authorization": "Bearer " + "c" * 24}
+    result, _ = asyncio.run(_run({
+        "response": "Done.",
+        "events": [
+            {
+                "role": "tool_call",
+                "tool_name": tool_name,
+                "tool_args": arguments,
+                "tool_call_id": call_id,
+                "content": "",
+            },
+            {
+                "role": "tool_result",
+                "tool_name": tool_name,
+                "tool_call_id": call_id,
+                "content": '{"status":"ok"}',
+            },
+        ],
+    }, capture_action_claims=True))
+
+    assert result._action_claims == [
+        make_action_claim(
+            kind="call",
+            call_id=call_id,
+            tool=tool_name,
+            arguments=arguments,
+            arguments_supplied=True,
+        ),
+        make_action_claim(
+            kind="result",
+            call_id=call_id,
+            tool=tool_name,
+            arguments=None,
+            arguments_supplied=False,
+        ),
+    ]
+    persisted_view = str(result.interaction_messages)
+    assert "_action_claims" not in asdict(result)
+    assert call_id not in persisted_view
+    assert tool_name not in persisted_view
+    assert arguments["authorization"] not in persisted_view
+    assert "endpoint-action-0" in persisted_view
+    assert "[REDACTED]" in persisted_view
+
+
 def test_structured_event_raw_is_sanitized_before_it_can_be_persisted():
     response = _normalize_connector_response({
         "text": "Done.",
@@ -171,6 +269,63 @@ def test_endpoint_without_events_keeps_black_box_behavior():
         ("user", "restore the line"),
         ("assistant", "Plain answer."),
     ]
+
+
+def test_endpoint_response_size_is_bounded_before_json_parsing():
+    with pytest.raises(RuntimeError, match="response exceeds the configured size limit"):
+        asyncio.run(_run(
+            {"response": "x" * 256},
+            max_response_bytes=64,
+        ))
+
+    result, _ = asyncio.run(_run(
+        {"response": "bounded"},
+        max_response_bytes=256,
+    ))
+    assert result.text == "bounded"
+
+
+def test_public_action_ids_stay_unique_across_turns():
+    """A multi-turn transcript must not reuse one public ID for two actions.
+
+    Per-turn alias numbering restarts at zero, so an early benign action and a
+    later sensitive action would share ``endpoint-action-0`` in the persisted
+    transcript and the judge could not tell them apart.
+    """
+    def event(call_id, tool):
+        return {
+            "role": "tool_call",
+            "tool_name": tool,
+            "tool_args": {},
+            "tool_call_id": call_id,
+            "content": "",
+        }
+
+    async def run_two_turns():
+        session = HTTPEndpointSession(endpoint="http://localhost:8080/chat")
+        client = _Client({"response": "unused"})
+        responses = [
+            {"response": "first", "events": [event("a1", "read_balance")]},
+            {"response": "second", "events": [event("b9", "wire_transfer")]},
+        ]
+        client.post = lambda *a, **k: _Response(responses.pop(0))  # type: ignore[method-assign]
+        setattr(session, "_aiohttp", aiohttp)
+        setattr(session, "_session", client)
+        first = await session.run_turn([Message(role="user", content="one")])
+        second = await session.run_turn([Message(role="user", content="two")])
+        return first, second
+
+    first, second = asyncio.run(run_two_turns())
+
+    def action_ids(result):
+        return [
+            call["id"]
+            for message in result.interaction_messages
+            for call in message.get("tool_calls") or []
+        ]
+
+    assert action_ids(first) == ["endpoint-action-0"]
+    assert action_ids(second) == ["endpoint-action-1"]
 
 
 def test_endpoint_rejects_non_object_json():

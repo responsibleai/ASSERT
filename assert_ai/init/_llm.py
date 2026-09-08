@@ -13,11 +13,18 @@ def chat_completion(
     *,
     model: str,
     messages: list[dict[str, str]],
-    temperature: float = 0.7,
+    temperature: float = 1,
     max_tokens: int = 4096,
     response_format: dict[str, str] | None = None,
+    web_search: bool = False,
 ) -> str:
     """Call litellm.completion synchronously and return the content string.
+
+    When ``web_search`` is True, the turn is routed through the shared
+    ``model_client.generate`` path so the design agent can do live web
+    research via the OpenAI/Azure Responses API ``web_search_preview``
+    tool (the same transport the ``systematize`` pipeline stage uses).
+    Otherwise the fast Chat Completions path below is used unchanged.
 
     Raises:
         LLMAuthError: Bad API key or credentials.
@@ -25,15 +32,24 @@ def chat_completion(
         LLMRateLimitError: Rate limited.
         LLMProviderError: Provider-side error (5xx).
     """
-    import litellm
+    if web_search:
+        return _chat_completion_web_search(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     from assert_ai.core.model_client import (
         _ResponsesApiNotAvailableError,
         _activate_chat_completions_fallback,
         _classify_llm_error,
         _force_chat_completions,
+        _get_litellm_module,
         _maybe_inject_azure_aad_token,
     )
+
+    litellm = _get_litellm_module()
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -88,6 +104,52 @@ def chat_completion(
     if content is None:
         content = ""
     return content.strip()
+
+
+def web_search_available(model: str) -> bool:
+    """Whether ``model`` can drive the design agent's live web research.
+
+    Web search rides the OpenAI/Azure Responses API ``web_search_preview``
+    tool, so it is gated to those model families (the same gate the
+    pipeline stages use). Returns False for other providers so the CLI can
+    degrade to a knowledge-only conversation with a warning instead of
+    crashing mid-run.
+    """
+    from assert_ai.core.model_client import _supports_web_search_preview
+
+    return _supports_web_search_preview(model)
+
+
+def _chat_completion_web_search(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """Run one design-agent turn with live web search enabled.
+
+    Routes through the shared ``model_client.generate`` path so the init
+    agent reuses the pipeline's web-search transport: the OpenAI/Azure
+    Responses API ``web_search_preview`` tool, with the same automatic
+    degradation to Chat Completions (dropping web grounding) when the
+    Responses API is unavailable in the region. JSON-shape reliability is
+    left to the design loop's existing parse-and-retry protocol rather
+    than a forced ``response_format`` — the Responses API path constrains
+    output shape differently, and the loop already re-asks on malformed
+    JSON.
+    """
+    from assert_ai.core.model_client import GenerateOptions, generate
+    from assert_ai.core.runtime_safety import run_stage_coro
+
+    options = GenerateOptions(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        web_search=True,
+        call_label="init-design-agent",
+    )
+    response = run_stage_coro(generate(model, messages, options))
+    return (response.text or "").strip()
 
 
 def chat_completion_json(

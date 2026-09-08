@@ -11,8 +11,8 @@ Architecture:
 Usage:
     One config per risk lives under ``evals/``; pick the one you want to measure.
 
-    assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
-    assert-ai run --config examples/travel_planner_langgraph/evals/fabricated_travel_details.yaml
+    assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
+    assert-ai run --config examples/travel_planner_langgraph/evals/fabricated_travel_details/eval_config.yaml
 """
 
 from __future__ import annotations

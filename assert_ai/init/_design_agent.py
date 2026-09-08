@@ -215,6 +215,7 @@ def run_design_loop(
     judge_preset: str | None,
     dimension_hints: str | None,
     default_model_hint: str | None = None,
+    web_search: bool = False,
     non_interactive: bool,
     max_turns: int,
     console: Console,
@@ -235,6 +236,7 @@ def run_design_loop(
         describe=describe,
         model=model,
         default_model_hint=default_model_hint,
+        web_search=web_search,
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_msg}]
@@ -299,6 +301,7 @@ def run_design_loop(
                         model=model,
                         messages=messages,
                         response_format={"type": "json_object"},
+                        web_search=web_search,
                     )
             except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
                 log.error("LLM error: %s", exc)

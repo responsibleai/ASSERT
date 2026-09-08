@@ -10,18 +10,16 @@ import contextlib
 import inspect
 import json
 import logging
-import re
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
+from assert_ai.core.action_claims import ActionClaim, action_claims_from_endpoint_events
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.model_client import (
     GenerateOptions,
     Message,
     ModelResponse,
-    ToolCall,
     _classify_llm_error,
     build_llm_call_trace,
     generate,
@@ -29,56 +27,47 @@ from assert_ai.core.model_client import (
     normalize_response,
     summarize_response,
 )
+from assert_ai.core.sanitization import (
+    sanitize_untrusted_text,
+    sanitize_untrusted_value,
+)
 from assert_ai.core.tool_backend import load_tool_module
 from assert_ai.core.tools import build_target_tools
 
 log = logging.getLogger(__name__)
 
-# Regex patterns for common credential formats in plain text
-_CREDENTIAL_PATTERNS = re.compile(
-    r"("
-    # Bearer/Basic tokens
-    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
-    r"|Basic\s+[A-Za-z0-9+/]+=*"
-    # Common API key formats (sk-..., key-..., etc.)
-    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
-    # Generic long hex/base64 secrets following key-like prefixes
-    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
-    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
-    r")",
-    re.IGNORECASE,
-)
-
-_RESPONSE_REDACTED = "[REDACTED]"
-
-
 def _sanitize_response_text(text: str) -> str:
-    """Redact credential-like patterns from response text before persisting."""
-    if not text:
-        return text
-    sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
-    if sanitized != text:
-        log.warning(
-            "Credential-like patterns detected and redacted from HTTP endpoint response"
-        )
-    return sanitized
+    """Compatibility wrapper for callers of the former private helper."""
+    return sanitize_untrusted_text(text)
 
 
 def _sanitize_endpoint_value(value: Any) -> Any:
-    """Recursively redact credential-like strings in endpoint-supplied data.
+    """Compatibility wrapper for callers of the former private helper."""
+    return sanitize_untrusted_value(value)
 
-    Endpoint events are attacker-adjacent: the agent under test can influence
-    tool arguments and tool results, and every one of those strings is persisted
-    into run artifacts. Sanitizing only the final response text would leave the
-    event channel as an unredacted path for the same credential patterns.
+
+def _sanitize_endpoint_events(value: Any, *, id_offset: int = 0) -> Any:
+    """Redact event payloads and assign collision-free public call IDs.
+
+    ``id_offset`` keeps aliases unique across turns in one session. Without it,
+    every turn restarts at zero and distinct actions from different turns share
+    a public ID in the persisted transcript.
     """
-    if isinstance(value, str):
-        return _sanitize_response_text(value)
-    if isinstance(value, list):
-        return [_sanitize_endpoint_value(item) for item in value]
-    if isinstance(value, Mapping):
-        return {key: _sanitize_endpoint_value(item) for key, item in value.items()}
-    return value
+    sanitized = sanitize_untrusted_value(value)
+    if not isinstance(value, list) or not isinstance(sanitized, list):
+        return sanitized
+    id_aliases: dict[str, str] = {}
+    for original, redacted in zip(value, sanitized, strict=True):
+        if not isinstance(original, dict) or not isinstance(redacted, dict):
+            continue
+        original_id = original.get("tool_call_id")
+        if isinstance(original_id, str):
+            alias = id_aliases.setdefault(
+                original_id,
+                f"endpoint-action-{id_offset + len(id_aliases)}",
+            )
+            redacted["tool_call_id"] = alias
+    return sanitized
 
 
 # ── Adapter types and helpers ──────────────────────────────────
@@ -219,6 +208,9 @@ class TurnResult:
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] | None = None
     finish_reason: str | None = None
+    # Set only on individual HTTP results when requested. ClassVar keeps this
+    # digest-only side channel out of dataclass serialization.
+    _action_claims: ClassVar[list[ActionClaim] | None] = None
 
 
 class SimulatedResolver:
@@ -695,17 +687,39 @@ class HTTPEndpointSession:
         message_timeout_s: float | None = None,
         allow_private: bool = False,
         case_id: str | None = None,
+        capture_action_claims: bool = False,
+        max_response_bytes: int | None = None,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
         validate_endpoint_url(endpoint, allow_private=allow_private)
+        if max_response_bytes is not None and max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be positive")
         self._endpoint = endpoint
         self._headers = headers or {}
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
         self._case_id = case_id
+        self._capture_action_claims = capture_action_claims
+        self._max_response_bytes = max_response_bytes
+        self._public_action_id_count = 0
         self._session = None  # aiohttp.ClientSession
         self._resolver = None
+
+    def _sanitize_events_for_turn(self, events: Any) -> Any:
+        """Sanitize turn events with session-unique public action IDs."""
+        sanitized = _sanitize_endpoint_events(
+            events,
+            id_offset=self._public_action_id_count,
+        )
+        if isinstance(sanitized, list):
+            turn_ids = {
+                event.get("tool_call_id")
+                for event in sanitized
+                if isinstance(event, dict) and isinstance(event.get("tool_call_id"), str)
+            }
+            self._public_action_id_count += len(turn_ids)
+        return sanitized
 
     @property
     def runtime_mode(self) -> str:
@@ -776,7 +790,33 @@ class HTTPEndpointSession:
                         f"HTTP endpoint {self._endpoint} returned a redirect, which is not allowed"
                     )
                 resp.raise_for_status()
-                data = await resp.json()
+                if self._max_response_bytes is None:
+                    data = await resp.json()
+                else:
+                    content_length = getattr(resp, "content_length", None)
+                    if (
+                        isinstance(content_length, int)
+                        and content_length > self._max_response_bytes
+                    ):
+                        raise RuntimeError(
+                            "HTTP endpoint response exceeds the configured size limit"
+                        )
+                    try:
+                        body = await resp.content.readexactly(
+                            self._max_response_bytes + 1
+                        )
+                    except asyncio.IncompleteReadError as exc:
+                        body = exc.partial
+                    else:
+                        raise RuntimeError(
+                            "HTTP endpoint response exceeds the configured size limit"
+                        )
+                    try:
+                        data = json.loads(body)
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError(
+                            f"HTTP endpoint {self._endpoint} returned invalid JSON"
+                        ) from exc
                 if not isinstance(data, dict):
                     raise RuntimeError(
                         f"HTTP endpoint {self._endpoint} returned a non-object JSON response"
@@ -794,13 +834,18 @@ class HTTPEndpointSession:
                         type(raw_text).__name__,
                     )
                     raw_text = str(raw_text)
+                private_action_claims = (
+                    action_claims_from_endpoint_events(data.get("events"))
+                    if self._capture_action_claims
+                    else None
+                )
                 response = _normalize_connector_response({
                     # Sanitize before persisting: endpoint-supplied event content
                     # (tool args, tool results) is agent-influenced and lands in
                     # run artifacts, so it needs the same redaction as the
                     # response text.
                     "text": _sanitize_response_text(raw_text),
-                    "events": _sanitize_endpoint_value(data.get("events")),
+                    "events": self._sanitize_events_for_turn(data.get("events")),
                     # Do not persist the complete endpoint payload: it may carry
                     # backend diagnostics or sensitive data. Preserve only the
                     # endpoint identity; normalized event content is retained
@@ -821,12 +866,14 @@ class HTTPEndpointSession:
             response=response,
         )
 
-        return TurnResult(
+        result = TurnResult(
             text=response.text,
             state_messages=list(messages) + [Message(role="assistant", content=response.text)],
             interaction_messages=interaction_messages,
             raw=response.raw,
         )
+        result.__dict__["_action_claims"] = private_action_claims
+        return result
 
 
 class _ValidatingResolver:
@@ -1066,16 +1113,16 @@ def _serialize_connector_interaction_messages(
                     }
                 )
             elif event.role == "tool_result":
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": event.content,
-                        "function": event.tool_name or "tool",
-                        "arguments": event.tool_args or {},
-                        "tool_call_id": event.tool_call_id,
-                        "raw": persisted_raw,
-                    }
-                )
+                tool_result = {
+                    "role": "tool",
+                    "content": event.content,
+                    "function": event.tool_name or "tool",
+                    "tool_call_id": event.tool_call_id,
+                    "raw": persisted_raw,
+                }
+                if event.tool_args is not None:
+                    tool_result["arguments"] = event.tool_args
+                messages.append(tool_result)
         # Tool-evidence endpoints commonly return only tool_call/tool_result
         # events plus a top-level final response. Preserve that final response
         # exactly once so evidence enrichment never removes the answer itself.
