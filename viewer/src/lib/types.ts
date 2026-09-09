@@ -310,6 +310,64 @@ export interface RunMetrics {
 	dimensions: Record<string, DimensionMetrics>;
 }
 
+export interface PreRunTokenEstimate {
+	calls: number;
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+	lower_bound_tokens: number;
+	upper_bound_tokens: number;
+	notes?: string[];
+}
+
+export interface TokenStageEstimateView {
+	calls: number;
+	inputTokens: number;
+	outputTokens: number;
+	totalTokens: number;
+}
+
+export interface TokenEstimateView extends TokenStageEstimateView {
+	lowerBoundTokens: number;
+	upperBoundTokens: number;
+	stages: Record<string, TokenStageEstimateView>;
+	notes: string[];
+}
+
+export interface TokenActualUsageView {
+	requests: number;
+	calls: number;
+	missingUsageCalls: number;
+	inputTokens: number;
+	outputTokens: number;
+	totalTokens: number;
+	cachedInputTokens: number;
+	cacheCreationInputTokens: number;
+	cacheHitRate: number;
+	usageCoverage: number;
+}
+
+export type TokenEstimateAccuracyView =
+	| {
+			status: 'available';
+			actualTotalTokens: number;
+			estimatedTotalTokens: number;
+			differenceTokens: number;
+			differenceRatio: number;
+			absolutePercentageError: number;
+	  }
+	| {
+			status: 'unavailable';
+			reason: string;
+			usageCoverage: number | null;
+	  };
+
+export interface TokenUsageView {
+	estimate: TokenEstimateView | null;
+	actual: TokenActualUsageView | null;
+	accuracy: TokenEstimateAccuracyView | null;
+}
+
 export interface RunListItem {
 	run_id: string;
 	has_judged: boolean;

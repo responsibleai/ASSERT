@@ -233,13 +233,13 @@ class SimulatedResolver:
     async def close(self) -> None:
         return None
 
-    async def resolve(
+    def build_prompt(
         self,
         *,
         tool_name: str,
         tool_args: dict[str, Any],
         context: ResolverContext,
-    ) -> ToolResolution:
+    ) -> str:
         prompt = self._prompt_template
         replacements = {
             "{{description}}": str(self._scenario.get("description") or ""),
@@ -250,6 +250,20 @@ class SimulatedResolver:
         }
         for placeholder, value in replacements.items():
             prompt = prompt.replace(placeholder, value)
+        return prompt
+
+    async def resolve(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        context: ResolverContext,
+    ) -> ToolResolution:
+        prompt = self.build_prompt(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            context=context,
+        )
         response = await generate(
             self._model,
             prompt,

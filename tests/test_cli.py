@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -33,7 +34,74 @@ class CliTest(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("Commands:", result.output)
+        self.assertIn("estimate", result.output)
         self.assertIn("run", result.output)
+
+    def test_estimate_outputs_machine_readable_json_without_logging_auth_mode(self) -> None:
+        with self.runner.isolated_filesystem():
+            config = Path("eval.yaml")
+            config.write_text("suite: test\npipeline: {}\n", encoding="utf-8")
+            runner_module = MagicMock()
+            runner_module.estimate_pipeline_usage.return_value = {
+                "schema_version": 1,
+                "calls": 2,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "lower_bound_tokens": 98,
+                "upper_bound_tokens": 203,
+                "stages": {},
+                "notes": [],
+            }
+            with (
+                patch("assert_ai.cli._load_runner_module", return_value=runner_module),
+                patch("assert_ai.core.azure_auth.log_resolved_azure_auth_mode") as log_auth,
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    ["estimate", "--config", str(config), "--output", "json"],
+                )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(json.loads(result.output)["total_tokens"], 150)
+        runner_module.estimate_pipeline_usage.assert_called_once_with(
+            config=str(config),
+            force_stages=[],
+            overrides=[],
+            concurrency=None,
+        )
+        log_auth.assert_not_called()
+
+    def test_estimate_text_reports_zero_when_no_model_calls_are_expected(
+        self,
+    ) -> None:
+        with self.runner.isolated_filesystem():
+            config = Path("eval.yaml")
+            config.write_text("suite: test\npipeline: {}\n", encoding="utf-8")
+            runner_module = MagicMock()
+            runner_module.estimate_pipeline_usage.return_value = {
+                "schema_version": 1,
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "lower_bound_tokens": 0,
+                "upper_bound_tokens": 0,
+                "stages": {},
+                "notes": ["Callable target-internal usage is not included."],
+            }
+            with patch(
+                "assert_ai.cli._load_runner_module",
+                return_value=runner_module,
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    ["estimate", "--config", str(config)],
+                )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("Estimated token usage: 0 tracked tokens", result.output)
+        self.assertIn("Callable target-internal usage is not included", result.output)
 
     @unittest.skip("--config is now required; default eval.yaml lookup removed in merge")
     def test_missing_default_config_errors(self) -> None:

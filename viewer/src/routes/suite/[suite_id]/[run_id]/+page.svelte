@@ -19,6 +19,7 @@
 	import { buildOutcomeOptions, buildOutcomePlotRows, type OutcomeRecord } from '$lib/outcome-plot.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
+	import TokenUsageSummary from '$lib/components/TokenUsageSummary.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
 	import {
 		normalizePromptResult,
@@ -990,6 +991,10 @@
 		{/if}
 	</div>
 </div>
+
+{#if data.tokenUsage}
+	<TokenUsageSummary tokenUsage={data.tokenUsage} />
+{/if}
 
 {#if !hasPromptEval && !hasAuditContent}
 	<!-- Empty state -->
