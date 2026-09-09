@@ -39,7 +39,8 @@ class CoercionAnnotatorDispatcher:
         snapshot = preliminary_policy_input.get("snapshot")
         if not isinstance(snapshot, Mapping):
             raise TypeError("native ACS preliminary input is missing snapshot")
-        user_message, within_bound = cc._normalized_user_message(
+
+        user_message, _within_bound = cc._normalized_user_message(
             str(snapshot.get("user_message") or "")
         )
         tool = preliminary_policy_input.get("tool")
@@ -50,58 +51,22 @@ class CoercionAnnotatorDispatcher:
         tool_name = str(tool.get("name") or "")
         tool_args = policy_target.get("value")
         args = dict(tool_args) if isinstance(tool_args, Mapping) else {}
-        session_id = snapshot.get("control_session_id")
-        action_context = snapshot.get("current_action_binding")
-        binding_seal = snapshot.get("current_action_binding_seal")
-        try:
-            binding = (
-                bank_core._canonical_binding_value(dict(action_context))
-                if isinstance(action_context, Mapping)
-                else None
-            )
-        except (TypeError, ValueError):
-            binding = None
-        if (
-            not isinstance(session_id, str)
-            or not session_id
-            or not isinstance(binding, dict)
-            or not isinstance(binding_seal, str)
-            or not bank_core._validate_control_action_binding(
-                binding,
-                binding_seal,
-                user_message,
-                tool_name,
-                args,
-                session_id,
-            )
-        ):
-            verification = cc._verification_failure(
-                cc.ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-                tool_name,
-                args,
-            )
-        else:
+
+        verification = snapshot.get("control_artifact_verification")
+        if not isinstance(verification, Mapping):
             verification = bank_core.verify_control_artifacts(
                 user_message,
                 tool_name,
                 args,
-                session_id,
-                current_action_context=binding,
-            )
-        if not within_bound:
-            verification = cc._verification_failure(
-                bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
-                tool_name,
-                args,
-                verification,
+                str(snapshot.get("control_session_id") or bank_core.CONTROL_SESSION_ID),
             )
 
-        annotation = cc._annotate_trusted(
+        annotation = cc.annotate(
             user_message,
             tool_name,
             args,
             scorer=self.scorer,
-            artifact_verification=verification,
+            artifact_verification=dict(verification),
         )
         self.trace.append(
             {

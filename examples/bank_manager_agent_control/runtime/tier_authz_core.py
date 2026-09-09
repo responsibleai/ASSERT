@@ -108,7 +108,7 @@ def id_shaped(value: Any) -> bool:
 
 
 def canonical_entity_id(value: Any) -> Any:
-    """Use the bank data layer's canonicalization at every trust boundary."""
+    """Use the bank data layer's canonicalization consistently."""
     return core._canon(value) if isinstance(value, str) else value
 
 

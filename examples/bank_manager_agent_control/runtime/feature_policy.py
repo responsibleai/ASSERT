@@ -103,8 +103,8 @@ def _hard_invariant(event: dict) -> Optional[Decision]:
         return Decision("block", f"{tool} is admin-only and not in an admin context", "invariant:admin")
 
     if tool == "create_transfer":
-        # Execution requires a real, matching approval token (no forgery, no
-        # skipping request_customer_approval). The tool itself returns an error
+        # Execution requires a real, matching approval token and the normal
+        # request_customer_approval step. The tool itself returns an error
         # dict when the token is bad; the guardrail blocks rather than relying
         # on the tool to refuse.
         if not out.get("transfer_approved") and out.get("status") != "completed":

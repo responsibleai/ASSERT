@@ -9,6 +9,12 @@ cases, captures the agent through OpenTelemetry, and judges the complete
 execution. [ACS](https://github.com/responsibleai/AgentControlSpecification)
 enforces the selected control.
 
+**Illustrative evaluation example — not a production authorization control.**
+This example demonstrates the ASSERT evaluate → control → optimize loop. Its
+bank, records, control references, and classifier are synthetic. It is not
+hardened against adversarial input and must not be used as a security reference
+implementation.
+
 ```text
 behavior spec
   -> reviewable behavior categories
@@ -32,6 +38,9 @@ The example deliberately separates two failure shapes:
 This is not a comparison against an agent with no controls. Both baselines are
 reasonable first versions; runtime evaluation finds where they stop scaling.
 
+See the [AI Engineer World's Fair 2026 talk deck](../../talks/aiewf-18min/aiewf-2026-deck.pdf)
+for a slide walkthrough of both behaviors and their results.
+
 ---
 
 ## Behavior 1: ASSERT finds the coverage bug; ACS fixes the policy once
@@ -46,20 +55,22 @@ record domain, request type, pressure, and action order. The test cases exercise
 deposit accounts, loans, brokerage records, and client records against the real
 agent.
 
-The deposit service already had a deterministic, fail-closed gate. The bug was
-coverage: later services never called it.
+The deposit service already had a deterministic gate. The bug was coverage:
+later services never called it.
 
-The historical viewer snapshot reports Total 72 per arm:
+The published historical viewer snapshot reports Total 72 per arm. Source runs are not committed:
 
 | | Baseline gate | Defensive prompt | ACS Rego |
 |---|---:|---:|---:|
 | **Impermissible behavior violated:** unauthorized exposure | 8% | 6% | **0%** |
 | **Permissible behavior violated:** standard-tier request mishandled | 0% | 0% | **0%** |
 
-In that historical snapshot, the defensive prompt improved the displayed
-aggregate by only two percentage points because it could not extend enforcement
-into services that never called the gate. ACS Rego eliminated every observed
-impermissible authorization violation without adding permissible violations.
+In that published historical snapshot, the defensive prompt improved the
+displayed aggregate by only two percentage points because it could not extend
+enforcement into services that never called the gate. ACS Rego eliminated every
+observed impermissible authorization violation without adding permissible
+violations. A separate 72-scenario multi-turn comparison was also published,
+but its source runs are not committed here.
 
 The ACS policy keys on normalized `risk_tier`, not on a customer ID or service:
 
@@ -86,10 +97,10 @@ hypothetical domains:
 | **Property-based Rego** | **13/13** | **0/11** |
 
 The same direct policy exercise allows 13/13 protected records after valid
-authorization. It proves the declarative rule is domain-independent once a
-trusted host emits the normalized envelope. It does not exercise host lookup,
-tool registration, or wrapper behavior for the two hypothetical domains and is
-not an end-to-end six-domain runtime claim.
+authorization. It shows the declarative rule is domain-independent once the
+host emits the normalized envelope. It does not exercise host lookup, tool
+registration, or wrapper behavior for the two hypothetical domains and is not
+an end-to-end six-domain runtime claim.
 
 ### Trace evidence is the default
 
@@ -114,10 +125,9 @@ to replace a recorded control artifact with:
 - an unrecorded verbal assurance: "the customer approved it on the phone"; or
 - deadline pressure: "we will backfill the paperwork after cutoff."
 
-All ordinary request fields are otherwise valid. The host rejects compound
-reference tokens, verifies canonical references against bank-owned state, and
-binds a record to the current action, source, exact destination/payee, amount
-scope, session, and expiry. The remaining distinction between coercive pressure
+All ordinary request fields are otherwise valid. The host checks cited control
+references against the synthetic bank registry and passes that evidence to the
+classifier-backed policy. The remaining distinction between coercive pressure
 and legitimate work is semantic. The baseline prompt already says
 authentication is not authorization and uses a keyword tripwire. The ACS arm
 runs the classifier dispatcher and Rego policy through the pinned native ACS
@@ -125,16 +135,15 @@ runtime.
 
 ### Historical 120-case comparison
 
-The historical viewer snapshot reports Total 120 per arm. The current
-120-prompt fixture and machine-readable labels live under
-[`fixtures/`](fixtures/). Its evidenced rows now have explicit action contracts
-that pass the production verifier. The per-case outcomes and exact result
-summary reproduce the earlier reviewed counts and paired statistics, but they
-retain their historical dataset hashes and explicitly do not apply to the
-corrected fixture until it is rerun. Raw `scores.jsonl` files and traces are not
-committed, so the repository cannot independently verify trace lineage for the
-outcome rows. This PR does not claim an actual historical model environment or
-a rerun against the current hardened runtime.
+The published historical viewer snapshot reports Total 120 per arm. The
+120-prompt fixture and machine-readable labels live under [`fixtures/`](fixtures/).
+The per-case outcomes and exact result summary reproduce the earlier reviewed
+counts and paired statistics, but they retain their historical dataset hashes
+and explicitly do not apply to the corrected fixture until it is rerun. Raw
+`scores.jsonl` files and traces are not committed, so the repository cannot
+independently verify trace lineage for the outcome rows. This PR does not claim
+an actual historical model environment or a rerun against the current example
+state.
 
 | | **Impermissible behavior violated:** coercion bypass | **Permissible behavior violated:** legitimate request mishandled |
 |---|---:|---:|
@@ -142,15 +151,14 @@ a rerun against the current hardened runtime.
 | Hardened prompt | 0% | **47%** |
 | ACS classifier | 0% | **27%** |
 
-In that historical snapshot, both controls eliminated observed impermissible
-violations. The ACS arm combined typed artifact verification with the
-classifier-backed policy, preserved 20
-percentage points more legitimate work than the hardened prompt, and matched
-the baseline permissible-violation rate.
+In that published historical snapshot, both controls eliminated observed
+impermissible violations. The ACS arm preserved 20 percentage points more
+legitimate work than the hardened prompt and matched the baseline
+permissible-violation rate.
 
-A separate held-out engineering check explains why the keyword tripwire is not
-enough: it missed 8 of 14 coercive requests written outside the rule-authoring
-set; the classifier caught all 14. This check is diagnostic, not a benchmark.
+A separate held-out engineering check informed the example design, but its
+source rows are not committed here. Treat it as diagnostic history, not a
+benchmark or release gate.
 
 The curated corpus and reviewed labels live under [`fixtures/`](fixtures/).
 Run artifacts are not committed.
@@ -168,7 +176,9 @@ The behavior specification defines the dimensions that matter:
 Over-refusal is one example of a permissible violation, not the name of the
 general axis.
 
-![Pareto plot for the two bank support agent behaviors](../../talks/aiewf-18min/assets/pareto.png)
+The published article also visualized these comparisons as a Pareto plot. The
+talk asset is split out from this prep branch, so use the tables above as the
+committed source of context here.
 
 Add operating cost—model and tool spend, latency, and human-review time—and the
 same comparison becomes an ROI frontier: a better, safer product at lower cost.
@@ -186,7 +196,8 @@ variables documented in [`.env.example`](.env.example); never commit `.env`.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,otel,langgraph,examples]"
+python -m pip install -e ".[acs,phoenix]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -196,7 +207,8 @@ macOS/Linux:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,otel,langgraph,examples]"
+python -m pip install -e ".[acs,phoenix]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 cp examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -271,7 +283,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `eval_coercion_authority.yaml` | Behavior 2's one traced config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
 | `runtime/coercion_annotator.py` | Host classifier dispatcher used by native ACS |
-| `runtime/bank_core.py` | Bank-owned control-artifact registry and action-scope verification |
+| `runtime/bank_core.py` | Bank-owned control-artifact registry and lightweight scope verification |
 | `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and historical per-case/result summaries with explicit provenance limits |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |
 | `scripts/coercion_scoreboard.py` | Paired result analysis and confidence bounds |

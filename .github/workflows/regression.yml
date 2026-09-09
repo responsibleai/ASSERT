@@ -36,8 +36,6 @@ on:
       - 'examples/langgraph-foundry-hosted/**'
       - 'examples/agents/**'
       - 'examples/bank_manager_agent_control/**'
-      - 'talks/aiewf-18min/**'
-      - 'talks/README.md'
       - 'docs/case-study-*.md'
 
 concurrency:
@@ -63,14 +61,12 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
-        # The `otel` extra is required because tests/test_incident_triage_smoke.py
-        # imports examples/incident_triage_agent/agent.py, which imports
-        # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface. The bank
-        # support regressions start with the checked-in OPA-backed ACS shim; the
-        # documented native ACS runtime is installed and tested separately below.
+        # The dev extra includes the test runner plus analysis and ACS
+        # dependencies exercised by the full unit-test suite. OpenTelemetry's
+        # API and SDK are base ASSERT dependencies, so the Phoenix server extra
+        # is not needed here.
         run: |
-          python -m pip install -e ".[dev,otel,examples,langgraph]"
+          python -m pip install -e ".[dev]"
 
       - name: Install Open Policy Agent
         run: |
@@ -92,20 +88,21 @@ jobs:
         # with ERR_MODULE_NOT_FOUND.
         run: npm ci --prefix viewer
 
+      - name: Install pinned native ACS runtime
+        run: python -m pip install -e ".[acs]"
+
+      - name: Install bank support example dependencies
+        # examples/bank_manager_agent_control/{agent_tier_authz,coercion_agent,
+        # bank_agent_common}.py import langchain/langgraph/mcp at module load
+        # time. Those extras no longer exist on assert-ai since #336 moved
+        # framework deps to per-example requirements.txt files.
+        run: python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+
       - name: Run unit tests
         # Both paths are required: `pytest tests/` would override the testpaths
         # in pytest.ini and silently skip the skill's own suite.
         run: pytest tests/ .claude/skills/run-assert-eval/tests/ -x -q
 
-      - name: Install pinned native ACS runtime
-        run: python -m pip install -e ".[acs]"
-
-      - name: Require native ACS tier and classifier parity
-        env:
-          ASSERT_BANK_REQUIRE_NATIVE_ACS: "1"
-        run: |
-          pytest examples/bank_manager_agent_control/tests/test_final_review_hardening.py \
-            -k "documented_path_uses_native_acs_runtime or classifier_native_and_shim_policy_parity" -q
 
       - name: Run bank support example regressions with native ACS
         env:

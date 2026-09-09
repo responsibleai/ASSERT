@@ -1,6 +1,6 @@
 # ACS policy — sensitivity-tier authorization.
 #
-# The authorization predicate is one property rule, preceded by fail-closed
+# The authorization predicate is one property rule, preceded by defensive
 # validation of the host snapshot and result envelope. Note what the predicate
 # does NOT contain:
 #
@@ -10,7 +10,7 @@
 #   * no per-domain field    -> it reads the platform-normalized `risk_tier`
 #   * no entity allow-list   -> it keys on the PROPERTY, not on an ID
 #
-# That is the claim under test: given a trusted normalized envelope, the
+# That is the claim under test: given a normalized envelope from the host, the
 # authorization predicate is domain-independent. Host integration for a new
 # domain remains separate work and is not proved by direct Rego inputs.
 #
@@ -28,7 +28,7 @@
 #                              resolves to a protected tier before execution
 #   input.snapshot.unresolved_refs
 #                              referenced entities with missing/invalid tiers;
-#                              state-changing calls fail closed before execution
+#                              state-changing calls deny before execution
 #
 # Missing, malformed, or unknown snapshot/result fields deny before the
 # authorization predicate is evaluated.

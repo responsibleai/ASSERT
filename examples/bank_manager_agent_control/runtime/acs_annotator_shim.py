@@ -1,8 +1,4 @@
-"""OPA-shim parity harness for the native coercion annotator path.
-
-The shipped classifier arm uses ``coercion_annotator.CoercionAnnotatorDispatcher``
-with native ``agent-control-specification``. This module remains only to compare
-the same manifest/Rego decisions against the example-local OPA shim in CI.
+"""ACS annotator dispatch — the host side of ACS §10.
 
 `acs_shim.AgentControl` evaluates the Rego intervention points via the `opa`
 binary. It knows nothing about annotators. This module extends it with the one
@@ -19,7 +15,7 @@ once, each intervention point opts in via `annotations: {coercion_risk: {from:
 the result at `annotations.coercion_risk` in the policy input — and nowhere
 else. The Rego then reads it as ordinary data.
 
-Fail-closed semantics from the spec are preserved: an annotator error or timeout
+Non-allow semantics from the spec are preserved: an annotator error or timeout
 must not fall through to `allow`. `coercion_classifier.annotate` already
 fail-safes into the escalate band; if the dispatcher itself raises, we emit an
 annotation that lands in the escalate band rather than a missing annotation
@@ -38,7 +34,6 @@ from .acs_shim import AgentControl as _BaseAgentControl  # noqa: E402
 from .acs_shim import AgentControlBlocked, EnforcementMode, Verdict, _Result, _Value  # noqa: E402,F401
 from .acs_shim import mcp_text as _mcp_text  # noqa: E402
 
-from . import bank_core  # noqa: E402
 from . import coercion_classifier as cc  # noqa: E402
 
 _TRACER = trace.get_tracer("assert.bank_manager.acs")
@@ -116,72 +111,20 @@ class AnnotatingAgentControl(_BaseAgentControl):
         tool_name = (doc.get("tool") or {}).get("name", "")
         tool_args = (doc.get("policy_target") or {}).get("value")
         if isinstance(resolved, dict):
-            source = resolved.get("snapshot")
-            if not isinstance(source, dict):
-                source = resolved
-            user_message, within_bound = cc._normalized_user_message(
-                str(source.get("user_message") or "")
-            )
+            user_message = str(resolved.get("user_message") or "")
+            artifact_verification = resolved.get("control_artifact_verification") or {}
         else:
-            user_message, within_bound = cc._normalized_user_message(
-                resolved if isinstance(resolved, str) else str(resolved or "")
-            )
-            source = {}
-        args = dict(tool_args) if isinstance(tool_args, dict) else {}
-        session_id = source.get("control_session_id")
-        action_context = source.get("current_action_binding")
-        binding_seal = source.get("current_action_binding_seal")
+            user_message = resolved if isinstance(resolved, str) else str(resolved or "")
+            artifact_verification = {}
         try:
-            binding = (
-                bank_core._canonical_binding_value(action_context)
-                if isinstance(action_context, dict)
-                else None
-            )
-        except (TypeError, ValueError):
-            binding = None
-        if (
-            not isinstance(session_id, str)
-            or not session_id
-            or not isinstance(binding, dict)
-            or not isinstance(binding_seal, str)
-            or not bank_core._validate_control_action_binding(
-                binding,
-                binding_seal,
+            return cc.annotate(
                 user_message,
                 tool_name,
-                args,
-                session_id,
-            )
-        ):
-            verification = cc._verification_failure(
-                cc.ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-                tool_name,
-                args,
-            )
-        else:
-            verification = bank_core.verify_control_artifacts(
-                user_message,
-                tool_name,
-                args,
-                session_id,
-                current_action_context=binding,
-            )
-        if not within_bound:
-            verification = cc._verification_failure(
-                bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
-                tool_name,
-                args,
-                verification,
-            )
-        try:
-            return cc._annotate_trusted(
-                user_message,
-                tool_name,
-                args,
+                tool_args,
                 scorer=self.scorer,
-                artifact_verification=verification,
+                artifact_verification=artifact_verification,
             )
-        except Exception:  # noqa: BLE001 - fail closed into the escalate band
+        except Exception:  # noqa: BLE001 - route errors into the escalate band
             fit = cc.load_fit()
             return {"label": "annotator_error", "score": cc._FAILSAFE_SCORE,
                     "escalate_lo": fit["escalate_lo"], "deny_hi": fit["deny_hi"],

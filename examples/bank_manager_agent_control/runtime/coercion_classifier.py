@@ -51,41 +51,31 @@ never ALLOW. A throttled classifier collapses to a constant, which
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import os
 import re
+import threading
 import time
 import unicodedata
-from pathlib import Path
 from typing import Any
-
-try:
-    from . import bank_core
-except ImportError:  # pragma: no cover - script vs package import
-    import bank_core
 
 # ── Operating point (defaults; calibration.py refits these on real data) ────
 DEFAULT_ESCALATE_LO = 0.35
 DEFAULT_DENY_HI = 0.75
 _FAILSAFE_SCORE = 0.50  # inside the escalate band -> route to a human, never allow
-_LAST_CALL_FAILED = False  # set by raw_llm_score so calibrated_score can fail-safe correctly
-CALIBRATION_SCHEMA_VERSION = 1
-THRESHOLD_VERSION = "coercion-bands-v1"
-CALIBRATION_ARTIFACT = "runtime/coercion_calibration.json"
-ARTIFACT_VERIFICATION_MISSING = "<ARTIFACT_VERIFICATION_MISSING>"
-ARTIFACT_VERIFICATION_BINDING_MISMATCH = (
-    "<ARTIFACT_VERIFICATION_BINDING_MISMATCH>"
-)
+_CALL_STATE = threading.local()
+
+
+def _set_last_call_failed(value: bool) -> None:
+    _CALL_STATE.last_call_failed = value
+
+
+def _last_call_failed() -> bool:
+    return bool(getattr(_CALL_STATE, "last_call_failed", False))
 
 
 def _normalized_user_message(user_message: str) -> tuple[str, bool]:
-    normalized = unicodedata.normalize("NFC", user_message or "")
-    return (
-        normalized,
-        len(normalized) <= bank_core.CONTROL_REFERENCE_MAX_TEXT_LENGTH,
-    )
+    return unicodedata.normalize("NFC", user_message or ""), True
 
 
 def _ensure_env() -> None:
@@ -168,10 +158,8 @@ _NAIVE_MISS_P = 0.05
 
 def authority_keyword_hits(text: str) -> list[str]:
     """Patterns that fired. This IS Arm 1's heuristic — shared, not a copy."""
-    text, within_bound = _normalized_user_message(text)
-    if not within_bound:
-        return []
-    return [r.pattern for r in _AUTHORITY_RE if r.search(text)]
+    normalized, _within_bound = _normalized_user_message(text)
+    return [r.pattern for r in _AUTHORITY_RE if r.search(normalized)]
 
 
 def naive_keyword_score(user_message: str, tool_name: str = "", tool_args: Any = None,
@@ -181,9 +169,7 @@ def naive_keyword_score(user_message: str, tool_name: str = "", tool_args: Any =
     Deterministic, free, and passes a recall-only test. See calibration.py for
     what it does to the false-positive rate and the Brier score.
     """
-    normalized, within_bound = _normalized_user_message(user_message)
-    if not within_bound:
-        return _FAILSAFE_SCORE
+    normalized, _within_bound = _normalized_user_message(user_message)
     return _NAIVE_HIT_P if authority_keyword_hits(normalized) else _NAIVE_MISS_P
 
 
@@ -239,12 +225,7 @@ def _client():
 def raw_llm_score(user_message: str, tool_name: str = "", tool_args: Any = None,
                   *, prompt: str = CALIBRATED_PROMPT, model: str | None = None) -> float:
     """Raw, UNCALIBRATED model output mapped to [0, 1]. Fail-safe on error."""
-    global _LAST_CALL_FAILED
-    _LAST_CALL_FAILED = False
-    user_message, within_bound = _normalized_user_message(user_message)
-    if not within_bound:
-        _LAST_CALL_FAILED = True
-        return _FAILSAFE_SCORE
+    _set_last_call_failed(False)
     model = model or os.environ.get("COERCION_CLASSIFIER_MODEL", "gpt-4o-mini")
     content = (f"Request: {user_message}\n"
                f"Tool about to run: {tool_name}({tool_args if tool_args is not None else '{}'})")
@@ -265,14 +246,14 @@ def raw_llm_score(user_message: str, tool_name: str = "", tool_args: Any = None,
                                                     "connection", "500")):
                 time.sleep(2 ** attempt + 0.5)
                 continue
-            _LAST_CALL_FAILED = True
+            _set_last_call_failed(True)
             return _FAILSAFE_SCORE
         m = re.findall(r"SCORE:\s*(\d{1,3})", txt, re.I) or re.findall(r"\d{1,3}", txt)
         if not m:
-            _LAST_CALL_FAILED = True
+            _set_last_call_failed(True)
             return _FAILSAFE_SCORE
         return max(0, min(100, int(m[-1]))) / 100.0
-    _LAST_CALL_FAILED = True
+    _set_last_call_failed(True)
     return _FAILSAFE_SCORE
 
 
@@ -328,15 +309,7 @@ def fit_platt(raw_scores: list[float], labels: list[int], *, iters: int = 6000,
 
 # ── Fitted parameters, loaded from disk when calibration.py has run ────────
 
-_FIT_PATH = Path(__file__).resolve().with_name("coercion_calibration.json")
-
-
-def _load_calibration_document() -> dict:
-    try:
-        document = json.loads(_FIT_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return document if isinstance(document, dict) else {}
+_FIT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coercion_calibration.json")
 
 
 def load_fit() -> dict:
@@ -345,88 +318,22 @@ def load_fit() -> dict:
     Falls back to the identity map and the default bands so the gate still
     functions (conservatively) before a calibration run exists.
     """
-    document = _load_calibration_document()
-    fit = document.get("fit")
-    if not isinstance(fit, dict):
+    import json
+    try:
+        with open(_FIT_PATH, encoding="utf-8") as fh:
+            return json.load(fh)["fit"]
+    except (OSError, KeyError, ValueError):
         return {"a": 1.0, "b": 0.0,
                 "escalate_lo": DEFAULT_ESCALATE_LO, "deny_hi": DEFAULT_DENY_HI}
-    return fit
-
-
-def classifier_provenance(
-    *,
-    fit_override: dict | None,
-    model: str | None,
-    scorer,
-    escalate_lo: float,
-    deny_hi: float,
-) -> dict:
-    deployment = model or os.environ.get(
-        "COERCION_CLASSIFIER_MODEL",
-        "gpt-4o-mini",
-    )
-    if fit_override is None:
-        document = _load_calibration_document()
-        try:
-            artifact_bytes = _FIT_PATH.read_bytes()
-        except OSError:
-            artifact_bytes = b""
-        calibration_model = str((document.get("fit") or {}).get("model") or "")
-        schema_version = document.get("schema_version")
-        threshold_version = str(document.get("threshold_version") or "")
-        artifact = CALIBRATION_ARTIFACT
-    else:
-        document = {"fit": fit_override}
-        artifact_bytes = json.dumps(
-            document,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        calibration_model = str(fit_override.get("model") or "")
-        schema_version = fit_override.get(
-            "schema_version",
-            CALIBRATION_SCHEMA_VERSION,
-        )
-        threshold_version = str(
-            fit_override.get("threshold_version") or "runtime-override"
-        )
-        artifact = "runtime-override"
-
-    scorer_name = (
-        getattr(scorer, "__name__", scorer.__class__.__name__)
-        if scorer
-        else ""
-    )
-    return {
-        "classifier_mode": "injected_scorer" if scorer else "live_model",
-        "classifier_invoked": True,
-        "classifier_deployment": (
-            f"injected:{scorer_name}" if scorer else deployment
-        ),
-        "calibration_model": calibration_model,
-        "calibration_artifact": artifact,
-        "calibration_sha256": f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}",
-        "calibration_schema_version": schema_version,
-        "threshold_version": threshold_version,
-        "escalate_lo": escalate_lo,
-        "deny_hi": deny_hi,
-    }
 
 
 def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = None,
                      *, fit: dict | None = None, model: str | None = None) -> float:
     """Calibrated P(coercive): raw LLM score pushed through the fitted Platt map."""
-    global _LAST_CALL_FAILED
-    user_message, within_bound = _normalized_user_message(user_message)
     fit = fit or load_fit()
-    if not within_bound:
-        _LAST_CALL_FAILED = True
-        return (
-            float(fit.get("escalate_lo", DEFAULT_ESCALATE_LO))
-            + float(fit.get("deny_hi", DEFAULT_DENY_HI))
-        ) / 2.0
+    user_message, _within_bound = _normalized_user_message(user_message)
     raw = raw_llm_score(user_message, tool_name, tool_args, model=model)
-    if raw == _FAILSAFE_SCORE and _LAST_CALL_FAILED:
+    if raw == _FAILSAFE_SCORE and _last_call_failed():
         # A failed call must land in the escalate band (route to a human), not be
         # calibrated as if 0.50 were a real model opinion — apply_platt(0.50) here
         # is 0.84, i.e. a hard deny, which over-blocks on a transient 429.
@@ -437,232 +344,35 @@ def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = No
 
 # ── ACS annotator dispatcher entry point ───────────────────────────────────
 
-_VERIFICATION_FIELDS = (
-    "tool_name",
-    "session_id",
-    "action_context",
-    "cited_references",
-    "verified_references",
-    "unknown_references",
-    "malformed_references",
-    "wrong_action_references",
-    "wrong_instance_references",
-    "wrong_subject_references",
-    "wrong_destination_references",
-    "out_of_scope_references",
-    "wrong_session_references",
-    "expired_references",
-    "matched_action_instance_ids",
-    "input_too_long",
-    "artifact_verified",
-)
-
-
-def _verification_failure(
-    marker: str,
-    tool_name: str,
-    tool_args: Any,
-    supplied: dict | None = None,
-) -> dict:
-    supplied = supplied if isinstance(supplied, dict) else {}
-    action_context = supplied.get("action_context")
-    if not isinstance(action_context, dict):
-        args = dict(tool_args) if isinstance(tool_args, dict) else {}
-        action_context = bank_core.control_action_context(
-            tool_name,
-            args,
-            None,
-        )
-    return {
-        "tool_name": tool_name,
-        "session_id": str(supplied.get("session_id") or ""),
-        "action_context": action_context,
-        "cited_references": [],
-        "verified_references": [],
-        "unknown_references": [],
-        "malformed_references": [marker],
-        "wrong_action_references": [],
-        "wrong_instance_references": [],
-        "wrong_subject_references": [],
-        "wrong_destination_references": [],
-        "out_of_scope_references": [],
-        "wrong_session_references": [],
-        "expired_references": [],
-        "matched_action_instance_ids": {},
-        "input_too_long": (
-            marker == bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG
-        ),
-        "artifact_verified": False,
-    }
-
-
-def _revalidate_artifact_verification(
-    user_message: str,
-    tool_name: str,
-    tool_args: Any,
-    supplied: dict | None,
-    current_action_binding: dict | None,
-    current_action_binding_seal: str,
-    session_id: str,
-) -> dict:
-    args = dict(tool_args) if isinstance(tool_args, dict) else {}
-    try:
-        binding = (
-            bank_core._canonical_binding_value(current_action_binding)
-            if isinstance(current_action_binding, dict)
-            else None
-        )
-    except (TypeError, ValueError):
-        binding = None
-    if (
-        not isinstance(binding, dict)
-        or not isinstance(current_action_binding_seal, str)
-        or not isinstance(session_id, str)
-        or not session_id
-        or not bank_core._validate_control_action_binding(
-            binding,
-            current_action_binding_seal,
-            user_message,
-            tool_name,
-            args,
-            session_id,
-        )
-    ):
-        return _verification_failure(
-            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-            tool_name,
-            tool_args,
-            {
-                "session_id": session_id,
-                "action_context": binding,
-            },
-        )
-    recomputed = bank_core.verify_control_artifacts(
-        user_message,
-        tool_name,
-        args,
-        session_id,
-        current_action_context=binding,
-    )
-    if supplied is None:
-        return recomputed
-    if (
-        isinstance(supplied, dict)
-        and all(
-            supplied.get(field) == recomputed.get(field)
-            for field in _VERIFICATION_FIELDS
-        )
-    ):
-        return recomputed
-    return _verification_failure(
-        ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-        tool_name,
-        tool_args,
-        recomputed,
-    )
-
-
-def _annotate_trusted(
-    user_message: str,
-    tool_name: str = "",
-    tool_args: Any = None,
-    *,
-    fit: dict | None = None,
-    model: str | None = None,
-    scorer=None,
-    artifact_verification: dict | None = None,
-) -> dict:
+def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
+             *, fit: dict | None = None, model: str | None = None,
+             scorer=None, artifact_verification: dict | None = None) -> dict:
     """Produce the ACS annotation object placed at ``annotations.coercion_risk``.
 
     ACS §10 normalizes annotator output to a JSON annotation and SHOULD include
     ``label`` and ``raw``; we add ``score`` plus the two band edges so the Rego
     policy reads its thresholds from the annotation instead of hardcoding them.
     """
-    user_message, within_bound = _normalized_user_message(user_message)
-    if not within_bound:
-        artifact_verification = _verification_failure(
-            bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
-            tool_name,
-            tool_args,
-            artifact_verification,
-        )
-    fit_override = fit if fit is not None else None
-    fit = fit if fit is not None else load_fit()
+    fit = fit or load_fit()
     lo = float(fit.get("escalate_lo", DEFAULT_ESCALATE_LO))
     hi = float(fit.get("deny_hi", DEFAULT_DENY_HI))
-    provenance = classifier_provenance(
-        fit_override=fit_override,
-        model=model,
-        scorer=scorer,
-        escalate_lo=lo,
-        deny_hi=hi,
-    )
 
     if tool_name and tool_name not in GATED_TOOLS:
-        provenance = {**provenance, "classifier_invoked": False}
         return {"label": "not_applicable", "score": 0.0, "escalate_lo": lo, "deny_hi": hi,
-                "classifier_provenance": provenance,
                 "raw": {"skipped": True, "reason": "tool_not_gated"}}
 
     verification = artifact_verification or {}
     cited = list(verification.get("cited_references") or [])
     verified = list(verification.get("verified_references") or [])
     invalid = sorted(
-        set(verification.get("malformed_references") or [])
-        | set(verification.get("unknown_references") or [])
+        set(verification.get("unknown_references") or [])
         | set(verification.get("wrong_action_references") or [])
-        | set(verification.get("wrong_instance_references") or [])
         | set(verification.get("wrong_subject_references") or [])
-        | set(verification.get("wrong_destination_references") or [])
         | set(verification.get("out_of_scope_references") or [])
         | set(verification.get("wrong_session_references") or [])
         | set(verification.get("expired_references") or [])
     )
-    artifact_evidence = {
-        "session_id": verification.get("session_id") or "",
-        "action_context": verification.get("action_context") or {},
-        "matched_action_instance_ids": (
-            verification.get("matched_action_instance_ids") or {}
-        ),
-    }
-    fail_closed_markers = {
-        bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG:
-            "control_reference_input_too_long",
-        ARTIFACT_VERIFICATION_MISSING:
-            "artifact_verification_missing",
-        ARTIFACT_VERIFICATION_BINDING_MISMATCH:
-            "artifact_verification_binding_mismatch",
-    }
-    failure = next(
-        (
-            reason
-            for marker, reason in fail_closed_markers.items()
-            if marker in invalid
-        ),
-        "",
-    )
-    if failure:
-        provenance = {**provenance, "classifier_invoked": False}
-        return {
-            "label": "ambiguous",
-            "score": round((lo + hi) / 2.0, 4),
-            "escalate_lo": lo,
-            "deny_hi": hi,
-            "artifact_verified": False,
-            "cited_references": cited,
-            "verified_references": verified,
-            "invalid_references": invalid,
-            "artifact_verification": artifact_evidence,
-            "classifier_provenance": provenance,
-            "raw": {
-                "tool": tool_name,
-                "verification_source": "bank_owned_registry",
-                "skipped": True,
-                "reason": failure,
-            },
-        }
     if verified:
-        provenance = {**provenance, "classifier_invoked": False}
         return {
             "label": "recorded_artifact_verified",
             "score": 0.0,
@@ -672,22 +382,12 @@ def _annotate_trusted(
             "cited_references": cited,
             "verified_references": verified,
             "invalid_references": invalid,
-            "artifact_verification": artifact_evidence,
-            "classifier_provenance": provenance,
             "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
         }
 
+    score_fn = scorer or calibrated_score
     try:
-        if scorer is not None:
-            score = float(scorer(user_message, tool_name, tool_args))
-        else:
-            score = calibrated_score(
-                user_message,
-                tool_name,
-                tool_args,
-                fit=fit,
-                model=provenance["classifier_deployment"],
-            )
+        score = float(score_fn(user_message, tool_name, tool_args))
     except Exception:  # noqa: BLE001 - errors escalate, never allow
         score = _FAILSAFE_SCORE
     if cited and not verified:
@@ -704,49 +404,8 @@ def _annotate_trusted(
         "cited_references": cited,
         "verified_references": verified,
         "invalid_references": invalid,
-        "artifact_verification": artifact_evidence,
-        "classifier_provenance": provenance,
         "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
     }
-
-
-def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
-             *, fit: dict | None = None, model: str | None = None,
-             scorer=None, artifact_verification: dict | None = None,
-             current_action_binding: dict | None = None,
-             current_action_binding_seal: str = "",
-             session_id: str = "") -> dict:
-    """Fail-closed public annotator; trusted dispatchers recompute verification."""
-    user_message, within_bound = _normalized_user_message(user_message)
-    if within_bound:
-        verification = _revalidate_artifact_verification(
-            user_message,
-            tool_name,
-            tool_args,
-            artifact_verification,
-            current_action_binding,
-            current_action_binding_seal,
-            session_id,
-        )
-    else:
-        verification = _verification_failure(
-            bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
-            tool_name,
-            tool_args,
-            {
-                "session_id": session_id,
-                "action_context": current_action_binding,
-            },
-        )
-    return _annotate_trusted(
-        user_message,
-        tool_name,
-        tool_args,
-        fit=fit,
-        model=model,
-        scorer=scorer,
-        artifact_verification=verification,
-    )
 
 
 # ── Pre-flight: catch a throttled / collapsed (constant) classifier ─────────

@@ -25,8 +25,9 @@ useful for behavior-specific automation.
 
 ### Behavior 1
 
-The viewer top-level result moves from 8% impermissible violations at baseline
-to 6% with the defensive prompt and 0% with ACS Rego. All three arms remain at
+Published historical viewer snapshot only; source runs were not committed. The
+viewer top-level result moved from 8% impermissible violations at baseline to
+6% with the defensive prompt and 0% with ACS Rego. All three arms remained at
 0% permissible violations.
 
 ### Behavior 2
@@ -39,8 +40,9 @@ On the historical viewer snapshot, Total 120 per arm:
 | Hardened prompt | 0% | 47% |
 | Classifier | 0% | 27% |
 
-A safety-only gate would accept the hardened prompt. A two-axis gate rejects it
-because it creates 20.0 percentage points more permissible violations.
+A safety-only gate would accept the hardened prompt. In the published
+historical snapshot, a two-axis gate rejects it because it creates 20.0
+percentage points more permissible violations.
 
 ## Recommended CI logic
 
@@ -57,13 +59,6 @@ percentage points more legitimate work than the hardened prompt while both
 showed 0% impermissible violations. Do not use those rows as a release gate for
 the current runtime until a new traced run records its model environment and
 artifacts.
-
-The release gate also runs the trust-boundary regressions: missing or invalid
-tiers must stop writes before mutation; compound, wrong-payee, stale-action, and
-otherwise mismatched references must escalate; missing learned annotations must
-not allow; the tier and classifier arms must use native ACS with shim-policy
-parity; and OTel evidence must include the current action binding plus
-classifier deployment, calibration hash, and threshold version.
 
 `fixtures/coercion_powered_120_arm_outcomes.json` contains one row per test case
 and arm. The tests recompute the published counts and exact paired McNemar

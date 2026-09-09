@@ -4,11 +4,9 @@ Start with the [example README](../README.md) for the two behaviors, measured
 results, and runnable commands. This page documents setup and the policy
 enforcement mechanics.
 
-> If you arrived through an older pinned-commit or short link, use these current
-> relative entry points: [example overview](../README.md),
-> [AIEWF talk index](../../../talks/README.md), and
-> [current deck](../../../talks/aiewf-18min/aiewf-2026-deck.pdf).
-> Relative links avoid pinning future readers to a stale commit.
+> If you arrived through an older pinned-commit or short link, start from the
+> [example overview](../README.md). Relative links avoid pinning future readers
+> to a stale commit.
 
 ## Safety and credentials
 
@@ -37,7 +35,8 @@ enforcement mechanics.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,otel,langgraph,examples]"
+python -m pip install -e ".[acs,phoenix]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -47,7 +46,8 @@ macOS/Linux:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,otel,langgraph,examples]"
+python -m pip install -e ".[acs,phoenix]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 cp examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -115,25 +115,19 @@ State-changing actions are gated before execution; sensitive reads are filtered
 after the result is available. Tier lookup is tri-state: missing records,
 missing classifications, and unknown tier strings enter `unresolved_refs` and
 deny state-changing calls before the tool runs. An unparseable result also
-fails closed.
+denies.
 
 The required platform contract is explicit: every domain must emit the
-normalized sensitivity property. Rego cannot repair forged or missing source
-data. The six-domain script exercises direct policy inputs for two hypothetical
-domains; it does not claim that the current host can resolve or serve those
-domains end to end.
+normalized sensitivity property. The six-domain script exercises direct policy
+inputs for two hypothetical domains; it does not claim that the current host
+can resolve or serve those domains end to end.
 
-### Behavior 2: typed artifact verification + classifier annotator
+### Behavior 2: control-reference check + classifier annotator
 
-The host rejects compound AUTH-/CB-/OPS-/CRD-/DA- tokens, verifies canonical
-references against bank-owned state, and binds them to the concrete action
-family, action instance, subject, exact destination/payee, amount scope,
-session, and expiry before they can create an allow. A reference-shaped
-substring, a real reference for another action or payee, or an expired record
-never creates an allow. The pinned native ACS runtime invokes the host
-classifier dispatcher and places both results in the ACS annotation. Rego
-requires the verified binding to equal the canonical current-call binding,
-maps invalid evidence or classifier uncertainty to escalation, and maps clear
+The host extracts canonical AUTH-/CB-/OPS-/CRD-/DA- references, checks them
+against the synthetic bank registry, and passes that evidence to the classifier
+annotation. The pinned native ACS runtime invokes the host classifier
+dispatcher, keeps invalid evidence in the escalation band, and maps clear
 coercion to deny.
 
 The checked-in calibration fixture names `gpt-4o-mini`, but the historical
@@ -144,12 +138,8 @@ drift. The current prompt fixture also corrects authorization contracts after
 those source runs. Historical outcome files retain their original hashes and
 declare that they do not apply to the corrected fixture until it is rerun.
 
-Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span,
-including the verified session, action context, and matched bank-owned
-action-instance IDs. ASSERT's judge can cite that typed binding and the decision
-alongside the bank tool call. The same span records the live non-secret
-classifier deployment, calibration artifact SHA-256/schema version, and
-threshold version.
+Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span.
+ASSERT's judge can cite that decision alongside the bank tool call.
 
 ## Run references
 
@@ -172,10 +162,10 @@ python examples/bank_manager_agent_control/scripts/coercion_scoreboard.py
 
 Each run writes to `artifacts/results/<suite>/<run>/`.
 
-## Production hardening
+## If you adapt this pattern further
 
 - Pin and integrity-protect the normalized sensitivity signal.
-- Fail closed or escalate when the policy engine is unavailable.
+- Define non-allow behavior when the policy engine is unavailable.
 - Calibrate the classifier on representative traffic and monitor drift.
 - Exercise the escalation band.
 - Apply privacy, retention, and access controls to captured traces.
