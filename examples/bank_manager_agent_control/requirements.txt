@@ -1,4 +1,5 @@
 fastapi>=0.141.1
+langchain-azure-ai>=0.1.0
 langchain-core>=1.6.0
 langchain-mcp-adapters>=0.3.2
 langchain-openai>=1.6.0
