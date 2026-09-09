@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const ARTIFACTS_ROOT =
-	process.env.ARTIFACTS_ROOT ?? path.resolve(__dirname, '..', '..', '..', '..', 'artifacts', 'results');
+export const ARTIFACTS_ROOT = path.resolve(
+	process.env.ARTIFACTS_ROOT ?? path.join(__dirname, '..', '..', '..', '..', 'artifacts', 'results')
+);
 
 export const MEASUREMENTS_ROOT =
 	process.env.MEASUREMENTS_ROOT ?? path.resolve(__dirname, '..', '..', '..', '..');

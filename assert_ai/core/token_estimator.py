@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence, TypeVar
@@ -104,6 +105,7 @@ class PipelineTokenEstimate:
 
     stages: dict[str, StageTokenEstimate] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    tool_loop_total_tokens: int = 0
 
     @property
     def calls(self) -> int:
@@ -131,7 +133,10 @@ class PipelineTokenEstimate:
 
     @property
     def upper_bound_tokens(self) -> int:
-        return round(self.total_tokens * (1.0 + self.uncertainty))
+        return round(
+            max(self.total_tokens, self.tool_loop_total_tokens)
+            * (1.0 + self.uncertainty)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,6 +193,8 @@ class _InferenceProjection:
     transcripts: _TranscriptInventory
     pending_cases: int = 0
     notes: list[str] = field(default_factory=list)
+    upper_estimate: StageTokenEstimate | None = None
+    upper_transcripts: _TranscriptInventory | None = None
 
 
 def _synthetic_text(tokens: int, label: str = "detail") -> str:
@@ -222,6 +229,73 @@ def _target_output(expected: int, max_tokens: int | None) -> int:
         else None
     )
     return _bounded_output(expected, limit)
+
+
+def _response_length_hint(*instructions: str | None) -> int | None:
+    """Recognize simple response-wide limits, not counts inside quoted tasks."""
+    numbers = {
+        word: index for index, word in enumerate(
+            ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
+            start=1,
+        )
+    }
+    counts = "|".join(numbers)
+    pattern = re.compile(
+        rf"\b(?:in|with|using|exactly|at most|no more than|only|and)\s+"
+        rf"(?:(?:exactly|at most|no more than|only)\s+)?"
+        rf"(?P<count>[1-9]\d{{0,5}}|{counts})\s+"
+        r"(?:(?:short|concise|complete)\s+)?(?P<unit>tokens?|words?|sentences?)\b",
+        re.IGNORECASE,
+    )
+    hints = []
+    for instruction in instructions:
+        text = re.sub(r"```.*?```|~~~.*?~~~", "", instruction or "", flags=re.DOTALL)
+        text = re.sub(r'''"[^"]*"|(?<!\w)'[^']*'(?!\w)''', "", text, flags=re.DOTALL)
+        if any(marker in text for marker in ('"', "'", "`", "~~~")):
+            continue
+        for clause in re.split(r"(?<=[.!?])\s+|\n+", text):
+            clause = clause.strip()
+            if not re.match(
+                r"^(?:please\s+)?(?:answer|reply|respond|return|output|write|use|summarize|"
+                r"define|calculate|explain|compare|describe)\b",
+                clause, re.IGNORECASE,
+            ):
+                continue
+            if any(marker in clause for marker in ("<", ">")) or re.search(
+                r"\b(?:each|every|per|not|never|least|minimum|example|then|also|append|paragraphs?|sections?)\b"
+                r"|followed by",
+                clause, re.IGNORECASE,
+            ):
+                continue
+            matches = list(pattern.finditer(clause))
+            if len(matches) != 1:
+                continue
+            match = matches[0]
+            suffix = clause[match.end():].strip()
+            if suffix and not re.fullmatch(r"[.!?]", suffix) and not re.match(
+                r"^(?:explaining|summarizing|describing)\b", suffix, re.IGNORECASE,
+            ):
+                continue
+            count_text = match["count"].lower()
+            count = int(count_text) if count_text.isdigit() else numbers[count_text]
+            unit = match["unit"].lower()
+            tokens_per_unit = 1.25 if unit.startswith("token") else 2 if unit.startswith("word") else 64
+            hints.append(round(count * tokens_per_unit) + 32)
+    # Allow slack for formatting and imperfect compliance; conflicting limits use the larger one.
+    return max(hints) if hints else None
+
+
+def _apply_response_length_hint(
+    output_tokens: int, notes: list[str], *instructions: str | None,
+) -> int:
+    hint = _response_length_hint(*instructions)
+    if hint is not None and hint < output_tokens:
+        notes.append(
+            "Explicit response-length instructions reduce projected answer length "
+            "with formatting/compliance headroom; they are not enforced output limits."
+        )
+        return hint
+    return output_tokens
 
 
 def _request_tokens(
@@ -1079,8 +1153,10 @@ def _project_target_turn(
     tool_history: list[dict[str, Any]],
     description: str,
     output_tokens: int,
+    tool_rounds: int = 1,
+    include_limit_fallback: bool = False,
 ) -> str:
-    """Project one final answer and, when tools exist, one tool round trip."""
+    """Project a final answer, tool rounds, and optional forced tool-limit reply."""
 
     model = target.model
     if isinstance(model, ModelConfig):
@@ -1089,64 +1165,69 @@ def _project_target_turn(
         if tools:
             function = tools[0]["function"]
             parameters = function.get("parameters") or {}
-            tool_call = ToolCall(
-                name=str(function["name"]),
-                arguments={
-                    name: _representative_tool_value(schema)
-                    for name, schema in (parameters.get("properties") or {}).items()
-                    if isinstance(schema, (dict, bool))
-                },
-                call_id=f"estimated_tool_call_{len(tool_history) + 1}",
-            )
-            estimate.output_tokens += _bounded_output(
-                estimate_token_count(
-                    model.name,
-                    text=json.dumps({
-                        "name": tool_call.name,
-                        "arguments": tool_call.arguments,
-                    }),
-                ),
-                model.max_tokens,
-            )
-            messages.append(
-                Message(role="assistant", content="", tool_calls=[tool_call]),
-            )
-            transcript_messages.append(("assistant", ""))
             simulator = target.tools.simulator if target.tools is not None else None
-            tool_result = _synthetic_text(
-                _SIMULATOR_OUTPUT_TOKENS if simulator else 80,
-                "result",
-            )
-            if simulator:
-                resolver = SimulatedResolver(
-                    model=simulator,
-                    prompt_template=inference_stage.TOOL_SIM_PROMPT,
-                    scenario={"description": description},
+            for round_index in range(tool_rounds + int(include_limit_fallback)):
+                resolve_tool = round_index < tool_rounds
+                tool_call = ToolCall(
+                    name=str(function["name"]),
+                    arguments={
+                        name: _representative_tool_value(schema)
+                        for name, schema in (parameters.get("properties") or {}).items()
+                        if isinstance(schema, (dict, bool))
+                    },
+                    call_id=f"estimated_tool_call_{len(messages)}",
                 )
-                simulator_prompt = resolver.build_prompt(
-                    tool_name=tool_call.name,
-                    tool_args=tool_call.arguments,
-                    context=ResolverContext(
-                        conversation_messages=messages,
-                        tool_history=tool_history,
+                estimate.output_tokens += _bounded_output(
+                    estimate_token_count(
+                        model.name,
+                        text=json.dumps({
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        }),
                     ),
+                    model.max_tokens,
                 )
+                messages.append(
+                    Message(role="assistant", content="", tool_calls=[tool_call]),
+                )
+                transcript_messages.append(("assistant", ""))
+                tool_result = (
+                    _synthetic_text(_SIMULATOR_OUTPUT_TOKENS if simulator else 80, "result")
+                    if resolve_tool else "Tool call limit reached."
+                )
+                if simulator and resolve_tool:
+                    resolver = SimulatedResolver(
+                        model=simulator,
+                        prompt_template=inference_stage.TOOL_SIM_PROMPT,
+                        scenario={"description": description},
+                    )
+                    simulator_prompt = resolver.build_prompt(
+                        tool_name=tool_call.name,
+                        tool_args=tool_call.arguments,
+                        context=ResolverContext(
+                            conversation_messages=messages,
+                            tool_history=tool_history,
+                        ),
+                    )
+                    estimate.calls += 1
+                    estimate.input_tokens += _request_tokens(simulator, simulator_prompt)
+                    estimate.output_tokens += _SIMULATOR_OUTPUT_TOKENS
+                messages.append(Message(role="tool", content=tool_result, tool_call_id=tool_call.id))
+                transcript_messages.append(
+                    ("tool", _format_tool_call_content(
+                        tool_call.name, tool_call.arguments, tool_result,
+                    )),
+                )
+                if resolve_tool:
+                    tool_history.append({
+                        "tool_name": tool_call.name,
+                        "tool_args": tool_call.arguments,
+                        "tool_result": tool_result,
+                    })
                 estimate.calls += 1
-                estimate.input_tokens += _request_tokens(simulator, simulator_prompt)
-                estimate.output_tokens += _SIMULATOR_OUTPUT_TOKENS
-            messages.append(Message(role="tool", content=tool_result, tool_call_id=tool_call.id))
-            transcript_messages.append(
-                ("tool", _format_tool_call_content(
-                    tool_call.name, tool_call.arguments, tool_result,
-                )),
-            )
-            tool_history.append({
-                "tool_name": tool_call.name,
-                "tool_args": tool_call.arguments,
-                "tool_result": tool_result,
-            })
-            estimate.calls += 1
-            estimate.input_tokens += _request_tokens(model.name, messages, tools=tools)
+                estimate.input_tokens += _request_tokens(
+                    model.name, messages, tools=tools if resolve_tool else None,
+                )
         estimate.output_tokens += output_tokens
     target_text = _synthetic_text(output_tokens, "response")
     messages.append(Message(role="assistant", content=target_text))
@@ -1160,6 +1241,8 @@ def _project_prompt_case(
     ctx: dict[str, Any],
     target: TargetConfig,
     max_tokens: int,
+    tool_rounds: int = 1,
+    include_limit_fallback: bool = False,
 ) -> tuple[StageTokenEstimate, _TranscriptProfile, list[str]]:
     estimate = StageTokenEstimate()
     notes: list[str] = []
@@ -1175,6 +1258,9 @@ def _project_prompt_case(
     target_output = _high_side_prompt_output(
         target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens
     )
+    target_output = _apply_response_length_hint(
+        target_output, notes, system_prompt, profile.description,
+    )
     tools = None
     if isinstance(target.model, ModelConfig):
         tools, tool_note = _target_tools(target, profile, ctx)
@@ -1189,11 +1275,13 @@ def _project_prompt_case(
         tool_history=[],
         description=profile.description,
         output_tokens=target_output,
+        tool_rounds=tool_rounds,
+        include_limit_fallback=include_limit_fallback,
     )
     if tools:
         notes.append(
-            "Tool usage assumes one round trip per target turn with representative "
-            "arguments; additional calls are not included."
+            "The point estimate assumes one round trip per target turn with "
+            "representative arguments; the upper range models the configured tool-call cap."
         )
     return (
         estimate,
@@ -1213,6 +1301,8 @@ def _project_scenario_case(
     target: TargetConfig,
     evaluation: EvaluationConfig,
     max_tokens: int,
+    tool_rounds: int = 1,
+    include_limit_fallback: bool = False,
 ) -> tuple[StageTokenEstimate, _TranscriptProfile, list[str]]:
     estimate = StageTokenEstimate()
     notes: list[str] = []
@@ -1250,6 +1340,7 @@ def _project_scenario_case(
         _SCENARIO_TARGET_OUTPUT_TOKENS,
         target.model.max_tokens if isinstance(target.model, ModelConfig) else max_tokens,
     )
+    target_output = _apply_response_length_hint(target_output, notes, system_prompt)
     tester_output = _bounded_output(
         _TESTER_OUTPUT_TOKENS,
         tester.model.max_tokens,
@@ -1262,8 +1353,8 @@ def _project_scenario_case(
     tool_history: list[dict[str, Any]] = []
     if fixed_tools:
         notes.append(
-            "Tool usage assumes one round trip per target turn with representative "
-            "arguments; additional calls are not included."
+            "The point estimate assumes one round trip per target turn with "
+            "representative arguments; the upper range models the configured tool-call cap."
         )
 
     for turn_index in range(evaluation.inference.max_turns):
@@ -1287,6 +1378,8 @@ def _project_scenario_case(
             tool_history=tool_history,
             description=profile.description,
             output_tokens=target_output,
+            tool_rounds=tool_rounds,
+            include_limit_fallback=include_limit_fallback,
         )
         tester_messages.append(
             Message(
@@ -1420,6 +1513,8 @@ def _project_inventory(
     evaluation: EvaluationConfig,
     max_tokens: int,
     inventory: _CaseInventory,
+    tool_rounds: int = 1,
+    include_limit_fallback: bool = False,
 ) -> tuple[StageTokenEstimate, _TranscriptInventory, list[str]]:
     aggregate = StageTokenEstimate()
     transcripts = _TranscriptInventory()
@@ -1437,6 +1532,8 @@ def _project_inventory(
                     ctx=ctx,
                     target=target,
                     max_tokens=max_tokens,
+                    tool_rounds=tool_rounds,
+                    include_limit_fallback=include_limit_fallback,
                 )
             else:
                 case_estimate, transcript, case_notes = _project_scenario_case(
@@ -1445,6 +1542,8 @@ def _project_inventory(
                     target=target,
                     evaluation=evaluation,
                     max_tokens=max_tokens,
+                    tool_rounds=tool_rounds,
+                    include_limit_fallback=include_limit_fallback,
                 )
             sample_estimates.append(case_estimate)
             transcript_samples.append(transcript)
@@ -1533,11 +1632,34 @@ def _estimate_inference(
         notes.append(
             f"Target-internal usage for the {target_kind} target is not included."
         )
+    upper_estimate = None
+    upper_transcripts = None
+    has_tools = target.tools is not None or any(
+        profile.tools for profiles in inventory.samples.values() for profile in profiles
+    )
+    if isinstance(target.model, ModelConfig) and has_tools and pending_inventory.total:
+        upper_estimate, upper_transcripts, _ = _project_inventory(
+            ctx, target=target, evaluation=evaluation, max_tokens=max_tokens,
+            inventory=pending_inventory,
+            tool_rounds=evaluation.inference.max_tool_calls,
+            include_limit_fallback=True,
+        )
+        if resume_compatible and pending_inventory.total < inventory.total:
+            upper_transcripts = _merge_transcript_inventories(
+                actual_transcripts or _TranscriptInventory(), upper_transcripts,
+            )
+        notes.append(
+            f"Upper range projects up to {evaluation.inference.max_tool_calls} resolved "
+            "tool calls per target turn, accumulated history, and a possible forced "
+            "final reply after the tool limit. Tool arguments/results remain representative."
+        )
     return _InferenceProjection(
         estimate=aggregate,
         transcripts=transcripts,
         pending_cases=pending_inventory.total,
         notes=list(dict.fromkeys(notes)),
+        upper_estimate=upper_estimate,
+        upper_transcripts=upper_transcripts,
     )
 
 
@@ -1920,6 +2042,8 @@ def estimate_pipeline_tokens(
         prefer_generated=test_set_changes_inference,
     )
     projected_transcripts: _TranscriptInventory | None = None
+    upper_transcripts: _TranscriptInventory | None = None
+    tool_loop_extra_tokens = 0
     inference_pending_cases = 0
     forced = forced_stages or set()
 
@@ -1949,6 +2073,11 @@ def estimate_pipeline_tokens(
                 projected_transcripts = projection.transcripts
                 inference_pending_cases = projection.pending_cases
                 result.notes.extend(projection.notes)
+                upper_transcripts = projection.upper_transcripts
+                if projection.upper_estimate is not None:
+                    tool_loop_extra_tokens += max(
+                        0, projection.upper_estimate.total_tokens - estimate.total_tokens,
+                    )
             elif stage_name == "judge":
                 estimate = _estimate_judge(
                     ctx,
@@ -1967,6 +2096,18 @@ def estimate_pipeline_tokens(
                     ),
                     forced=stage_name in forced,
                 )
+                if upper_transcripts is not None:
+                    upper_judge = _estimate_judge(
+                        ctx, raw_cfg, taxonomies["judge"], upper_transcripts,
+                        upstream_changed=(
+                            (inference_pending_cases > 0 or "inference" in forced)
+                            and _inference_output_feeds_judge(ctx, stage_cfgs)
+                        ),
+                        forced=stage_name in forced,
+                    )
+                    tool_loop_extra_tokens += max(
+                        0, upper_judge.total_tokens - estimate.total_tokens,
+                    )
             else:
                 continue
         except (KeyError, TypeError, ValueError, OSError) as exc:
@@ -1977,6 +2118,7 @@ def estimate_pipeline_tokens(
         if estimate.calls or estimate.total_tokens:
             result.stages[stage_name] = estimate
 
+    result.tool_loop_total_tokens = result.total_tokens + tool_loop_extra_tokens
     result.notes.append(
         "Point estimates use high-side output assumptions so actual usage is more likely to be lower."
     )

@@ -291,5 +291,52 @@ class RunnerStageFilterTest(unittest.TestCase):
         )
 
 
+    def test_no_usage_preserves_existing_metrics_but_new_runs_keep_notes(self) -> None:
+        note = "Target-internal usage for the callable target is not included."
+        for existing in (False, True):
+            with self.subTest(existing=existing), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                run_root = root / "run"
+                run_root.mkdir()
+                metrics_path = run_root / "metrics.json"
+                original = b'{"totals":{"calls":1,"total_tokens":123},"stages":{"judge":{"total_tokens":123}}}\n'
+                if existing:
+                    metrics_path.write_bytes(original)
+                ctx = {
+                    "stages": [("inference", {})],
+                    "suite_root": str(root / "suite"),
+                    "run_root": str(run_root),
+                }
+                manifest = SimpleNamespace(
+                    started_at="", status="running", ended_at=None,
+                    stages={}, stage_timings={}, to_dict=lambda: {},
+                )
+                estimate = {"total_tokens": 0, "calls": 0, "stages": {}, "notes": [note]}
+                with (
+                    patch("assert_ai.runner._load_context", return_value=ctx),
+                    patch("assert_ai.runner._write_suite_metadata"),
+                    patch("assert_ai.runner._build_manifest", return_value=manifest),
+                    patch("assert_ai.runner._write_manifest"),
+                    patch("assert_ai.runner.STAGES", {
+                        "inference": SimpleNamespace(
+                            SCOPE="run", SUITE_OUTPUT=None,
+                            run=self._async_recorder("inference", []),
+                        ),
+                    }),
+                    patch(
+                        "assert_ai.core.token_estimator.estimate_pipeline_tokens",
+                        return_value=SimpleNamespace(to_dict=lambda: estimate),
+                    ),
+                ):
+                    self.assertEqual(run_pipeline(config="config.yaml"), 0)
+                if existing:
+                    self.assertEqual(metrics_path.read_bytes(), original)
+                else:
+                    self.assertEqual(
+                        json.loads(metrics_path.read_text(encoding="utf-8"))["token_estimate"],
+                        estimate,
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

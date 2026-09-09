@@ -18,6 +18,26 @@ const TOKEN_STAGE_LABELS: Record<string, string> = {
 	judge: 'Scoring'
 };
 
+export function splitTokenEstimateNotes(notes: unknown): { caveats: string[]; details: string[] } {
+	const normalized = Array.isArray(notes)
+		? notes.filter((note): note is string => typeof note === 'string')
+			.map((note) => note.trim()).filter(Boolean)
+		: [];
+	const caveats: string[] = [];
+	const details: string[] = [];
+	for (const note of normalized) {
+		if (
+			note !== 'Retries and provider-side hidden overhead are not included.' &&
+			/\b(exclu(?:de[ds]?|ding|sions?)|opaque|unavailable|unobservable|not (?:included|estimated|visible)|cannot (?:be )?estimat(?:e|ed))\b/i.test(note)
+		) {
+			caveats.push(note);
+		} else {
+			details.push(note);
+		}
+	}
+	return { caveats, details };
+}
+
 export function formatTokenCount(value: number): string {
 	const rounded = Math.max(0, Math.round(value));
 	return rounded < 1000 ? rounded.toLocaleString('en-US') : compactTokenFormatter.format(rounded);

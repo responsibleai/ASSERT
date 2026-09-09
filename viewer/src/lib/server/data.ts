@@ -166,25 +166,34 @@ function readInteger(value: unknown): number | null {
 }
 
 function readNonNegativeInteger(value: unknown): number | null {
-	const parsed = readInteger(value);
-	return parsed !== null && parsed >= 0 ? parsed : null;
+	const parsed = readNonNegativeNumber(value);
+	return parsed !== null ? Math.trunc(parsed) : null;
 }
 
 function normalizeTokenStageEstimate(value: unknown): TokenStageEstimateView | null {
 	const record = readObject(value);
 	if (!record) return null;
+	if (
+		![record.calls, record.input_tokens, record.output_tokens, record.total_tokens].some(
+			(value) => readNonNegativeInteger(value) !== null
+		)
+	) return null;
 	const calls = readNonNegativeInteger(record.calls) ?? 0;
 	const inputTokens = readNonNegativeInteger(record.input_tokens) ?? 0;
 	const outputTokens = readNonNegativeInteger(record.output_tokens) ?? 0;
 	const totalTokens = readNonNegativeInteger(record.total_tokens) ?? inputTokens + outputTokens;
-	if (calls === 0 && inputTokens === 0 && outputTokens === 0 && totalTokens === 0) return null;
 	return { calls, inputTokens, outputTokens, totalTokens };
 }
 
 function normalizeTokenEstimate(value: unknown): TokenEstimateView | null {
 	const record = readObject(value);
 	if (!record) return null;
-	const aggregate = normalizeTokenStageEstimate(record);
+	const notes = Array.isArray(record.notes)
+		? record.notes.filter((note): note is string => typeof note === 'string')
+			.map((note) => note.trim()).filter(Boolean)
+		: [];
+	const aggregate = normalizeTokenStageEstimate(record) ??
+		(notes.length > 0 ? { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 } : null);
 	if (!aggregate) return null;
 
 	const stages: Record<string, TokenStageEstimateView> = {};
@@ -200,9 +209,7 @@ function normalizeTokenEstimate(value: unknown): TokenEstimateView | null {
 		upperBoundTokens:
 			readNonNegativeInteger(record.upper_bound_tokens) ?? aggregate.totalTokens,
 		stages,
-		notes: Array.isArray(record.notes)
-			? record.notes.filter((note): note is string => typeof note === 'string' && note.length > 0)
-			: []
+		notes
 	};
 }
 

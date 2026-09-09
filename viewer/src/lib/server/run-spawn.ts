@@ -667,6 +667,14 @@ function writeExtraFiles(directory: string, files: NormalizedRun['extraFiles']) 
 	}
 }
 
+function configWithResolvedRoots(normalized: NormalizedRun): Record<string, unknown> {
+	return {
+		...cloneRecord(normalized.configObject),
+		artifacts_root: path.dirname(ARTIFACTS_ROOT),
+		results_dir: ARTIFACTS_ROOT
+	};
+}
+
 /**
  * Atomically reserves the run directory and writes eval_config.yaml. The mkdir
  * is the lock: if the directory already exists we refuse rather than overwrite.
@@ -696,7 +704,7 @@ export function writeRunConfigFiles(normalized: NormalizedRun): WrittenRun {
 	const logPath = path.join(runDir, RUN_LOG_FILE);
 	const pidPath = path.join(runDir, RUN_PID_FILE);
 
-	const yamlText = stringifyYaml(normalized.configObject, { lineWidth: 0 });
+	const yamlText = stringifyYaml(configWithResolvedRoots(normalized), { lineWidth: 0 });
 	fs.writeFileSync(configPath, yamlText, { encoding: 'utf-8' });
 
 	// Names are server-decided constants; reject anything path-like as
@@ -1027,10 +1035,7 @@ export async function estimateAssertAiRun(
 	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'assert-ai-estimate-'));
 	const configPath = path.join(tempDir, RUN_EVAL_CONFIG_FILE);
 	try {
-		const configObject = cloneRecord(normalized.configObject);
-		const resultsRoot = path.resolve(ARTIFACTS_ROOT);
-		configObject.artifacts_root = path.dirname(resultsRoot);
-		configObject.results_dir = resultsRoot;
+		const configObject = configWithResolvedRoots(normalized);
 		fs.writeFileSync(configPath, stringifyYaml(configObject, { lineWidth: 0 }), 'utf-8');
 		writeExtraFiles(tempDir, normalized.extraFiles);
 		return await runTokenEstimate(configPath, signal);

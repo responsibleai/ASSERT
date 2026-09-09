@@ -548,8 +548,6 @@ def _build_run_metrics(
 def _log_token_estimate(token_estimate: dict[str, Any]) -> None:
     """Print a compact pre-run estimate and stage breakdown."""
     total = int(token_estimate.get("total_tokens", 0) or 0)
-    if total <= 0:
-        return
     lower = int(token_estimate.get("lower_bound_tokens", total) or total)
     upper = int(token_estimate.get("upper_bound_tokens", total) or total)
     calls = int(token_estimate.get("calls", 0) or 0)
@@ -1183,7 +1181,10 @@ def _run_stages_inner(
 
     total_elapsed = time.monotonic() - pipeline_start
     metrics_written = False
-    if run_root is not None and (stage_usage or token_estimate):
+    if run_root is not None and (
+        stage_usage
+        or (token_estimate and not (run_root / "metrics.json").exists())
+    ):
         try:
             metrics_path = run_root / "metrics.json"
             payload = _build_run_metrics(

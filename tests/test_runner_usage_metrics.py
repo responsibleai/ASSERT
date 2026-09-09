@@ -14,6 +14,7 @@ from assert_ai.runner import (
     _build_run_metrics,
     _format_token_count,
     _format_usage_line,
+    _log_token_estimate,
 )
 
 
@@ -34,6 +35,14 @@ class FormatTokenCountTest(unittest.TestCase):
 
 
 class FormatUsageLineTest(unittest.TestCase):
+    def test_zero_token_estimate_logs_opaque_target_caveat(self) -> None:
+        note = "Target-internal usage for the callable target is not included."
+        with self.assertLogs("assert_ai.runner", level="INFO") as captured:
+            _log_token_estimate({"total_tokens": 0, "calls": 0, "notes": [note]})
+        text = "\n".join(captured.output)
+        self.assertIn("0 tracked calls", text)
+        self.assertIn(note, text)
+
     def test_returns_empty_when_no_calls(self) -> None:
         self.assertEqual(_format_usage_line(None), "")
         self.assertEqual(_format_usage_line(UsageAccumulator()), "")

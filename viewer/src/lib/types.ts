@@ -310,6 +310,16 @@ export interface RunMetrics {
 	dimensions: Record<string, DimensionMetrics>;
 }
 
+export interface PreRunTokenEstimate {
+	calls: number;
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+	lower_bound_tokens: number;
+	upper_bound_tokens: number;
+	notes?: string[];
+}
+
 export interface TokenStageEstimateView {
 	calls: number;
 	inputTokens: number;

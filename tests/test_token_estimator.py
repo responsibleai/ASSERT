@@ -40,6 +40,7 @@ from assert_ai.core.token_estimator import (
     _project_prompt_case,
     _project_scenario_case,
     _representative_tool_value,
+    _response_length_hint,
     _target_output,
     _transcript_xml,
     estimate_pipeline_tokens,
@@ -144,6 +145,74 @@ def _tool_profile(kind: str) -> _CaseProfile:
 
 
 class TokenEstimatorTest(unittest.TestCase):
+    def test_explicit_response_limits_have_conservative_headroom(self) -> None:
+        for instruction, expected in [
+            ("Reply in one sentence.", 96),
+            ("Reply with the number and one short sentence.", 96),
+            ("Define eventual consistency in no more than two sentences.", 160),
+            ("Please respond using at most 50 words.", 132),
+            ("Output exactly 100 tokens.", 157),
+            ("Use exactly three sentences.", 224),
+            ("Calculate the checksum and reply with one sentence.", 96),
+            ("Explain caching in no more than two sentences.", 160),
+        ]:
+            with self.subTest(instruction=instruction):
+                self.assertEqual(_response_length_hint(instruction), expected)
+        self.assertEqual(
+            _response_length_hint("Reply in one sentence.", "Reply in three sentences."), 224,
+        )
+
+    def test_length_hints_ignore_quoted_nested_negative_and_lower_bound_instructions(self) -> None:
+        for instruction in [
+            'Explain the phrase "reply in one sentence".',
+            'Reply with "in one sentence" as part of a longer explanation.',
+            "```text\nReply in one sentence.\n```",
+            "```text\nReply in one sentence.",
+            'Quoted task:\n"Introduction.\nReply in one sentence.\nEnd."',
+            'Unclosed quote:\n"Introduction.\nReply in one sentence.',
+            "Never reply in one sentence.",
+            "Reply in not more than two sentences.",
+            "Write at least 50 words.",
+            "Write exactly two sentences per item.",
+            "Write eight items, each with two sentences.",
+            "Reply in one sentence, then write three paragraphs.",
+            "Return exactly three bullets.",
+            "Discuss 20 words that changed meaning.",
+            "Describe a diagram with four words highlighted.",
+            "Reply in one sentence or in two sentences.",
+        ]:
+            with self.subTest(instruction=instruction):
+                self.assertIsNone(_response_length_hint(instruction))
+
+    def test_prompt_length_hint_changes_projected_answer_and_judge_input(self) -> None:
+        target = TargetConfig(model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=256))
+        estimate, transcript, notes = _project_prompt_case(
+            _CaseProfile("prompt", "short", "Reply in one sentence."),
+            ctx={}, target=target, max_tokens=256,
+        )
+        self.assertEqual(estimate.output_tokens, 96)
+        self.assertEqual(transcript.transcript_xml.count("response"), 96)
+        self.assertTrue(any("response-length instructions" in note for note in notes))
+        capped, _, _ = _project_prompt_case(
+            _CaseProfile("prompt", "short", "Reply in one sentence."),
+            ctx={}, target=TargetConfig(model=ModelConfig(name=target.model.name, max_tokens=64)),
+            max_tokens=64,
+        )
+        self.assertEqual(capped.output_tokens, 56)
+
+    def test_scenario_description_is_not_a_per_turn_answer_limit(self) -> None:
+        target = TargetConfig(model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=256))
+        evaluation = EvaluationConfig(
+            tester=TesterConfig(model=target.model),
+            inference=InferenceConfig(max_turns=2),
+        )
+        estimate, _, notes = _project_scenario_case(
+            _CaseProfile("scenario", "multi", "Reply in one sentence."),
+            ctx={}, target=target, evaluation=evaluation, max_tokens=256,
+        )
+        self.assertEqual(estimate.output_tokens, 2 * (224 + 55))
+        self.assertFalse(any("response-length instructions" in note for note in notes))
+
     def test_target_output_leaves_headroom_without_lowering_large_budget_baseline(
         self,
     ) -> None:
@@ -347,6 +416,72 @@ class TokenEstimatorTest(unittest.TestCase):
                 {"systematize", "test_set", "inference", "judge"},
             )
             self.assertFalse(artifacts_root.exists())
+
+    def test_tool_limit_changes_upper_range_including_judge_but_not_point_estimate(self) -> None:
+        for kind in ("prompt", "scenario"):
+            with self.subTest(kind=kind), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                ctx = _base_context(root)
+                suite_root = Path(ctx["suite_root"])
+                profile = _tool_profile(kind)
+                _write_taxonomy(suite_root / "taxonomy.json")
+                _write_jsonl(suite_root / "test_set.jsonl", [{
+                    "type": kind, "test_case_id": profile.test_case_id,
+                    "seed": {
+                        "description": profile.description,
+                        "system_prompt": profile.system_prompt,
+                        "tools": list(profile.tools),
+                    },
+                }])
+                model = ModelConfig(name="openai/gpt-4o-mini", max_tokens=400)
+                ctx["target"] = TargetConfig(
+                    model=model, tools=ToolsConfig(simulator=model.name),
+                )
+                results = []
+                for limit in (1, 10):
+                    ctx["evaluation"] = EvaluationConfig(
+                        tester=TesterConfig(model=model), judge=JudgeConfig(model=model),
+                        inference=InferenceConfig(max_turns=2, max_tool_calls=limit),
+                    )
+                    inference = estimate_pipeline_tokens(ctx, [("inference", object(), {})])
+                    combined = estimate_pipeline_tokens(
+                        ctx, [("inference", object(), {}), ("judge", object(), {})],
+                    )
+                    results.append(combined)
+                    self.assertGreater(
+                        combined.tool_loop_total_tokens - combined.total_tokens,
+                        inference.tool_loop_total_tokens - inference.total_tokens,
+                    )
+                    self.assertTrue(any(f"up to {limit} resolved" in n for n in combined.notes))
+                self.assertEqual(results[0].total_tokens, results[1].total_tokens)
+                self.assertGreater(results[1].upper_bound_tokens, results[0].upper_bound_tokens)
+
+    def test_upper_tool_projection_counts_each_resolver_and_limit_fallback(self) -> None:
+        target = TargetConfig(
+            model=ModelConfig(name="openai/gpt-4o-mini", max_tokens=400),
+            tools=ToolsConfig(simulator="openai/gpt-4o"),
+        )
+        requests = []
+
+        def record_request(model, messages, **kwargs):
+            requests.append((model, deepcopy(messages), kwargs))
+            return 100
+
+        with patch("assert_ai.core.token_estimator._request_tokens", side_effect=record_request):
+            estimate, transcript, _ = _project_prompt_case(
+                _tool_profile("prompt"), ctx={}, target=target, max_tokens=400,
+                tool_rounds=3, include_limit_fallback=True,
+            )
+        self.assertEqual(estimate.calls, 8)  # Initial + 3 follow-ups + forced final + 3 resolvers.
+        self.assertEqual(sum(model == target.tools.simulator for model, _, _ in requests), 3)
+        self.assertEqual(
+            [sum(m.role == "tool" for m in messages) for model, messages, _ in requests
+             if model == target.model.name],
+            [0, 1, 2, 3, 4],
+        )
+        self.assertIsNone(requests[-1][2]["tools"])
+        self.assertEqual(requests[-1][1][-1].text, "Tool call limit reached.")
+        self.assertEqual(transcript.transcript_xml.count("[Tool call: calculate("), 4)
 
     def test_inference_only_estimate_reads_versioned_test_set_without_writes(
         self,

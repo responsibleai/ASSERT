@@ -17,7 +17,8 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
-	import { formatTokenCount } from '$lib/token-usage.js';
+	import TokenEstimatePreview from '$lib/components/TokenEstimatePreview.svelte';
+	import type { PreRunTokenEstimate } from '$lib/types.js';
 
 	// ── Constants ───────────────────────────────────────────────────
 	const STEPS = [
@@ -43,14 +44,6 @@
 	interface KnownSuite { suite_id: string; behavior_name: string; behavior_category_count: number }
 	interface JudgeDimension { name: string; description: string; rubric: string }
 	interface EvalDimension { name: string; levels: string[] }
-	interface PreRunTokenEstimate {
-		calls: number;
-		input_tokens: number;
-		output_tokens: number;
-		total_tokens: number;
-		lower_bound_tokens: number;
-		upper_bound_tokens: number;
-	}
 	interface TokenEstimateResponse {
 		estimate?: PreRunTokenEstimate;
 		error?: string;
@@ -1659,27 +1652,7 @@
 				<h2 class="mb-1 text-lg font-semibold text-text">Summary & submit</h2>
 				<p class="mb-5 text-sm text-text-muted">Review your configuration and submit the evaluation run.</p>
 
-				<div class="mb-5 flex min-h-14 flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-bg px-4 py-2.5" aria-live="polite">
-					<div>
-						<div class="text-xs font-semibold text-text">Estimated token usage</div>
-						<div class="mt-0.5 text-[11px] text-text-muted">Conservative local estimate; no provider call.</div>
-					</div>
-					{#if tokenEstimateLoading}
-						<div class="flex items-center gap-2 text-xs text-text-muted">
-							<svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-							Estimating…
-						</div>
-					{:else if tokenEstimate}
-						<div class="flex flex-wrap items-baseline justify-end gap-x-2 gap-y-0.5 text-right">
-							<span class="text-base font-semibold tabular-nums text-text" title={`${tokenEstimate.total_tokens.toLocaleString('en-US')} tokens`}>~{formatTokenCount(tokenEstimate.total_tokens)}</span>
-							<span class="text-xs text-text-muted">Likely {formatTokenCount(tokenEstimate.lower_bound_tokens)}–{formatTokenCount(tokenEstimate.upper_bound_tokens)} · {tokenEstimate.calls} {tokenEstimate.calls === 1 ? 'call' : 'calls'}</span>
-						</div>
-					{:else if tokenEstimateError}
-						<span class="text-xs text-score-fail" title={tokenEstimateError}>Estimate unavailable</span>
-					{:else}
-						<span class="text-xs text-text-muted">Complete required fields to estimate</span>
-					{/if}
-				</div>
+				<TokenEstimatePreview estimate={tokenEstimate} loading={tokenEstimateLoading} error={tokenEstimateError} />
 
 				<div class="mb-6">
 					<h3 class="mb-3 text-base font-semibold text-text">Summary</h3>

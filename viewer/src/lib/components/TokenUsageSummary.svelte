@@ -8,6 +8,7 @@
 		formatActualVsEstimate,
 		formatTokenCount,
 		formatTokenPercent,
+		splitTokenEstimateNotes,
 		tokenAccuracyUnavailableMessage,
 		tokenStageLabel
 	} from '$lib/token-usage.js';
@@ -16,11 +17,12 @@
 	let estimate = $derived(tokenUsage.estimate);
 	let actual = $derived(tokenUsage.actual);
 	let accuracy = $derived(tokenUsage.accuracy);
+	let notes = $derived(splitTokenEstimateNotes(estimate?.notes));
 	let hasReportedActual = $derived(!!actual && (actual.calls > 0 || actual.totalTokens > 0));
 	let providerUsageIncomplete = $derived(
 		!!actual && (actual.missingUsageCalls > 0 || actual.calls < actual.requests)
 	);
-	let actualLabel = $derived(providerUsageIncomplete ? 'Reported' : 'Actual');
+	let actualLabel = $derived(providerUsageIncomplete || notes.caveats.length > 0 ? 'Reported' : 'Actual');
 	let actualUnavailableMessage = $derived(
 		accuracy?.status === 'unavailable'
 			? tokenAccuracyUnavailableMessage(accuracy.reason, accuracy.usageCoverage)
@@ -46,9 +48,13 @@
 			<h2 id="token-usage-heading" class="text-sm font-semibold text-text">Token usage</h2>
 			{#if estimate}
 				<span class="text-text-secondary">
-					Estimated
-					<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(estimate.totalTokens)}>~{formatTokenCount(estimate.totalTokens)}</strong>
-					<span class="text-xs text-text-muted">({formatTokenCount(estimate.lowerBoundTokens)}–{formatTokenCount(estimate.upperBoundTokens)})</span>
+					{#if estimate.totalTokens === 0 && notes.caveats.length > 0}
+						0 known tokens · total unknown
+					{:else}
+						Estimated{notes.caveats.length > 0 ? ' (partial)' : ''}
+						<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(estimate.totalTokens)}>~{formatTokenCount(estimate.totalTokens)}</strong>
+						<span class="text-xs text-text-muted">({formatTokenCount(estimate.lowerBoundTokens)}–{formatTokenCount(estimate.upperBoundTokens)})</span>
+					{/if}
 				</span>
 			{:else}
 				<span class="text-xs text-text-muted">Estimate unavailable</span>
@@ -94,7 +100,15 @@
 		<div class="mt-1 text-xs text-text-muted">No provider token usage was recorded.</div>
 	{/if}
 
-	{#if stageEstimates.length > 0 || estimate?.notes.length}
+	{#if notes.caveats.length > 0}
+		<ul class="mt-1 space-y-1 text-xs text-text-secondary">
+			{#each notes.caveats as note}
+				<li>{note}</li>
+			{/each}
+		</ul>
+	{/if}
+
+	{#if stageEstimates.length > 0 || notes.details.length > 0}
 		<details class="mt-2 border-t border-border/60 pt-2 text-xs text-text-muted">
 			<summary class="w-fit cursor-pointer select-none font-medium text-text-secondary">Details</summary>
 			{#if stageEstimates.length > 0}
@@ -107,9 +121,9 @@
 					{/each}
 				</div>
 			{/if}
-			{#if estimate?.notes.length}
+			{#if notes.details.length > 0}
 				<ul class="mt-2 list-disc space-y-1 pl-4 text-[11px]">
-					{#each estimate.notes as note}
+					{#each notes.details as note}
 						<li>{note}</li>
 					{/each}
 				</ul>

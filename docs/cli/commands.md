@@ -104,11 +104,24 @@ every answer exhausts it. Larger prompt answers retain a 512-token baseline,
 512 tokens or a representative response shaped by the scoring contract, capped
 by the judge's output limit.
 
-Tool-enabled targets assume one tool round trip per turn: one schema-shaped
+Simple English response-wide word, token, or sentence instructions can lower
+the answer projection: 2 tokens per word, 1.25 per requested token, or 64 per
+sentence, plus 32 tokens of formatting/compliance headroom, never above the
+usual projection. Quoted, nested/per-item, negative, lower-bound, and ambiguous
+instructions retain the usual projection. Prompt cases use the effective system
+prompt and user request; scenarios use only the system prompt, since scenario
+descriptions can specify different requirements for different turns. These hints
+are not enforced output limits.
+
+The point estimate for tool-enabled targets assumes one round trip per turn: one schema-shaped
 tool-call response, one tool result, and one final answer. Tool history is
 retained in later requests and projected judge transcripts. Simulated-tool
-requests use the same prompt builder as execution. These are planning
-heuristics, not guaranteed upper bounds: longer responses, extra tool calls,
+requests use the same prompt builder as execution. The upper end of the range
+instead projects `pipeline.inference.max_tool_calls` resolved tool calls per
+turn, cumulative target/simulator context, a possible forced final reply after
+the tool limit, and the resulting judge transcript, with 35% headroom. It can
+therefore exceed 135% of the point estimate. These are planning
+heuristics, not guaranteed upper bounds: larger arguments/results, longer responses,
 retries, and hidden provider overhead can exceed the estimate.
 
 ## `results list`
