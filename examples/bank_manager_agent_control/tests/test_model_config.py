@@ -2,9 +2,13 @@
 
 import _bootstrap  # noqa: F401
 
+import json
 import os
 import unittest
 from unittest.mock import patch
+
+import httpx
+from langchain_openai import ChatOpenAI
 
 import bank_agent_common as agent
 
@@ -38,36 +42,53 @@ class ModelConfigTests(unittest.TestCase):
             temperature=0.0,
         )
 
-    @patch("langchain_azure_ai.chat_models.AzureAIChatCompletionsModel")
+    @patch("bank_agent_common.ChatOpenAI")
     def test_non_gpt_model_uses_azure_ai_inference_route(self, model_class):
-        # Non-GPT deployments (DeepSeek, Mistral, Llama, Phi, Cohere, ...) are
-        # served via Azure AI Inference rather than the Azure OpenAI gateway,
-        # because those deployments typically run behind SGLang/vLLM, which
-        # require the `model` request-body field AzureAIChatCompletionsModel
-        # populates. `_build_llm` imports the class locally (inside the
-        # non-GPT branch), so it must be patched at its defining module, not
-        # at `bank_agent_common`.
         with patch.dict(os.environ, {"AGENT_MODEL": "DeepSeek-V3"}):
             agent._build_llm()
 
         model_class.assert_called_once_with(
-            endpoint="https://example.openai.azure.com/models",
-            credential="test-key",
+            base_url="https://example.openai.azure.com/models",
+            api_key="test-key",
             model="DeepSeek-V3",
             temperature=0.0,
             max_tokens=4000,
         )
 
-    # A prior version of this suite also asserted the exact wire-format HTTP
-    # request (path, body) for the non-GPT route, back when it went through
-    # `ChatOpenAI` against an OpenAI-v1-compatible endpoint. That routing was
-    # replaced by `AzureAIChatCompletionsModel`, backed by the Azure AI
-    # Inference SDK rather than a plain httpx-mockable OpenAI client, so the
-    # old request-shape assertion no longer applies and doesn't have a
-    # like-for-like replacement without exercising the real SDK client
-    # end-to-end (a live/integration test, not this offline suite). The
-    # constructor-args check above is the coverage this suite can offer
-    # without live credentials.
+    @patch("bank_agent_common.ChatOpenAI")
+    def test_non_gpt_model_sends_azure_ai_inference_chat_request(self, model_class):
+        with patch.dict(os.environ, {"AGENT_MODEL": "DeepSeek-V3"}):
+            agent._build_llm()
+
+        requests = []
+
+        def handle_request(request):
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "DeepSeek-V3",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hello"},
+                        "finish_reason": "stop",
+                    }],
+                },
+            )
+
+        transport = httpx.MockTransport(handle_request)
+        model = ChatOpenAI(
+            **model_class.call_args.kwargs,
+            http_client=httpx.Client(transport=transport),
+            http_async_client=httpx.AsyncClient(transport=transport),
+        )
+        model.invoke("Hello")
+
+        self.assertEqual(requests[0].url.path, "/models/chat/completions")
+        self.assertEqual(json.loads(requests[0].content)["model"], "DeepSeek-V3")
 
 
 if __name__ == "__main__":

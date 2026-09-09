@@ -196,7 +196,7 @@ variables documented in [`.env.example`](.env.example); never commit `.env`.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,phoenix]"
+python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
@@ -207,7 +207,7 @@ macOS/Linux:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[acs,phoenix]"
+python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 cp examples/bank_manager_agent_control/.env.example .env
 ```

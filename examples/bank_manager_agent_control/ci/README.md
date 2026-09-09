@@ -12,7 +12,7 @@ To run the local Bank Manager example, use these commands from the root of the
 ASSERT checkout:
 
 ```bash
-python -m pip install -e ".[acs,phoenix]"
+python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 

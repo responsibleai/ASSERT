@@ -1,11 +1,7 @@
 fastapi>=0.141.1
-langchain-azure-ai>=0.1.0
 langchain-core>=1.6.0
 langchain-mcp-adapters>=0.3.2
-# langchain-openai 1.5.0+ widened to openai<4, but ASSERT's litellm<2 pin
-# still requires openai<3. Keep the bank example on the newest pre-1.5 line
-# so the documented install order resolves a single compatible openai major.
-langchain-openai>=1.4.3,<1.5.0
+langchain-openai>=1.6.0
 langgraph>=1.2.11
 mcp>=1.29.1
 openinference-instrumentation-langchain>=0.1.62
