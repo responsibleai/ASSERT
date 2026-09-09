@@ -18,6 +18,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def case_id_from_context(context: dict[str, Any]) -> str | None:
+    """Return one unambiguous case identity from an Agent Hooks context.
+
+    ``session.case_id`` is the current wire location. A top-level ``case_id``
+    remains accepted for older adapters, but the two forms may never disagree:
+    mock selection and evidence must describe the same ASSERT case.
+    """
+
+    def _optional_case_id(value: Any, location: str) -> str | None:
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{location} case_id must be a non-empty string")
+        return value.strip()
+
+    top_level = _optional_case_id(context.get("case_id"), "top-level")
+    session = context.get("session") or {}
+    if not isinstance(session, dict):
+        raise ValueError("session must be an object when resolving case_id")
+    session_case = _optional_case_id(session.get("case_id"), "session")
+    if top_level is not None and session_case is not None and top_level != session_case:
+        raise ValueError(
+            "conflicting case_id values in top-level and session context"
+        )
+    return session_case or top_level
+
+
 class AgentHooksContextBuilder:
     """Build Agent Hooks-shaped contexts for a single sandbox tool session."""
 
@@ -27,12 +54,15 @@ class AgentHooksContextBuilder:
         agent_id: str,
         framework: str,
         session_id: str,
+        case_id: str | None = None,
         agent_name: str | None = None,
     ) -> None:
         self._agent = {"id": agent_id, "framework": framework}
         if agent_name:
             self._agent["name"] = agent_name
         self._session = {"id": session_id}
+        if case_id:
+            self._session["case_id"] = case_id
         self._sequence = 0
 
     def _base(self, point: str, target: Any) -> dict[str, Any]:

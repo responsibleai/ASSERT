@@ -14,6 +14,14 @@ class CliTest(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
 
+    def test_version_uses_installed_distribution_metadata(self) -> None:
+        with patch("importlib.metadata.version", return_value="9.9.9") as package_version:
+            result = self.runner.invoke(cli, ["--version"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.output, "assert-ai, version 9.9.9\n")
+        package_version.assert_called_once_with("assert-ai")
+
     def test_removed_commands_are_unavailable(self) -> None:
         for command in ["taxonomy", "test_set"]:
             with self.subTest(command=command):

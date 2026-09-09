@@ -4,7 +4,7 @@
 """End-to-end tests for the preset library feature.
 
 Covers:
-- YAML schema validation for all 32 preset files
+- YAML schema validation for every preset file
 - CLI ``library list`` and ``library show`` commands
 - Config.py round-trip for every behavior and judge preset
 - Override / merge semantics (inline values override preset values)
@@ -224,7 +224,7 @@ class CliLibraryListTest(unittest.TestCase):
 
     def test_list_all_presets_shows_every_name(self):
         result = self.runner.invoke(cli, ["library", "list", "--no-color"])
-        for name in ALL_BEHAVIOR_NAMES + ALL_JUDGE_NAMES:
+        for name in ALL_BEHAVIOR_NAMES + ALL_JUDGE_NAMES + ALL_SCENARIO_NAMES:
             with self.subTest(name=name):
                 self.assertIn(name, result.output)
 
@@ -278,6 +278,12 @@ class CliLibraryListTest(unittest.TestCase):
         self.assertEqual(len(data), len(ALL_JUDGE_NAMES))
         self.assertTrue(all(e["kind"] == "judge_preset" for e in data))
 
+    def test_list_json_filter_scenario(self):
+        result = self.runner.invoke(cli, ["library", "list", "--json", "--kind", "scenario"])
+        data = json.loads(result.output)
+        self.assertEqual(len(data), len(ALL_SCENARIO_NAMES))
+        self.assertTrue(all(e["kind"] == "scenario" for e in data))
+
 
 # ===================================================================
 # 3. CLI ``library show`` — detail view, auto-detect kind, JSON output
@@ -301,6 +307,14 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertIn("travel_planner", result.output)
         self.assertIn("kind: scenario", result.output)
 
+    def test_show_scenario_auto_detects_real_kind(self):
+        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--json"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        data = json.loads(result.output)
+        self.assertEqual(data["kind"], "scenario")
+        self.assertIn("context", data)
+        self.assertNotIn("description", data)
+
     def test_show_judge_by_name(self):
         result = self.runner.invoke(cli, ["library", "show", "safety-core"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
@@ -308,9 +322,10 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertIn("kind: judge_preset", result.output)
 
     def test_show_with_explicit_kind_behavior(self):
-        result = self.runner.invoke(
-            cli, ["library", "show", "travel_planner", "--kind", "behavior"]
-        )
+        with self.assertWarns(FutureWarning):
+            result = self.runner.invoke(
+                cli, ["library", "show", "travel_planner", "--kind", "behavior"]
+            )
         self.assertEqual(result.exit_code, 0)
 
     def test_show_with_explicit_kind_judge(self):
@@ -320,7 +335,7 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
 
     def test_show_wrong_kind_fails(self):
-        # travel_planner is a behavior, not a judge_preset
+        # travel_planner is a scenario, not a judge_preset
         result = self.runner.invoke(
             cli, ["library", "show", "travel_planner", "--kind", "judge_preset"]
         )
@@ -378,10 +393,16 @@ class ConfigBehaviorPresetRoundTripTest(unittest.TestCase):
 
     def test_preset_populates_description_from_yaml(self):
         # Verify the description comes from the YAML file, not empty
-        preset_data = load_preset("behavior", "travel_planner")
-        ctx = _load_ctx(behavior_dict={"preset": "travel_planner"})
+        preset_data = load_preset("behavior", "prompt_injection")
+        ctx = _load_ctx(behavior_dict={"preset": "prompt_injection"})
         # Config may strip trailing whitespace from YAML block scalars
         self.assertEqual(ctx["behavior"].strip(), preset_data["description"].strip())
+
+    def test_moved_scenario_alias_still_loads_with_warning(self):
+        with self.assertWarns(FutureWarning):
+            ctx = _load_ctx(behavior_dict={"preset": "travel_planner"})
+        self.assertEqual(ctx["behavior_name"], "travel_planner")
+        self.assertGreater(len(ctx["behavior"]), 0)
 
 
 # ===================================================================
@@ -430,12 +451,12 @@ class OverrideSemanticsTest(unittest.TestCase):
     """Inline values override preset values (last-write-wins)."""
 
     def test_inline_name_overrides_behavior_preset(self):
-        ctx = _load_ctx(behavior_dict={"preset": "travel_planner", "name": "custom_name"})
+        ctx = _load_ctx(behavior_dict={"preset": "prompt_injection", "name": "custom_name"})
         self.assertEqual(ctx["behavior_name"], "custom_name")
 
     def test_inline_description_overrides_behavior_preset(self):
         ctx = _load_ctx(
-            behavior_dict={"preset": "travel_planner", "description": "Custom description."}
+            behavior_dict={"preset": "prompt_injection", "description": "Custom description."}
         )
         self.assertEqual(ctx["behavior"], "Custom description.")
 

@@ -29,9 +29,14 @@ from assert_ai.stages.inference import run_inference
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = os.environ.get("ASSERT_RUN_DOCKER_TESTS", "").lower() in {"1", "true", "yes"}
+if RUN and not docker_available():
+    raise RuntimeError(
+        "ASSERT_RUN_DOCKER_TESTS is enabled, but the Docker daemon is unavailable; "
+        "required containment tests cannot be skipped"
+    )
 pytestmark = pytest.mark.skipif(
-    not RUN or not docker_available(),
-    reason="set ASSERT_RUN_DOCKER_TESTS=1 with Docker available",
+    not RUN,
+    reason="set ASSERT_RUN_DOCKER_TESTS=1 to run real Docker containment tests",
 )
 
 
@@ -45,6 +50,13 @@ def stock_image():
             ".",
         ],
         cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    yield
+    subprocess.run(
+        ["docker", "image", "rm", "-f", "assert-sandbox-stock-agent:local"],
         check=True,
         capture_output=True,
         text=True,
@@ -72,6 +84,14 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
             assert inspect["Config"]["User"] == "65534:65534"
             assert inspect["HostConfig"]["CapDrop"] == ["ALL"]
             assert "no-new-privileges" in inspect["HostConfig"]["SecurityOpt"]
+            assert any(
+                value.startswith("ACTION_MEDIATION_HOST_URL=")
+                for value in inspect["Config"]["Env"]
+            )
+            assert not any(
+                value.startswith("ACTION_MEDIATION_LEDGER=")
+                for value in inspect["Config"]["Env"]
+            )
             assert not any(
                 "PRIVATE_PROVIDER_KEY" in value or "super-secret-real-value" in value
                 for value in inspect["Config"]["Env"]
@@ -83,6 +103,31 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
                 text=True,
             )
             assert writable.returncode == 0, writable.stderr
+            # The target may write arbitrary files to its declared output mount,
+            # but that mount must not contain the host proxy's authoritative
+            # egress ledger. A forged lookalike must not alter host evidence.
+            host_egress_before = handle.egress_log.read_text(encoding="utf-8")
+            forged = subprocess.run(
+                [
+                    "docker", "exec", container, "sh", "-c",
+                    (
+                        "printf '%s\\n' '{\"decision\":\"allowed\",\"forged\":true}' "
+                        "> /sandbox/output/egress.jsonl"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert forged.returncode == 0, forged.stderr
+            assert handle.egress_log.read_text(encoding="utf-8") == host_egress_before
+            assert not handle.egress_log.is_relative_to(handle.output_dir)
+            assert not any(
+                handle.egress_log.resolve().is_relative_to(
+                    Path(mount["Source"]).resolve()
+                )
+                for mount in inspect["Mounts"]
+            )
             policy_write = subprocess.run(
                 ["docker", "exec", container, "sh", "-c", "echo x >> /sandbox/policy.json"],
                 check=False,
@@ -107,10 +152,40 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
             }
             assert tool_results["lookup_customer"]["mode"] == "pass"
             assert tool_results["lookup_customer"]["real_executed"] is True
+            assert tool_results["lookup_customer"]["decision_source"] == "host_mediator"
+            assert tool_results["lookup_customer"]["result_source"] == "target_reported"
+            assert tool_results["lookup_customer"]["decision_authoritative"] is True
+            assert tool_results["lookup_customer"]["result_authoritative"] is False
             assert tool_results["send_message"]["mode"] == "mock"
             assert tool_results["send_message"]["real_executed"] is False
+            assert tool_results["send_message"]["decision_source"] == "host_mediator"
+            assert tool_results["send_message"]["result_source"] == "host_mediator"
+            assert tool_results["send_message"]["decision_authoritative"] is True
+            assert tool_results["send_message"]["result_authoritative"] is True
             assert tool_results["send_message"]["returned"]["status"] == "sent"
+            assert tools.count("lookup_customer") == 1
+            assert tools.count("send_message") == 1
             assert "returned sent" in response.text
+
+            assert handle.action_ledger is not None
+            host_ledger = handle.action_ledger.ledger_path
+            before_forgery = host_ledger.read_bytes()
+            assert not any(
+                host_ledger.resolve().is_relative_to(Path(mount["Source"]).resolve())
+                for mount in inspect["Mounts"]
+            )
+            forged = subprocess.run(
+                [
+                    "docker", "exec", container, "sh", "-c",
+                    "printf '%s\\n' '{\"mode\":\"pass\",\"real_executed\":true}' "
+                    "> /sandbox/output/host-action-ledger.jsonl",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert forged.returncode == 0, forged.stderr
+            assert host_ledger.read_bytes() == before_forgery
             egress = "\n".join(
                 message.get("content", "")
                 for message in response.interaction_messages

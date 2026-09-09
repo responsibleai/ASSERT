@@ -40,7 +40,9 @@ and lets a CI gate report per-behavior verdicts instead of one blended number.
 | `travel_planner_benchmark.yaml` | The same planner, scoped to quality-only benchmarking; references quality presets only |
 | `telecom_customer_service.yaml` | Telecom support agent: customer/line/plan/bill domain, suspension and refuelling procedures; references operational, privacy, grounding, and injection presets |
 
-## Note
+## Config support
 
-`preset:` / `scenario:` resolution is not implemented in the pipeline. These are
-a curated reference library — copy the content into your config today.
+Eval configs do not have a scenario preset field. Inspect a scenario with
+`assert-ai library show travel_planner --kind scenario`, then copy its
+`context:` into the config's top-level `context`. Select one atomic
+`behavior.preset` separately.

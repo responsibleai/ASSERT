@@ -8,9 +8,27 @@ The bank support agent produces the inputs a release gate needs:
 - full evidence for every failed case; and
 - paired comparisons where the same cases are rerun.
 
+To run the local Bank Manager example, use these commands from the root of the
+ASSERT checkout:
+
+```bash
+python -m pip install -e ".[acs,phoenix]"
+python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+```
+
 The standalone shipping example remains:
 
 [`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)
+
+That repository does not contain this `examples/` path. It owns a separate
+root `requirements.txt`; use its own README and dependency manifest when
+working in that checkout.
+
+The standalone repository adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,
+compares it to the unguarded production baseline with a paired statistical test, and
+**passes only if the change significantly *improves* `policy_violation` without regressing
+`overrefusal`** — an improvement gate, not a fixed threshold. If it fails, the build is
+skipped and the PR is blocked.
 
 ## Gate both safety and product quality
 

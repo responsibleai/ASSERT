@@ -6,13 +6,14 @@ referenced by name or copied and customized.
 
 ## How to use
 
-Reference a preset by name in your `eval_config.yaml`:
+Reference an atomic preset by name in your `eval_config.yaml`:
 
 ```yaml
 behavior:
   preset: prompt_injection
-  context: |
-    Your specific agent description and tool inventory here.
+
+context: |
+  Your specific agent description and tool inventory here.
 ```
 
 The `context:` field is the primary customization surface — it tells the
@@ -29,10 +30,9 @@ something failed but never *which* mechanism.
 Application specs — role, domain objects, tools, procedures — are not behaviors.
 They live in [`../scenarios/`](../scenarios/) and belong in `context:`.
 
-> **Note:** Preset resolution (`preset:` key) is not yet implemented in
-> the pipeline. Today, copy the `description:` content into your
-> `eval_config.yaml`'s `behavior.description` field. These files serve
-> as a curated reference library.
+`behavior.preset` fills any missing `behavior.name` and
+`behavior.description` from the library. Add either field inline when you
+need to override the preset for one config.
 
 ## Categories
 
@@ -57,10 +57,14 @@ policy violations.
 |--------|------|-------------|
 | [doxxing](doxxing.yaml) | safety, privacy | Refusal to assist with personal info exposure |
 | [harmful_medical_advice](harmful_medical_advice.yaml) | safety, health | Refusal to provide dangerous medical guidance |
+| [hate_speech_harassment](hate_speech_harassment.yaml) | safety, hate | Hateful, dehumanizing, or harassing content toward people |
+| [malicious_cyber_activity](malicious_cyber_activity.yaml) | safety, cyber | Assistance with malware, exploits, or unauthorized intrusion |
 | [prompt_injection](prompt_injection.yaml) | safety, adversarial | Resistance to instruction override attacks |
+| [sexual_content](sexual_content.yaml) | safety, sexual | Explicit, non-consensual, or contextually inappropriate sexual content |
 | [stereotyping](stereotyping.yaml) | safety, bias, fairness | Avoidance of demographic stereotypes |
 | [suicide_self_harm](suicide_self_harm.yaml) | safety, crisis | Appropriate handling of self-harm disclosures |
 | [sycophancy](sycophancy.yaml) | safety, alignment | Resistance to pressure-driven agreement |
+| [violent_content](violent_content.yaml) | safety, violence | Threats, incitement, or operational support for violence |
 | [identity_verification_failures](identity_verification_failures.yaml) | safety, privacy, operational | Account-specific disclosures before identity checks |
 | [unauthorized_action_failures](unauthorized_action_failures.yaml) | safety, policy, tool-use | State-changing actions without required authorization |
 
@@ -148,9 +152,6 @@ description: |
   # Full behavior specification
   Multi-line markdown describing what the agent should and should not do.
 
-# Optional — only in example presets:
-context: |
-  Description of the specific target agent being evaluated.
 suggested_judge_presets:
   - safety-core
   - grounding
@@ -159,7 +160,6 @@ suggested_judge_presets:
 Key fields:
 
 - **description** — The full behavior description (maps to `behavior.description` in eval config)
-- **context** — Target-specific description (maps to `context` in eval config; scenarios carry this separately)
 - **suggested_judge_presets** — Which judge presets pair well with this behavior
 - **tags** — For discovery and filtering
 - **applicable_to** — Agent/domain types this behavior is relevant for

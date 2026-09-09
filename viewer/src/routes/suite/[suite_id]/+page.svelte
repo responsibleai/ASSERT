@@ -819,21 +819,21 @@
 				<p class="text-sm text-text-secondary">No evaluation results yet.</p>
 			</div>
 		{:else}
-			<div class="overflow-hidden rounded-lg border border-border">
-				<table class="w-full text-left text-sm">
+			<div class="overflow-x-auto rounded-lg border border-border">
+				<table class="w-full table-fixed text-left text-sm">
 					<thead>
 						<tr class="border-b border-border bg-surface">
-							<th class="w-8 px-3 py-2 text-xs font-medium text-text-muted"></th>
-							<th class="px-3 py-2 text-xs font-medium text-text-muted">Run</th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">
+							<th class="w-12 px-3 py-2 text-xs font-medium text-text-muted"></th>
+							<th class="w-[22rem] px-3 py-2 text-xs font-medium text-text-muted">Run</th>
+						<th class="w-24 px-3 py-2 text-xs font-medium text-text-muted">
 							<span class="inline-flex items-center gap-1">Type
 								<InfoTooltip direction="se" label="Direct prompts are single-turn requests. Multi-turn scenarios simulate longer user conversations against the target." />
 							</span>
 						</th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
+						<th class="w-28 px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
+						<th class="w-28 px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
 						{#each selectedMetricCols as colDim, colIdx (colIdx)}
-							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap">
+							<th class="metric-col px-3 py-2 text-left text-xs font-medium text-text-muted">
 								<PrimerDropdown
 									ariaLabel={`Metric column ${colIdx + 1}`}
 									selected={colDim ?? ''}
@@ -851,7 +851,7 @@
 								/>
 							</th>
 						{/each}
-						<th class="px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
+						<th class="w-16 px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -887,9 +887,9 @@
 											<svg class="h-3 w-3 transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 										</button>
 									{/if}
-									<div class="min-w-0 flex flex-col">
-										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
-										<span class="font-mono text-[10px] text-text-muted truncate" title={runTarget(run)}>{runTarget(run)}</span>
+									<div class="flex min-w-0 max-w-[22rem] flex-col">
+										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="truncate text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+										<span class="truncate font-mono text-[10px] text-text-muted" title={runTarget(run)}>{runTarget(run)}</span>
 									</div>
 								</div>
 							</td>
@@ -965,6 +965,42 @@
 	{/if}
 </div>
 {/if}
+
+<style>
+	.metric-col {
+		width: 10rem;
+		white-space: normal;
+	}
+
+	.metric-col :global(.ActionMenu) {
+		display: block;
+	}
+
+	.metric-col :global(button.ActionMenu-button) {
+		width: 100%;
+		height: auto;
+		min-height: 0;
+		align-items: flex-start;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.75rem;
+		line-height: 1.25;
+		white-space: normal;
+	}
+
+	.metric-col :global(.ActionMenu-button-content) {
+		display: block;
+		min-width: 0;
+	}
+
+	.metric-col :global(.ActionMenu-button-value) {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.metric-col :global(.ActionMenu-button-chevron) {
+		margin-top: 1px;
+	}
+</style>
 
 {#if activeStage === 'taxonomy'}
 <div class="mb-5 flex flex-wrap items-center justify-between gap-3">

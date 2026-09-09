@@ -170,8 +170,10 @@ def test_build_eval_config_loads_through_assert_runtime_context(tmp_path: Path) 
     assert config["suite"] == "acs-policy-validation-customer-data-policy"
     assert config["run"] == "generated-policy-eval"
     assert config["pipeline"]["inference"]["target"]["callable"] == "examples.my_agent:chat"
-    assert config["pipeline"]["test_set"]["prompt"]["sample_size"] <= 12
-    assert config["pipeline"]["test_set"]["scenario"]["sample_size"] <= 12
+    category_count = config["pipeline"]["systematize"]["behavior_category_count"]
+    assert category_count == 25
+    assert config["pipeline"]["test_set"]["prompt"]["sample_size"] >= category_count
+    assert config["pipeline"]["test_set"]["scenario"]["sample_size"] >= category_count
     assert set(config["pipeline"]["judge"]["dimensions"]) >= {
         "guardrail_policy_violation",
         "allowed_request_regression",

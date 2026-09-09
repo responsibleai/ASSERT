@@ -200,7 +200,7 @@ Accepted keys:
     - `simulator` — string. Use a tool simulator.
 - `tester` — mapping. Optional.
   - `model` — model config. Optional when `default_model` is set.
-- `max_turns` — positive integer. Default: `10`.
+- `max_turns` — positive integer. Default: `6`.
 - `concurrency` — positive integer. Default: `10`.
 - `max_tool_calls` — positive integer. Default: `10`.
 - `tool_timeout_s` — optional positive number.
@@ -251,7 +251,7 @@ pipeline:
       model:
         name: azure/gpt-4o-mini
         max_tokens: 10000
-    max_turns: 10
+    max_turns: 6
     concurrency: 10
     max_tool_calls: 10
 ```
@@ -593,7 +593,7 @@ pipeline:
       system_prompt: |
         You are a health assistant.
     tester: {}
-    max_turns: 10
+    max_turns: 6
   judge:
     n: 3
     dimensions:

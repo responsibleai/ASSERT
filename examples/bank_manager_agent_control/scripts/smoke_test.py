@@ -6,7 +6,8 @@ Two tiers:
   - DEPS (needs mcp + langgraph + the agent stack): instantiates the two MCP
     servers and imports the agent module. Skips gracefully if deps are missing.
 
-Run on the work laptop after `pip install -e ".[otel,langgraph,examples]"`:
+Run after `pip install -e .` and
+`pip install -r examples/bank_manager_agent_control/requirements.txt`:
     python examples/bank_manager_agent_control/smoke_test.py
 Expect all OFFLINE checks PASS and all DEPS checks PASS.
 """

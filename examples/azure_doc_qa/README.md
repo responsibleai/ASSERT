@@ -22,7 +22,7 @@ questions about Azure AI Foundry documentation. It showcases:
 | `docs/` | The fictional public + internal document corpus the agent retrieves from. |
 | `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `IMPROVEMENT_JOURNEY.md` | The eval-driven-development log — what each round of failures changed in the agent. |
-| `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT installs the instrumentors itself when `target.trace` is set. |
+| `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT activates the instrumentors installed by this example's requirements when `target.trace` is set. |
 | `README.md` | This file. |
 
 ## Architecture
@@ -50,8 +50,8 @@ full text → synthesize answer.
 
 | Risk | Failure mode |
 |---|---|
-| `confidential_internal_leakage.yaml` | Discloses internal-only content to a user without the clearance to see it |
-| `fabricated_ungrounded_answer.yaml` | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
+| [`unauthorized_internal_disclosure`](evals/unauthorized_internal_disclosure/eval_config.yaml) | Discloses internal-only content to a user without the clearance to see it |
+| [`ungrounded_fabricated_answer`](evals/ungrounded_fabricated_answer/eval_config.yaml) | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -59,12 +59,13 @@ Each risk gets its own suite under `evals/`, so the two are measured independent
 
 ```bash
 # From the repo root
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e .
+python -m pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/ungrounded_fabricated_answer/eval_config.yaml
 ```
 
 ## Real MCP Mode
@@ -78,7 +79,7 @@ export FOUNDRY_IQ_TOKEN="your-bearer-token"
 # Node.js required for Learn MCP (npx -y @microsoftdocs/mcp)
 
 # Run without USE_MOCK_TOOLS (real MCP tools used)
-assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
+assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
 ```
 
 ## Environment Variables
@@ -125,7 +126,7 @@ non-permissible, and that split is what produces the two headline metrics above
 ## Expected Output
 
 Each suite writes to `artifacts/results/<suite>/` —
-`azure-doc-qa-confidential-leakage` and `azure-doc-qa-fabricated-answer`:
+`azure-doc-qa-internal-disclosure` and `azure-doc-qa-fabrication`:
 
 | File | What it holds |
 |---|---|

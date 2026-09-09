@@ -24,6 +24,15 @@ KIND_TO_SUBDIR = {
     "scenario": "scenarios",
 }
 
+# These files shipped as behaviors before being reclassified as application
+# scenarios. Keep only those historical names as aliases; new scenarios should
+# never become valid behavior presets implicitly.
+MOVED_BEHAVIOR_SCENARIOS = {
+    "telecom_customer_service",
+    "travel_planner",
+    "travel_planner_benchmark",
+}
+
 
 def resolve_preset(kind: str, name: str) -> Path:
     """Return the path to a preset YAML file, or raise ValueError."""
@@ -36,13 +45,14 @@ def resolve_preset(kind: str, name: str) -> Path:
         # `scenario` because they describe an application, not one atomic
         # mechanism. Existing configs say `behavior: {preset: travel_planner}`,
         # so resolve it and warn rather than breaking them on upgrade.
-        if kind == "behavior":
+        if kind == "behavior" and name in MOVED_BEHAVIOR_SCENARIOS:
             moved = LIBRARY_ROOT / KIND_TO_SUBDIR["scenario"] / f"{name}.yaml"
             if moved.is_file():
                 warnings.warn(
-                    f"{name!r} is an application scenario, not an atomic behavior, and moved to "
-                    f"the 'scenario' kind. Use kind='scenario', and pair it with atomic behaviors "
-                    f"via context:. Resolving as a behavior is deprecated.",
+                    f"{name!r} moved from the behavior library to the scenario library. "
+                    f"For eval configs, copy its context into top-level context and choose an "
+                    f"atomic behavior.preset. Library API callers should use kind='scenario'. "
+                    f"Resolving it through kind='behavior' is deprecated.",
                     FutureWarning,
                     stacklevel=2,
                 )

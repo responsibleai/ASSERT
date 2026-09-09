@@ -63,23 +63,39 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
 
     decision = setup.policy.decide(args.tool)
     mode = str(decision.get("mode", "block"))
+    case_id = getattr(args, "case_id", None)
     print(f"tool:   {args.tool}")
     print(f"args:   {json.dumps(call_args)}")
+    print(f"case:   {case_id if case_id else '(none)'}")
     print(f"policy: mode={mode} (matched '{decision.get('match')}')")
 
     if mode not in {"mock", "inline", "replay", "poison", "inject"}:
         print("\nNot mocked by policy; the mock file is not consulted for this call.")
         return 0
 
-    rule = setup.mocks.find(MockCall(tool=args.tool, args=call_args))
+    # Without a case ID this resolves as an uncorrelated run would, which is a
+    # different answer than any real ASSERT case gets once case-bound rules
+    # exist. Say so rather than printing a confident, unreachable mock.
+    if case_id is None:
+        case_bound = sorted({r.tool for r in setup.mocks.rules if r.case_id})
+        if case_bound:
+            print(
+                "\nnote: this setup declares case-bound mocks for "
+                f"{', '.join(case_bound)}. Resolving without --case-id, so those "
+                "rules cannot match here even though a real run may select them."
+            )
+
+    rule = setup.mocks.find(MockCall(tool=args.tool, args=call_args, case_id=case_id))
     if rule is None:
         print("\nNo mock rule matched. Falls back to the policy's inline `mock:` payload:")
         print(json.dumps(decision.get("mock"), indent=2))
         return 0
 
-    resolution = setup.mocks.resolve(MockCall(tool=args.tool, args=call_args))
+    resolution = setup.mocks.resolve(MockCall(tool=args.tool, args=call_args, case_id=case_id))
     assert resolution is not None  # find() matched, so resolve() must too
     print(f"\nmatched mock rule: tool='{rule.tool}' backend={rule.backend} when={rule.when or '(any args)'}")
+    if rule.case_id:
+        print(f"case binding: {rule.case_id}")
     if rule.note:
         print(f"note: {rule.note}")
     print(f"provenance: {resolution.mock_source}{'  (simulated failure)' if resolution.is_error else ''}")
@@ -103,6 +119,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("setup", type=Path)
     r.add_argument("tool")
     r.add_argument("--args", help="JSON object of tool arguments", default="{}")
+    r.add_argument(
+        "--case-id",
+        default=None,
+        help=(
+            "ASSERT test-case ID to resolve as. Required to see rules bound with "
+            "`case_id:`; without it this reports the call as an uncorrelated run would."
+        ),
+    )
     r.set_defaults(func=_cmd_resolve)
 
     ns = parser.parse_args(argv)

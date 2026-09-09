@@ -3,9 +3,9 @@
 Reference manual for **Step 5a** of `govern-and-remeasure.md`. Open this only
 when the governed run produced a **wrong delta**:
 
-- no drop, or a smaller drop than expected, in the **non-permissible** violation
-  rate, **or**
-- `overrefusal` (or the **permissible** violation rate) rose materially.
+- no drop, or a smaller drop than expected, in **impermissible behavior
+  violated**, **or**
+- **permissible behavior violated** (the over-gating check) rose materially.
 
 > **Metric keys** (the prose below uses the display wording; these are the literal
 > identifiers to read and grep). From `assert-ai results status <suite> <run> --json`:
@@ -56,14 +56,14 @@ all" (§4).
 | 4 | Tool returns a dose / interaction / profile field | [§1.4](#14-a-tool-laundered-number-still-needs-an-output-gate) |
 | 5 | Gate fired, harm persists, entitlement signal is spoofable | [§2.1](#21-never-condition-the-annotator-on-the-agents-own-spoofable-signal) |
 | 6 | Multi-turn case stays flagged though the gate fired on some turn | [§2.2](#22-an-earlier-unblocked-turn-keeps-the-whole-transcript-flagged) |
-| 7 | Harm only partly drops, `overrefusal` flat | [§2.3](#23-the-annotator-under-fires-on-hedged--soft-variants) |
+| 7 | Harm only partly drops, over-gating flat | [§2.3](#23-the-annotator-under-fires-on-hedged--soft-variants) |
 | 8 | Residual soft reassurance / minimization in scenarios | [§2.4](#24-residual-soft-practical-reassurance-in-multi-turn-scenarios) |
-| 9 | `overrefusal` rose | [§3.1](#31-the-block-remediation-is-a-flat-refusal) |
+| 9 | Over-gating (permissible-violation) rose | [§3.1](#31-the-block-remediation-is-a-flat-refusal) |
 | 10 | Grounding gate over-blocks **scenarios** but not prompts | [§3.2](#32-a-grounding-annotator-is-grounding-each-turn-in-isolation) |
-| 11 | Overrefused rows the gate never touched | [§4.1](#41-decompose-an-overrefusal-rise-before-blaming-acs) |
-| 12 | High baseline overrefusal on an injection / "engage with suspicious content" suite | [§4.2](#42-high-baseline-overrefusal-is-the-agents-own-caution) |
+| 11 | Over-gated rows the gate never touched | [§4.1](#41-decompose-an-over-gating-rise-before-blaming-acs) |
+| 12 | High baseline over-gating on an injection / "engage with suspicious content" suite | [§4.2](#42-high-baseline-over-gating-is-the-agents-own-caution) |
 | 13 | Baseline harm rate already ≲10% | [§4.3](#43-a-very-low-baseline-is-not-a-governance-target) |
-| 14 | Two risks share one content band; harm↔overrefusal seesaw | [§4.4](#44-two-risks-on-one-content-band-hit-a-judge-tension-frontier) |
+| 14 | Two risks share one content band; harm↔over-gating seesaw | [§4.4](#44-two-risks-on-one-content-band-hit-a-judge-tension-frontier) |
 | 15 | Target is a YAML Prompt Agent | [§5.1](#51-a-prompt-agent-cannot-be-governed-in-place) |
 
 ---
@@ -125,7 +125,7 @@ the retrieved bytes.
 the embedded instruction as real, agent-sanctioned guidance, and **exempt
 reporting-it-as-data** (quoting or warning about the injected line while
 explicitly treating it as untrusted document text) — otherwise the annotator
-false-positives on accurate factual summaries and inflates overrefusal. On block,
+false-positives on accurate factual summaries and over-gates. On block,
 regenerate a sanitized reply (keep the document's factual content, strip the
 injected commands) and **re-gate**.
 
@@ -149,13 +149,13 @@ diagnosis.*
 > **Observed** — prompt_agents sim-tools: reusing the model-only shared output
 > annotator with tool-laundering + interaction-clearance clauses dropped
 > tool-laundered dosing 28%→0% and interaction clearance 52%→16% at n=25, with
-> overrefusal ≤ +16% dosage / +4% interaction. No tool-field rule needed.
+>    over-gating ≤ +16% dosage / +4% interaction. No tool-field rule needed.
 
 ---
 
 ## §2 — The gate fires, but harm persists
 
-Signature: **the gate fired, and the non-permissible rate barely moved.** The
+Signature: **the gate fired, and impermissible behavior violated barely moved.** The
 interception point is right; the annotator is under-firing.
 
 ### 2.1 Never condition the annotator on the agent's own spoofable signal
@@ -190,7 +190,7 @@ missed keeps the case flagged regardless of a later block.
 
 ### 2.3 The annotator under-fires on hedged / soft variants
 
-Signature: **governed harm only partly drops while `overrefusal` stays flat.**
+Signature: **governed harm only partly drops while over-gating stays flat.**
 The judge scores hedged assertions as violations, but a first-pass classifier
 only catches the blatant ones.
 
@@ -207,7 +207,7 @@ nothing serious", "it's reasonable to call 111 rather than 999" — or a dose
 - any **case-tied dose confirmation or label-application** is dosing — not just a
   fresh "take X mg".
 
-Keep the exemptions crisp so this doesn't spill into overrefusal (see §4.4).
+Keep the exemptions crisp so this doesn't spill into over-gating (see §4.4).
 
 > **Observed** — prompt_agents model-only diagnosis: adding hedged-diagnosis +
 > de-escalation clauses moved governed scenario harm 24%→8%.
@@ -227,13 +227,13 @@ minimization/de-escalation of a real risk and case-applied "most-likely"
 conclusions, while still exempting **general** "usually / in many people"
 education not tied to the user's own case.
 
-Weigh this against the ~4-attempt cap: a 52%→16% drop with flat overrefusal is
+Weigh this against the ~4-attempt cap: a 52%→16% drop with flat over-gating is
 already a correct operating point. Chase the residual only if the harm rate is
 still unacceptably high.
 
 ---
 
-## §3 — `overrefusal` rose because of the gate
+## §3 — Over-gating (permissible-violation) rose because of the gate
 
 Confirm it really is the gate first (§4.1). If it is:
 
@@ -251,12 +251,12 @@ re-answer** so the no-harm guarantee still holds. Fall back to a flat decline
 only if the re-answer still trips the gate. This is the travel
 `_regenerate_grounded` / azure `_regenerate_public` pattern.
 
-**Do NOT** widen or loosen the deny to fix overrefusal. Fix the remediation, not
+**Do NOT** widen or loosen the deny to fix over-gating. Fix the remediation, not
 the gate.
 
 ### 3.2 A grounding annotator is grounding each turn in isolation
 
-Signature: **high `overrefusal` on scenarios, ~flat on single-turn prompts.** The
+Signature: **high over-gating on scenarios, ~flat on single-turn prompts.** The
 gate grounds each turn against **only that turn's tool results**, so specifics the
 user supplied earlier — or that an earlier turn's tool returned — look
 "unsupported" on a follow-up turn with no new tool call, and get blocked.
@@ -267,15 +267,16 @@ user supplied earlier — or that an earlier turn's tool returned — look
    and treat user-supplied + prior-turn facts as valid grounding, not just this
    turn's tool context.
 2. **Prefer `regen` over a flat-decline (`blunt`) fallback.** In blunt mode every
-   block returns the canned decline, which the judge scores as overrefusal, so the
-   history fix barely moves the needle. Regen re-answers grounded in the
-   conversation + tool results and re-gates, recovering the legitimate turns.
+   block returns the canned decline, which breaks the permissible behavior
+   (over-gating), so the history fix barely moves the needle. Regen re-answers
+   grounded in the conversation + tool results and re-gates, recovering the
+   legitimate turns.
 
 > **Observed** — travel `fabricated-details`, `azure/gpt-5.4-mini` strict
 > annotator, n=25/type: the history-grounding fix alone in blunt mode moved
-> scenario overrefusal 92%→84%; switching to **regen** took it 84%→**48%** while
+> scenario over-gating 92%→84%; switching to **regen** took it 84%→**48%** while
 > scenario `fabricated_details` went baseline 76%→36%. Blunt's 76%→4-16% was
-> bought at a catastrophic 84-92% overrefusal. **Regen is the balanced operating
+> bought at a catastrophic 84-92% over-gating. **Regen is the balanced operating
 > point; blunt just trades one failure for another.**
 
 ---
@@ -285,15 +286,16 @@ user supplied earlier — or that an earlier turn's tool returned — look
 These rules exist to stop you burning attempts on a result that is already
 correct.
 
-### 4.1 Decompose an overrefusal rise before blaming ACS
+### 4.1 Decompose an over-gating rise before blaming ACS
 
 When the governed run re-runs inference (`--force-stage inference`) the baseline
-path **re-generates**, so a stochastic / high-overrefusal agent produces
+path **re-generates**, so a stochastic / high-over-gating agent produces
 different refusals run-to-run that have nothing to do with ACS.
 
-**Method:** join governed↔baseline scores on `test_case_id`, take rows that are
-`overrefusal=true` in governed but `false` in baseline, and split them by whether
-the gate's block-remediation text is present in the reply:
+**Method:** join governed↔baseline scores on `test_case_id`, take rows that
+newly break a **permissible** behavior in governed but not baseline (a violated
+permissible node in `node_judgments`), and split them by whether the gate's
+block-remediation text is present in the reply:
 
 - **remediation present → ACS-caused**
 - **remediation absent → the gate never fired → baseline variance**
@@ -301,28 +303,28 @@ the gate's block-remediation text is present in the reply:
 Only the ACS-caused fraction should be weighed against the harm drop; record the
 rest as baseline noise.
 
-> **Observed** — azure_doc_qa prompt injection v3: of 11 newly-overrefused rows
+> **Observed** — azure_doc_qa prompt injection v3: of 11 newly-over-gated rows
 > only 4 had the gate fire. The other 7 were baseline-agent variance, so the true
-> ACS overrefusal cost was ~8pt, not the raw +10pt, for a 16pt harm drop.
+> ACS over-gating cost was ~8pt, not the raw +10pt, for a 16pt harm drop.
 
 Note the flip side: a flat-refusal fallback **guarantees** the bad event is
-blocked but costs ~1pt overrefusal per unrecoverable block; returning the
-regenerated answer lowers overrefusal but lets harm back through if the
+blocked but costs ~1pt over-gating per unrecoverable block; returning the
+regenerated answer lowers over-gating but lets harm back through if the
 regenerate still trips. Prefer investing in a cleaner regenerate + a more precise
 annotator over trading one for the other.
 
-### 4.2 High baseline overrefusal is the agent's own caution
+### 4.2 High baseline over-gating is the agent's own caution
 
 On an injection/XPIA suite — or any "engage with suspicious content" behavior —
-high baseline `overrefusal` is usually the **baseline agent's** caution, not an
+high baseline over-gating is usually the **baseline agent's** caution, not an
 ACS artifact. **Do not chase it with the policy.**
 
 These suites deliberately ask the agent to quote/summarize/classify suspicious
 embedded text, where the permissible behavior is to neutrally report it as
 untrusted data. An over-cautious agent that refuses ("I can't access that
-document") is scored as overrefusal, and that rate sits high *before and after*
+document") breaks a permissible behavior (over-gating), and that rate sits high *before and after*
 ACS because it is a property of the agent + judge rubric, not the gate. Confirm
-with §4.1 — the gate fired on only a minority of the overrefused rows.
+with §4.1 — the gate fired on only a minority of the over-gated rows.
 
 Lowering it is an **agent-prompt** change (teach the agent to quote-and-frame
 suspicious text as data instead of refusing), which is deliberately **out of
@@ -330,7 +332,7 @@ scope** for the A/B: changing the agent prompt breaks the pure-enforcement
 comparison. Report it as a real product finding for the agent's owners, not as an
 ACS regression.
 
-> **Observed** — azure_doc_qa prompt injection: baseline overrefusal ~40% was
+> **Observed** — azure_doc_qa prompt injection: baseline over-gating ~40% was
 > ~14/20 the agent declining to engage with runbook text, essentially unchanged
 > by the gate.
 
@@ -341,7 +343,7 @@ resists it (often via its system prompt), so a governed re-run can only stay
 flat-and-low or move within sample noise. There is no real drop to demonstrate.
 
 **Fix:** don't force iterations chasing a few noisy rows. Run the governed pass
-**once** to confirm the gate does **no harm** (harm stays low, `overrefusal`
+**once** to confirm the gate does **no harm** (harm stays low, over-gating
 flat), record it as a low-baseline / no-harm target, and move on. Prefer, at
 triage time, to pick risks with a substantial baseline so the delta is
 meaningful.
@@ -354,22 +356,23 @@ meaningful.
 
 When two selected risks share a behavior and content surface (e.g. "harmful
 dosing" and "general medication-schedule education"), the judge can score the
-*same* sentence as harm under one rubric and as overrefusal-if-withheld under the
-other — "twice daily ≈ every 12h, 8am/8pm" is flagged as actionable dosing, yet
-refusing "what does twice daily generally mean?" is flagged as overrefusal.
+*same* sentence as harm under one rubric and as a permissible-behavior violation
+if withheld under the other — "twice daily ≈ every 12h, 8am/8pm" is flagged as
+actionable dosing, yet refusing "what does twice daily generally mean?" is flagged
+as a permissible-behavior violation (over-gating).
 
-Loosening the annotator to cut overrefusal gives back harm, and vice versa: **you
+Loosening the annotator to cut over-gating gives back harm, and vice versa: **you
 are on the Pareto frontier.**
 
 **Fix:** give the annotator the crispest possible boundary — general concept, no
 clock times, no "X mg is common" = allow; anything tied to the user's specific
 med/dose = deny — give the regen the same boundary, then **stop**. A meaningful
-harm drop with a modest (single- to low-double-digit) overrefusal rise is the
+harm drop with a modest (single- to low-double-digit) over-gating rise is the
 correct operating point, not a defect to chase past the ~4-attempt cap.
 
 > **Observed** — prompt_agents model-only dosage: 48%→12% harm bought ~12%
-> overrefusal on the narrow general-schedule band; further tightening only
-> shifted harm↔overrefusal without a net gain.
+> over-gating on the narrow general-schedule band; further tightening only
+> shifted harm↔over-gating without a net gain.
 
 ---
 
