@@ -33,12 +33,13 @@ def resolve_path(path: str | Path) -> Path:
 
 
 def write_json(path: Path, payload: Any) -> None:
-    _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2)
+    _atomic_write_text(path, encoder.iterencode(payload))
 
 
 def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
-    text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-    _atomic_write_text(path, text)
+    lines = (json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    _atomic_write_text(path, lines)
 
 
 def append_jsonl_row(path: Path, row: Dict[str, Any]) -> None:
@@ -67,10 +68,10 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
             suffix=".tmp",
             delete=False,
         ) as handle:
+            tmp_name = handle.name
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-            tmp_name = handle.name
         os.replace(tmp_name, path)
         tmp_name = None
     finally:
@@ -81,7 +82,7 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
                 pass
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str | Iterable[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_name: str | None = None
     try:
@@ -93,10 +94,13 @@ def _atomic_write_text(path: Path, text: str) -> None:
             suffix=".tmp",
             delete=False,
         ) as handle:
-            handle.write(text)
+            tmp_name = handle.name
+            if isinstance(text, str):
+                handle.write(text)
+            else:
+                handle.writelines(text)
             handle.flush()
             os.fsync(handle.fileno())
-            tmp_name = handle.name
         os.replace(tmp_name, path)
         tmp_name = None
     finally:

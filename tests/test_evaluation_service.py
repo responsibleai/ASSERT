@@ -1933,8 +1933,14 @@ def test_scheduler_sweep_releases_a_dead_cancelling_job(
     )
     service.store.request_cancel(running.job_id)
 
-    service.manager._sweep_cancelling_jobs()
+    with patch.object(
+        service.store,
+        "list_nonterminal_records",
+        wraps=service.store.list_nonterminal_records,
+    ) as listed:
+        service.manager._sweep_cancelling_jobs()
 
+    listed.assert_called_once_with(states=(JobState.CANCELLING,))
     assert service.store.get(first.job.job_id).state is JobState.CANCELLED
     next_job = service.store.claim_next(
         lease_owner="next-manager",

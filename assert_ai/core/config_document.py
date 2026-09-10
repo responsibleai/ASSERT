@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import (
@@ -21,6 +21,10 @@ from pydantic import (
 
 EVAL_CONFIG_SCHEMA_VERSION = 1
 EVAL_CONFIG_SCHEMA_ID = "https://github.com/responsibleai/ASSERT/schemas/eval-config-v1.json"
+
+# Semantic metadata for serializers; the wire type remains a string.
+JSON_POINTER_METADATA = "json_pointer"
+JsonPointer = Annotated[str, JSON_POINTER_METADATA]
 
 PIPELINE_STAGE_ORDER = (
     "systematize",
@@ -307,7 +311,7 @@ class ConfigValidationIssue(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     code: ConfigValidationCode
-    path: str
+    path: JsonPointer
     message: str
 
 

@@ -9,7 +9,7 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Sequence
@@ -68,8 +68,13 @@ CREATE TABLE IF NOT EXISTS jobs(
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_suite_run_unique
     ON jobs(suite_id, run_id)
     WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS jobs_suite_run_lookup
+    ON jobs(suite_id COLLATE NOCASE, run_id COLLATE NOCASE)
+    WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS jobs_state_created
     ON jobs(state, created_at, job_id);
+CREATE INDEX IF NOT EXISTS jobs_created
+    ON jobs(created_at, job_id);
 CREATE TABLE IF NOT EXISTS job_events(
     job_id TEXT NOT NULL,
     sequence INTEGER NOT NULL,
@@ -281,10 +286,8 @@ class JobStore:
             conditions.append(f"state IN ({placeholders})")
             values.extend(state.value for state in states)
         if before is not None:
-            conditions.append(
-                "(created_at < ? OR (created_at = ? AND job_id < ?))"
-            )
-            values.extend((before[0], before[0], before[1]))
+            conditions.append("(created_at, job_id) < (?, ?)")
+            values.extend(before)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         values.append(limit)
         with self._connection() as connection:
@@ -316,7 +319,10 @@ class JobStore:
         self.initialize()
         now = _now()
         expires_at = _after(lease_seconds)
-        with self._transaction() as connection:
+        with (
+            self._transaction() as connection,
+            closing(connection.cursor()) as candidates,
+        ):
             connection.execute(
                 "DELETE FROM operation_locks WHERE lease_expires_at <= ?",
                 (now,),
@@ -332,23 +338,23 @@ class JobStore:
             kinds = tuple(dict.fromkeys(job_kinds))
             if kinds:
                 kind_placeholders = ", ".join("?" for _ in kinds)
-                candidates = connection.execute(
+                candidates.execute(
                     f"""
                     SELECT * FROM jobs
                     WHERE state = ? AND kind IN ({kind_placeholders})
                     ORDER BY created_at, job_id
                     """,
                     (JobState.QUEUED.value, *kinds),
-                ).fetchall()
+                )
             else:
-                candidates = connection.execute(
+                candidates.execute(
                     """
                     SELECT * FROM jobs
                     WHERE state = ?
                     ORDER BY created_at, job_id
                     """,
                     (JobState.QUEUED.value,),
-                ).fetchall()
+                )
             for row in candidates:
                 record = _record(row)
                 if not self._resources_available(
@@ -778,8 +784,9 @@ class JobStore:
         self,
         *,
         job_kinds: Sequence[str] = (),
+        states: Sequence[JobState] = (),
     ) -> tuple[JobRecord, ...]:
-        """Return every queued or active job for deterministic recovery."""
+        """Return queued or active jobs, optionally filtered before decoding."""
         if not self.exists:
             return ()
         self.initialize()
@@ -793,11 +800,16 @@ class JobStore:
             kind_placeholders = ", ".join("?" for _ in kinds)
             kind_clause = f" AND kind IN ({kind_placeholders})"
             values.extend(kinds)
+        state_clause = ""
+        if states:
+            state_placeholders = ", ".join("?" for _ in states)
+            state_clause = f" AND state IN ({state_placeholders})"
+            values.extend(state.value for state in states)
         with self._connection() as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM jobs
-                WHERE state NOT IN ({placeholders}){kind_clause}
+                WHERE state NOT IN ({placeholders}){kind_clause}{state_clause}
                 ORDER BY created_at, job_id
                 """,
                 tuple(values),

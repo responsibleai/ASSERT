@@ -5,16 +5,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from assert_ai.core.workspace import WorkspaceService
-from assert_ai.mcp.errors import adapt_tool_errors, invoke_tool
+from assert_ai.mcp.dependencies import AuthorServices, ProbeServices
+from assert_ai.mcp.errors import adapt_tool_errors
 from assert_ai.mcp.models import (
     ConfigDesignResult,
     ConfigSaveToolResult,
@@ -22,20 +21,13 @@ from assert_ai.mcp.models import (
 )
 from assert_ai.mcp.sanitize import sanitize_for_mcp
 from assert_ai.mcp.uris import config_uri
-from assert_ai.services.configs import (
-    ConfigDesignRequest,
-    ConfigService,
-)
+from assert_ai.services.configs import ConfigDesignRequest
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.run_planning import (
     EvaluationOverrides,
     EvaluationPreflight,
-    RunPlanningService,
 )
-from assert_ai.services.target_probe import (
-    TargetProbeResult,
-    TargetProbeService,
-)
+from assert_ai.services.target_probe import TargetProbeResult
 
 _PURE_ANNOTATIONS = ToolAnnotations(
     read_only_hint=True,
@@ -49,34 +41,12 @@ _WRITE_ANNOTATIONS = ToolAnnotations(
     idempotent_hint=False,
     open_world_hint=False,
 )
-_DESIGN_ANNOTATIONS = ToolAnnotations(
+_OPEN_WORLD_ANNOTATIONS = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
     idempotent_hint=False,
     open_world_hint=True,
 )
-_PROBE_ANNOTATIONS = ToolAnnotations(
-    read_only_hint=True,
-    destructive_hint=False,
-    idempotent_hint=False,
-    open_world_hint=True,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class AuthorServices:
-    workspace: WorkspaceService
-    configs: ConfigService
-    planning: RunPlanningService
-    max_response_bytes: int
-    allowed_model_patterns: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ProbeServices:
-    workspace: WorkspaceService
-    probe: TargetProbeService
-    max_response_bytes: int
 
 
 def register_author_tools(
@@ -106,52 +76,31 @@ def register_author_tools(
             yaml_text=yaml_text,
             document=document,
         )
+        source: Literal["config", "yaml", "document"]
+        resolved_ref = validation_ref
         if config_ref is not None:
-            record = invoke_tool(
-                lambda: services.configs.get_config(config_ref),
-                workspace=services.workspace,
+            source = "config"
+            record = services.configs.get_config(config_ref)
+            resolved_ref = record.config_ref
+            report = record.validation
+        elif yaml_text is not None:
+            source = "yaml"
+            report = services.configs.validate_yaml(
+                yaml_text,
+                config_ref=validation_ref,
             )
-            return ConfigValidationResult.model_validate(
-                sanitize_for_mcp(
-                    ConfigValidationResult(
-                        source="config",
-                        config_ref=record.config_ref,
-                        validation=record.validation,
-                    ),
-                    workspace=services.workspace,
-                )
-            )
-        if yaml_text is not None:
-            report = invoke_tool(
-                lambda: services.configs.validate_yaml(
-                    yaml_text,
-                    config_ref=validation_ref,
-                ),
-                workspace=services.workspace,
-            )
-            return ConfigValidationResult.model_validate(
-                sanitize_for_mcp(
-                    ConfigValidationResult(
-                        source="yaml",
-                        config_ref=validation_ref,
-                        validation=report,
-                    ),
-                    workspace=services.workspace,
-                )
-            )
-        assert document is not None
-        report = invoke_tool(
-            lambda: services.configs.validate_document(
+        else:
+            source = "document"
+            assert document is not None
+            report = services.configs.validate_document(
                 document,
                 config_ref=validation_ref,
-            ),
-            workspace=services.workspace,
-        )
+            )
         return ConfigValidationResult.model_validate(
             sanitize_for_mcp(
                 ConfigValidationResult(
-                    source="document",
-                    config_ref=validation_ref,
+                    source=source,
+                    config_ref=resolved_ref,
                     validation=report,
                 ),
                 workspace=services.workspace,
@@ -179,14 +128,11 @@ def register_author_tools(
                 ServiceErrorCode.INVALID_ARGUMENT,
                 "Provide exactly one of yaml_text or document",
             )
-        saved = invoke_tool(
-            lambda: services.configs.save_config(
-                config_ref,
-                yaml_text=yaml_text,
-                document=document,
-                expected_etag=expected_etag,
-            ),
-            workspace=services.workspace,
+        saved = services.configs.save_config(
+            config_ref,
+            yaml_text=yaml_text,
+            document=document,
+            expected_etag=expected_etag,
         )
         return ConfigSaveToolResult.model_validate(
             sanitize_for_mcp(
@@ -215,20 +161,17 @@ def register_author_tools(
         overrides: EvaluationOverrides | None = None,
     ) -> EvaluationPreflight:
         """Plan an exact effective run without importing targets or writing files."""
-        plan = invoke_tool(
-            lambda: services.planning.preflight(
-                config_ref,
-                overrides=overrides,
-            ),
-            workspace=services.workspace,
+        plan = services.planning.preflight(
+            config_ref,
+            overrides=overrides,
         )
-        payload = plan.model_dump(mode="json")
-        credentials = payload.pop("credentials")
         sanitized = sanitize_for_mcp(
-            payload,
+            plan,
             workspace=services.workspace,
         )
-        sanitized["credentials"] = credentials
+        sanitized["credentials"] = [
+            credential.model_dump(mode="json") for credential in plan.credentials
+        ]
         return EvaluationPreflight.model_validate(sanitized)
 
 
@@ -240,7 +183,7 @@ def register_design_tools(
 
     @server.tool(
         title="Design an ASSERT config",
-        annotations=_DESIGN_ANNOTATIONS,
+        annotations=_OPEN_WORLD_ANNOTATIONS,
         structured_output=True,
     )
     @adapt_tool_errors(
@@ -279,21 +222,18 @@ def register_design_tools(
                 ServiceErrorCode.INVALID_ARGUMENT,
                 f"Design model {model!r} is not allowed by server policy",
             )
-        draft = invoke_tool(
-            lambda: services.configs.design_config(
-                ConfigDesignRequest(
-                    description=description,
-                    model=model,
-                    seed_config_ref=seed_config_ref,
-                    seed_yaml=seed_yaml,
-                    behavior_preset=behavior_preset,
-                    judge_preset=judge_preset,
-                    dimension_hints=dimension_hints,
-                    default_model_hint=default_model_hint,
-                    max_turns=max_turns,
-                )
-            ),
-            workspace=services.workspace,
+        draft = services.configs.design_config(
+            ConfigDesignRequest(
+                description=description,
+                model=model,
+                seed_config_ref=seed_config_ref,
+                seed_yaml=seed_yaml,
+                behavior_preset=behavior_preset,
+                judge_preset=judge_preset,
+                dimension_hints=dimension_hints,
+                default_model_hint=default_model_hint,
+                max_turns=max_turns,
+            )
         )
         return ConfigDesignResult.model_validate(
             sanitize_for_mcp(
@@ -315,7 +255,7 @@ def register_probe_tools(
 
     @server.tool(
         title="Probe an ASSERT target",
-        annotations=_PROBE_ANNOTATIONS,
+        annotations=_OPEN_WORLD_ANNOTATIONS,
         structured_output=True,
     )
     @adapt_tool_errors(
@@ -324,10 +264,7 @@ def register_probe_tools(
     )
     def probe_target(config_ref: str) -> TargetProbeResult:
         """Import and inspect a managed config's target in an isolated process."""
-        result = invoke_tool(
-            lambda: services.probe.probe(config_ref),
-            workspace=services.workspace,
-        )
+        result = services.probe.probe(config_ref)
         return TargetProbeResult.model_validate(
             sanitize_for_mcp(result, workspace=services.workspace)
         )

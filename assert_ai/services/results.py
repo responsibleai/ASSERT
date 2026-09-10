@@ -10,9 +10,10 @@ import binascii
 import hashlib
 import json
 import re
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
 
 from assert_ai.core.io import (
     get_permissible_flag,
@@ -331,11 +332,6 @@ class ResultRepository:
             source_name="scores",
             fallback=run_dir / "scores.jsonl",
         )
-        inference_lookup = self._inference_lookup(
-            suite_dir,
-            run_dir,
-            summary,
-        ) if stop_reason is not None or has_tool_use is not None else None
         query = _compact_mapping(
             {
                 "suite_id": suite_id,
@@ -401,14 +397,21 @@ class ResultRepository:
                     return False
             return True
 
-        return self._query_jsonl(
-            source,
-            cursor=cursor,
-            page_size=page_size,
-            cursor_kind="scores",
-            query=query,
-            predicate=matches,
-        )
+        with (
+            self._inference_lookup(suite_dir, run_dir, summary)
+            if stop_reason is not None or has_tool_use is not None
+            else nullcontext((None, None))
+        ) as (inference_lookup, inference_identity):
+            if inference_lookup is not None:
+                query["inference_source_sha256"] = inference_identity
+            return self._query_jsonl(
+                source,
+                cursor=cursor,
+                page_size=page_size,
+                cursor_kind="scores",
+                query=query,
+                predicate=matches,
+            )
 
     def list_failures(
         self,
@@ -1076,17 +1079,15 @@ class ResultRepository:
                 )
 
         limit = self._page_size(page_size)
-        ordered_items = [
-            index["items"][key]
-            for key in index["order"]
-            if isinstance(index["items"].get(key), dict)
-        ]
         items: list[dict[str, Any]] = []
         response_bytes = 2
         next_offset: int | None = None
 
         with source.open("rb") as handle:
-            for item in ordered_items:
+            for key in index["order"]:
+                item = index["items"].get(key)
+                if not isinstance(item, dict):
+                    continue
                 offset = item.get("offset")
                 if not isinstance(offset, int) or offset < start_offset:
                     continue
@@ -1204,12 +1205,15 @@ class ResultRepository:
                 return None
             raise
 
+    @contextmanager
     def _inference_lookup(
         self,
         suite_dir: Path,
         run_dir: Path,
         summary: dict[str, Any],
-    ) -> Callable[[dict[str, Any]], dict[str, Any] | None]:
+    ) -> Iterator[
+        tuple[Callable[[dict[str, Any]], dict[str, Any] | None], str | None]
+    ]:
         inference_path = self._source_path(
             suite_dir=suite_dir,
             run_dir=run_dir,
@@ -1217,40 +1221,31 @@ class ResultRepository:
             source_name="inference_set",
             fallback=run_dir / "inference_set.jsonl",
         )
-        inference_index = (
-            self._ensure_index(inference_path)
-            if inference_path is not None
-            else None
-        )
-        cache: dict[str, dict[str, Any] | None] = {}
+        if inference_path is None:
+            yield (lambda row: None), None
+            return
+        inference_index = self._ensure_index(inference_path)
+        with inference_path.open("rb") as handle:
+            def lookup(score_row: dict[str, Any]) -> dict[str, Any] | None:
+                kind = score_row.get("type")
+                test_case_id = score_row.get("test_case_id")
+                if not isinstance(kind, str) or not isinstance(test_case_id, str):
+                    return None
+                item = inference_index["items"].get(f"{kind}:{test_case_id}")
+                if not isinstance(item, dict):
+                    return None
+                return self._read_index_item(handle, inference_path, item)
 
-        def lookup(score_row: dict[str, Any]) -> dict[str, Any] | None:
-            kind = score_row.get("type")
-            test_case_id = score_row.get("test_case_id")
-            if not isinstance(kind, str) or not isinstance(test_case_id, str):
-                return None
-            key = f"{kind}:{test_case_id}"
-            if key not in cache:
-                item = (
-                    inference_index.get("items", {}).get(key)
-                    if isinstance(inference_index, dict)
-                    else None
-                )
-                if (
-                    inference_path is None
-                    or not isinstance(item, dict)
-                ):
-                    cache[key] = None
-                else:
-                    with inference_path.open("rb") as handle:
-                        cache[key] = self._read_index_item(
-                            handle,
-                            inference_path,
-                            item,
-                        )
-            return cache[key]
-
-        return lookup
+            yield lookup, str(inference_index["source"]["sha256"])
+        current_stat = inference_path.stat()
+        if (
+            current_stat.st_size != inference_index["source"]["size_bytes"]
+            or current_stat.st_mtime_ns != inference_index["source"]["mtime_ns"]
+        ):
+            raise ServiceError(
+                ServiceErrorCode.STALE_CURSOR,
+                "The inference source changed during score filtering",
+            )
 
     def _ensure_index(self, source: Path) -> dict[str, Any]:
         try:
@@ -1262,11 +1257,10 @@ class ResultRepository:
             }:
                 raise self._jsonl_service_error(exc) from exc
         try:
-            scan = scan_jsonl(
+            return build_jsonl_index(
                 source,
                 allow_trailing_partial=_allows_trailing_partial(source),
             )
-            return build_jsonl_index(source, scan=scan)
         except JsonlIndexError as exc:
             raise self._jsonl_service_error(exc) from exc
 
@@ -1524,7 +1518,8 @@ class ResultRepository:
                 ) from exc
         resolved = candidate.resolve()
         try:
-            resolved.relative_to(root.resolve())
+            # Keep the canonical boundary if a managed root is replaced.
+            resolved.relative_to(root)
         except ValueError as exc:
             raise ServiceError(
                 ServiceErrorCode.WORKSPACE_VIOLATION,
@@ -1547,7 +1542,7 @@ class ResultRepository:
             )
         resolved = (root / candidate).resolve()
         try:
-            resolved.relative_to(root.resolve())
+            resolved.relative_to(root)
         except ValueError as exc:
             raise ServiceError(
                 ServiceErrorCode.WORKSPACE_VIOLATION,

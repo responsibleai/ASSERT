@@ -46,10 +46,11 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 
 ## Get started
 
-ASSERT has two front doors:
+Choose how to drive ASSERT:
 
 - **[Guided — the `run-assert-eval` skill](#guided-the-run-assert-eval-skill)** *(recommended)* — describe your agent in chat. Your coding assistant starts from the risks you bring, or discovers them with you, then writes the eval configs, runs the pipeline, reports the failures, and can then generate a policy to fix them and prove the fix worked. No YAML by hand.
 - **[Manual — the CLI](#manual-the-cli)** — write an `eval_config.yaml` yourself and run it.
+- **[MCP server](docs/guides/mcp-server.md)** — connect an MCP client to inspect results, author configs, and manage evaluation jobs. Start with inspection; explicitly enable execution when ready.
 
 ### Guided: the `run-assert-eval` skill
 

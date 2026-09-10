@@ -395,6 +395,11 @@ def sanitize_payload(payload: Any, *, depth: int = 0, max_depth: int = 10) -> An
         return sanitized
     elif isinstance(payload, list):
         return [sanitize_payload(item, depth=depth + 1, max_depth=max_depth) for item in payload]
+    elif isinstance(payload, tuple):
+        return tuple(
+            sanitize_payload(item, depth=depth + 1, max_depth=max_depth)
+            for item in payload
+        )
     elif isinstance(payload, str):
         # Redact Bearer tokens in string values
         return sanitize_text(payload)

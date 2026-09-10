@@ -28,6 +28,7 @@ from assert_ai.core.artifact_cache import (
 from assert_ai.core.config_document import (
     ConfigValidationIssue,
     ConfigValidationReport,
+    JsonPointer,
     PIPELINE_STAGE_ORDER,
 )
 from assert_ai.core.run_plan import resolve_forced_stages
@@ -106,7 +107,7 @@ class StageAction(StrEnum):
 
 class PreflightIssue(_ServiceModel):
     code: str
-    path: str = ""
+    path: JsonPointer = ""
     message: str
 
 
@@ -286,12 +287,17 @@ class RunPlanningService:
         )
         blocking.extend(target_issues)
         blocking.extend(_policy_issues(effective, models, ctx, self.policy))
+        stages = _stage_plan(ctx, forced, models)
+        running_stages = {
+            stage.name for stage in stages if stage.action is StageAction.RUN
+        }
         credentials, credential_issues, credential_warnings = (
-            _credential_requirements(models)
+            _credential_requirements(
+                [model for model in models if model.stage in running_stages]
+            )
         )
         blocking.extend(credential_issues)
         warnings.extend(credential_warnings)
-        stages = _stage_plan(ctx, forced, models)
         try:
             consumed_artifacts = _consumed_artifact_pins(
                 self.workspace,
@@ -319,7 +325,7 @@ class RunPlanningService:
 
         concurrency = _effective_concurrency(ctx)
         sample_sizes = _sample_sizes(effective)
-        estimate = _estimate_model_calls(stages)
+        estimate = _estimate_model_calls(stages, target)
         return EvaluationPreflight(
             config_ref=config_ref,
             source_etag=source_etag,
@@ -672,6 +678,15 @@ def _collect_model_uses(document: dict[str, Any]) -> list[ModelUse]:
                     role="target",
                     stage="inference",
                     model=_model_name(target.get("model")) or default,
+                )
+            tools = target.get("tools")
+            simulator = tools.get("simulator") if isinstance(tools, dict) else None
+            if isinstance(simulator, str) and simulator:
+                _append_model(
+                    models,
+                    role="tool_simulator",
+                    stage="inference",
+                    model=simulator,
                 )
         tester = inference.get("tester")
         if isinstance(tester, dict):
@@ -1043,13 +1058,26 @@ def _module_available(name: str) -> bool:
 
 def _estimate_model_calls(
     stages: list[StagePreflight],
+    target: TargetPreflight | None,
 ) -> ModelCallEstimate:
-    active_model_stages = [
-        stage
-        for stage in stages
-        if stage.will_call_model
-    ]
-    if not active_model_stages:
+    if (
+        target is not None
+        and target.kind != "model"
+        and any(
+            stage.name == "inference" and stage.action is StageAction.RUN
+            for stage in stages
+        )
+    ):
+        return ModelCallEstimate(
+            minimum=0,
+            maximum=None,
+            basis=(
+                f"Calls inside the {target.kind} target cannot be determined "
+                "statically. Additional ASSERT-managed calls depend on retries "
+                "and tester turns."
+            ),
+        )
+    if not any(stage.will_call_model for stage in stages):
         return ModelCallEstimate(
             minimum=0,
             maximum=0,
@@ -1072,6 +1100,7 @@ def _model_role_path(role: str) -> str:
         "test_set_scenario": "/pipeline/test_set/scenario/model",
         "test_set_stratify": "/pipeline/test_set/stratify/model",
         "target": "/pipeline/inference/target/model",
+        "tool_simulator": "/pipeline/inference/target/tools/simulator",
         "tester": "/pipeline/inference/tester/model",
         "judge": "/pipeline/judge/model",
     }.get(role, "")

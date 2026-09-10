@@ -8,14 +8,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import yaml
 from mcp.server import MCPServer
 
 from assert_ai.core.config_document import EVAL_CONFIG_SCHEMA_VERSION
+from assert_ai.mcp.dependencies import InspectServices, JobServices
 from assert_ai.mcp.errors import invoke_resource
-from assert_ai.mcp.sanitize import sanitize_for_mcp
-from assert_ai.mcp.tools.inspect import InspectServices
-from assert_ai.mcp.tools.jobs import JobServices
+from assert_ai.mcp.presentation import dump_yaml, public_run
+from assert_ai.mcp.sanitize import sanitize_for_mcp, sanitize_mapping
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 
 _SCHEMA_URI = "assert://schema/eval-config"
@@ -55,7 +54,7 @@ def register_inspect_resources(
         "assert://preset/{kind}/{name}",
         name="preset",
         title="ASSERT preset",
-        description="One built-in behavior or judge preset definition.",
+        description="One built-in behavior, judge, or scenario preset definition.",
         mime_type="application/json",
     )
     def preset(kind: str, name: str) -> str:
@@ -150,7 +149,7 @@ def register_inspect_resources(
     def run_summary(suite_id: str, run_id: str) -> str:
         return invoke_resource(
             lambda: _json_text(
-                _public_run(
+                public_run(
                     services.results.load_run_detail(suite_id, run_id)
                 ),
                 services=services,
@@ -249,17 +248,8 @@ def _sanitized_config_yaml(
     services: InspectServices,
 ) -> str:
     record = services.configs.get_config(config_ref)
-    document = sanitize_for_mcp(record.document, workspace=services.workspace)
-    if not isinstance(document, dict):
-        raise TypeError("Expected a config mapping")
-    text = yaml.safe_dump(
-        document,
-        default_flow_style=False,
-        sort_keys=False,
-        allow_unicode=True,
-    )
-    normalized = text if text.endswith("\n") else text + "\n"
-    return _bounded_text(normalized, services=services)
+    document = sanitize_mapping(record.document, workspace=services.workspace)
+    return _bounded_text(dump_yaml(document), services=services)
 
 
 def _named_artifact_resource(
@@ -371,13 +361,6 @@ def _json_text(value: Any, *, services: InspectServices) -> str:
         ),
         services=services,
     )
-
-
-def _public_run(summary: dict[str, Any]) -> dict[str, Any]:
-    payload = dict(summary)
-    for key in ("artifact_versions", "sources", "indexes"):
-        payload.pop(key, None)
-    return payload
 
 
 def _bounded_text(text: str, *, services: InspectServices) -> str:

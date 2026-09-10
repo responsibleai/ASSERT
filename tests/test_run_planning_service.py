@@ -75,6 +75,37 @@ def _services(
     )
 
 
+def _cache_systematization(configs: ConfigService, config_ref: str = "demo.yaml") -> str:
+    record = configs.get_config(config_ref)
+    config_path = configs.workspace.path_policy.resolve_config_path(
+        record.config_ref,
+        must_exist=True,
+        reject_links=True,
+    )
+    ctx = load_runtime_context(
+        deepcopy(record.document),
+        config_path,
+        stage_modules=STAGES,
+        path_policy=configs.workspace.path_policy,
+    )
+    raw_cfg = dict(next(raw for name, raw in ctx["stages"] if name == "systematize"))
+    plan = prepare_artifact_plan(
+        ctx=ctx,
+        stage_name="systematize",
+        raw_cfg=raw_cfg,
+        forced=False,
+    )
+    activate_artifact_plan(ctx, plan)
+    plan.output_paths["taxonomy"].parent.mkdir(parents=True, exist_ok=True)
+    plan.output_paths["taxonomy"].write_text(
+        '{"behavior_categories":[]}', encoding="utf-8"
+    )
+    plan.output_paths["systematization"].write_text("{}", encoding="utf-8")
+    finalize_artifact_plan(ctx, plan)
+    assert plan.version is not None
+    return plan.version
+
+
 def test_preflight_is_pure_and_matches_force_cascade() -> None:
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -187,6 +218,102 @@ def test_preflight_returns_structural_validation_without_side_effects() -> None:
         assert result.stages == ()
         assert result.blocking_issues[0].code == "UNKNOWN_FIELD"
         assert not configs.workspace.artifacts_root.exists()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"callable": "agent:run"},
+        {"endpoint": "https://agent.example.test/chat"},
+        {"connector": "agent_connector"},
+        {"sandbox": "./setup.yaml"},
+    ],
+    ids=["callable", "endpoint", "connector", "sandbox"],
+)
+def test_preflight_keeps_active_opaque_target_calls_unknown(
+    tmp_path: Path, target: dict[str, str], enabled: bool
+) -> None:
+    configs, planning = _services(tmp_path)
+    configs.workspace.configs_root.mkdir(parents=True)
+    if "sandbox" in target:
+        (configs.workspace.configs_root / "policy.yaml").write_text(
+            "interactions: []\ndefault: {mode: block}\n", encoding="utf-8"
+        )
+        (configs.workspace.configs_root / "setup.yaml").write_text(
+            "version: 1\n"
+            "target: {kind: endpoint, url: 'https://agent.example.test/chat'}\n"
+            "policy: ./policy.yaml\n",
+            encoding="utf-8",
+        )
+    (configs.workspace.configs_root / "cases.jsonl").write_text(
+        '{"type":"prompt","test_case_id":"one","seed":{"prompt":"hello"}}\n',
+        encoding="utf-8",
+    )
+    configs.save_config(
+        "opaque.yaml",
+        document={
+            "suite": "opaque",
+            "pipeline": {
+                "inference": {
+                    "enabled": enabled,
+                    "target": dict(target),
+                    "test_set_path": "cases.jsonl",
+                }
+            },
+        },
+    )
+
+    result = planning.preflight("opaque.yaml")
+
+    assert result.ready is True
+    assert result.models == ()
+    assert result.estimated_model_calls.minimum == 0
+    assert result.estimated_model_calls.maximum == (None if enabled else 0)
+    if enabled:
+        assert "target cannot be determined statically" in result.estimated_model_calls.basis
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+@pytest.mark.parametrize("credentials_present", [True, False])
+def test_preflight_applies_model_policy_and_credentials_to_tool_simulators(
+    tmp_path: Path, allowed: bool, credentials_present: bool
+) -> None:
+    patterns = ("openai/*", "anthropic/*") if allowed else ("openai/*",)
+    configs, planning = _services(
+        tmp_path, policy=PreflightPolicy(allowed_model_patterns=patterns)
+    )
+    document = _document(model_target=True)
+    document["pipeline"]["test_set"]["tool_source"] = "per_test_case"
+    document["pipeline"]["inference"]["target"]["tools"] = {
+        "simulator": "anthropic/claude-test"
+    }
+    configs.save_config("simulated.yaml", document=document)
+
+    with patch.dict(
+        os.environ,
+        {
+            "OPENAI_API_KEY": "configured-for-test",
+            "ANTHROPIC_API_KEY": "configured-for-test" if credentials_present else "",
+        },
+        clear=False,
+    ):
+        result = planning.preflight("simulated.yaml")
+
+    simulator = next(model for model in result.models if model.role == "tool_simulator")
+    assert simulator.stage == "inference"
+    assert simulator.model == "anthropic/claude-test"
+    assert simulator.provider == "anthropic"
+    assert result.ready is (allowed and credentials_present)
+    issues = {(issue.code, issue.path) for issue in result.blocking_issues}
+    expected = set()
+    if not allowed:
+        expected.add(
+            ("MODEL_NOT_ALLOWED", "/pipeline/inference/target/tools/simulator")
+        )
+    if not credentials_present:
+        expected.add(("CREDENTIAL_CONFIGURATION_MISSING", ""))
+    assert issues == expected
 
 
 def test_model_override_cannot_replace_callable_target() -> None:
@@ -306,45 +433,7 @@ def test_preflight_reuses_cache_without_writing_workspace() -> None:
         root = Path(tmp)
         configs, planning = _services(root)
         configs.save_config("demo.yaml", document=_document())
-        record = configs.get_config("demo.yaml")
-        config_path = configs.workspace.path_policy.resolve_config_path(
-            record.config_ref,
-            must_exist=True,
-            reject_links=True,
-        )
-        ctx = load_runtime_context(
-            deepcopy(record.document),
-            config_path,
-            stage_modules=STAGES,
-            path_policy=configs.workspace.path_policy,
-        )
-        raw_cfg = dict(
-            next(
-                raw
-                for name, raw in ctx["stages"]
-                if name == "systematize"
-            )
-        )
-        plan = prepare_artifact_plan(
-            ctx=ctx,
-            stage_name="systematize",
-            raw_cfg=raw_cfg,
-            forced=False,
-        )
-        activate_artifact_plan(ctx, plan)
-        plan.output_paths["taxonomy"].parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-        plan.output_paths["taxonomy"].write_text(
-            '{"behavior_categories":[]}',
-            encoding="utf-8",
-        )
-        plan.output_paths["systematization"].write_text(
-            "{}",
-            encoding="utf-8",
-        )
-        finalize_artifact_plan(ctx, plan)
+        version = _cache_systematization(configs)
         before = {
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in root.rglob("*")
@@ -365,8 +454,8 @@ def test_preflight_reuses_cache_without_writing_workspace() -> None:
         }
         stages = {stage.name: stage for stage in result.stages}
         assert stages["systematize"].action is StageAction.REUSE
-        assert stages["systematize"].artifact_version == plan.version
-        assert result.consumed_artifacts["systematize"].version == plan.version
+        assert stages["systematize"].artifact_version == version
+        assert result.consumed_artifacts["systematize"].version == version
         assert before == after
 
         with patch.dict(
@@ -383,6 +472,48 @@ def test_preflight_reuses_cache_without_writing_workspace() -> None:
 
         assert forced.stages[0].action is StageAction.RUN
         assert "systematize" not in forced.consumed_artifacts
+
+
+@pytest.mark.parametrize("forced", [True, False])
+@pytest.mark.parametrize("allowed", [True, False])
+def test_cached_stages_require_credentials_only_when_forced(
+    tmp_path: Path, forced: bool, allowed: bool
+) -> None:
+    configs, planning = _services(
+        tmp_path,
+        policy=PreflightPolicy(
+            allowed_model_patterns=("openai/*",) if allowed else ("azure/*",)
+        ),
+    )
+    document = _document()
+    document["pipeline"] = {"systematize": document["pipeline"]["systematize"]}
+    configs.save_config("demo.yaml", document=document)
+    _cache_systematization(configs)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+        result = planning.preflight(
+            "demo.yaml",
+            overrides=EvaluationOverrides(
+                force_stages=("systematize",) if forced else ()
+            ),
+        )
+
+    assert result.ready is (allowed and not forced)
+    assert result.models[0].model == "openai/gpt-test"
+    assert result.stages[0].action is (StageAction.RUN if forced else StageAction.REUSE)
+    assert bool(result.credentials) is forced
+    assert result.estimated_model_calls.maximum == (None if forced else 0)
+    codes = {issue.code for issue in result.blocking_issues}
+    expected = set()
+    if forced:
+        expected.add("CREDENTIAL_CONFIGURATION_MISSING")
+    if not allowed:
+        expected.add("MODEL_NOT_ALLOWED")
+    assert codes == expected
+    assert before == {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    }
 
 
 def test_resolve_forced_stages_rejects_missing_and_cascades() -> None:

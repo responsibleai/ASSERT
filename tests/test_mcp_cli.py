@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
@@ -109,9 +110,10 @@ def test_mcp_serve_forwards_resolved_options() -> None:
     run_stdio_server.assert_called_once_with(options)
 
 
-def test_mcp_serve_reports_missing_optional_dependency() -> None:
+@pytest.mark.parametrize("module", ["mcp", "mcp.server"])
+def test_mcp_serve_reports_missing_optional_dependency(module: str) -> None:
     runner = CliRunner()
-    missing = ModuleNotFoundError("No module named 'mcp'", name="mcp")
+    missing = ModuleNotFoundError(f"No module named {module!r}", name=module)
     with patch(
         "assert_ai.mcp._command.importlib.import_module",
         side_effect=missing,
@@ -121,6 +123,43 @@ def test_mcp_serve_reports_missing_optional_dependency() -> None:
     assert result.exit_code == 1
     assert 'python -m pip install "assert-ai[mcp]"' in result.output
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("module", ["mcp.server", "mcp.types"])
+def test_mcp_serve_explains_incompatible_sdk(module: str) -> None:
+    incompatible = ImportError("Missing SDK API", name=module)
+    with patch(
+        "assert_ai.mcp._command.importlib.import_module",
+        side_effect=incompatible,
+    ):
+        result = CliRunner().invoke(cli, ["mcp", "serve"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "requires MCP 2.x" in result.output
+    assert "dedicated environment" in result.output
+    assert 'python -m pip install "assert-ai[mcp]"' in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ImportError("Unrelated import failure", name="mcp_plugin"),
+        ImportError("Import failure without a module name"),
+        ModuleNotFoundError("No module named 'rapidfuzz'", name="rapidfuzz"),
+    ],
+)
+def test_mcp_serve_does_not_mask_unrelated_import_failures(error: ImportError) -> None:
+    with patch(
+        "assert_ai.mcp._command.importlib.import_module",
+        side_effect=error,
+    ):
+        result = CliRunner().invoke(cli, ["mcp", "serve"])
+
+    assert result.exit_code == 1
+    assert result.exception is error
+    assert "MCP dependencies" not in result.output
 
 
 def test_mcp_serve_rejects_nonpositive_preflight_limit() -> None:
@@ -139,6 +178,17 @@ def test_mcp_serve_rejects_nonpositive_preflight_limit() -> None:
 
     assert result.exit_code == 2
     assert "not in the range" in result.output
+    load_server.assert_not_called()
+
+
+@pytest.mark.parametrize("group", ["analysis", "acs", "export"])
+def test_mcp_serve_rejects_unimplemented_capability_flags(group: str) -> None:
+    with patch("assert_ai.mcp._command._load_server_module") as load_server:
+        result = CliRunner().invoke(cli, ["mcp", "serve", "--enable-group", group])
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--enable-group'" in result.output
+    assert group in result.output
     load_server.assert_not_called()
 
 

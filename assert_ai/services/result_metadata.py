@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,6 @@ from assert_ai.core.jsonl_index import (
     build_jsonl_index,
     jsonl_index_path,
     load_jsonl_index,
-    scan_jsonl,
 )
 from assert_ai.results import (
     compute_prompt_metrics,
@@ -30,6 +31,14 @@ SUITE_SUMMARY_SCHEMA_VERSION = 1
 RUN_SUMMARY_SCHEMA_VERSION = 1
 RUN_CATALOG_SCHEMA_VERSION = 1
 RUN_CATALOG_FILENAME = "run_catalog.json"
+_RUN_METADATA_FILENAMES = frozenset(
+    {
+        "run_summary.json",
+        "manifest.json",
+        "inference_set.jsonl",
+        "scores.jsonl",
+    }
+)
 
 
 def refresh_stage_indexes(
@@ -450,12 +459,11 @@ def _load_or_build_jsonl_index(
         ):
             return None
     try:
-        scan = scan_jsonl(
+        return build_jsonl_index(
             path,
             allow_trailing_partial=path.name
             in {"inference_set.jsonl", "scores.jsonl"},
         )
-        return build_jsonl_index(path, scan=scan)
     except JsonlIndexError:
         return None
 
@@ -646,31 +654,18 @@ def _json_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def suite_run_catalog_identity(suite_root: Path) -> dict[str, Any]:
     """Return a cheap identity for the suite's run set and run metadata."""
     entries: list[dict[str, Any]] = []
-    if suite_root.exists():
-        for child in sorted(suite_root.iterdir()):
-            if (
-                not child.is_dir()
-                or child.name == "artifacts"
-                or child.name.startswith(".")
-            ):
-                continue
-            files: dict[str, dict[str, int]] = {}
-            for filename in (
-                "run_summary.json",
-                "manifest.json",
-                "inference_set.jsonl",
-                "scores.jsonl",
-            ):
-                path = child / filename
-                if not path.is_file():
-                    continue
-                stat_result = path.stat()
-                files[filename] = {
-                    "size_bytes": stat_result.st_size,
-                    "mtime_ns": stat_result.st_mtime_ns,
-                }
-            if files:
-                entries.append({"run_id": child.name, "files": files})
+    for child in _run_directories(suite_root):
+        files = {
+            filename: {
+                "size_bytes": stat_result.st_size,
+                "mtime_ns": stat_result.st_mtime_ns,
+            }
+            for filename, stat_result in _run_file_stats(child).items()
+            if stat.S_ISREG(stat_result.st_mode)
+        }
+        if files:
+            entries.append({"run_id": child.name, "files": files})
+    entries.sort(key=lambda item: Path(item["run_id"]))
     encoded = json.dumps(
         entries,
         ensure_ascii=False,
@@ -685,25 +680,10 @@ def suite_run_catalog_identity(suite_root: Path) -> dict[str, Any]:
 
 def suite_run_set_identity(suite_root: Path) -> dict[str, Any]:
     """Return a cheap identity that detects added or removed run directories."""
-    run_ids = (
-        sorted(
-            child.name
-            for child in suite_root.iterdir()
-            if child.is_dir()
-            and child.name != "artifacts"
-            and not child.name.startswith(".")
-            and any(
-                (child / filename).exists()
-                for filename in (
-                    "run_summary.json",
-                    "manifest.json",
-                    "inference_set.jsonl",
-                    "scores.jsonl",
-                )
-            )
-        )
-        if suite_root.exists()
-        else []
+    run_ids = sorted(
+        child.name
+        for child in _run_directories(suite_root)
+        if _run_file_stats(child)
     )
     encoded = json.dumps(
         run_ids,
@@ -714,6 +694,37 @@ def suite_run_set_identity(suite_root: Path) -> dict[str, Any]:
         "run_count": len(run_ids),
         "sha256": hashlib.sha256(encoded).hexdigest(),
     }
+
+
+def _run_directories(suite_root: Path) -> list[os.DirEntry[str]]:
+    try:
+        with os.scandir(suite_root) as entries:
+            return [
+                entry
+                for entry in entries
+                if entry.name != "artifacts"
+                and not entry.name.startswith(".")
+                and entry.is_dir()
+            ]
+    except FileNotFoundError:
+        return []
+
+
+def _run_file_stats(run_dir: os.DirEntry[str]) -> dict[str, os.stat_result]:
+    files: dict[str, os.stat_result] = {}
+    try:
+        with os.scandir(run_dir.path) as entries:
+            for entry in entries:
+                filename = os.path.normcase(entry.name)
+                if filename not in _RUN_METADATA_FILENAMES:
+                    continue
+                try:
+                    files[filename] = entry.stat()
+                except FileNotFoundError:
+                    continue
+    except (FileNotFoundError, NotADirectoryError):
+        return {}
+    return files
 
 
 def _safe_target_identifier(

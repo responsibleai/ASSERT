@@ -334,6 +334,138 @@ def test_score_queries_failures_and_transcript_use_indexes() -> None:
         assert transcript["score"]["verdict"]["dimensions"]["policy_violation"] is True
 
 
+@pytest.mark.parametrize(
+    ("filters", "expected_ids"),
+    [
+        ({"stop_reason": "completed"}, ["p1", "s1"]),
+        ({"has_tool_use": False}, ["p2", "s1"]),
+        ({"stop_reason": "completed", "has_tool_use": True}, ["p1"]),
+    ],
+)
+def test_score_filters_share_and_close_one_inference_handle(
+    tmp_path: Path, filters: dict, expected_ids: list[str]
+) -> None:
+    repository = ResultRepository(_build_legacy_fixture(tmp_path))
+    repository.get_suite("suite-a")
+    original_open = Path.open
+    handles = []
+
+    def track_open(path: Path, mode: str = "r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if path.name == "inference_set.jsonl" and mode == "rb":
+            handles.append(handle)
+        return handle
+
+    with patch.object(Path, "open", track_open):
+        page = repository.list_scores("suite-a", "run-a", **filters)
+
+    assert [row["test_case_id"] for row in page.items] == expected_ids
+    assert len(handles) == 1
+    assert handles[0].closed
+
+
+def test_score_filter_closes_inference_handle_on_error(tmp_path: Path) -> None:
+    repository = ResultRepository(
+        _build_legacy_fixture(tmp_path), max_item_bytes=100
+    )
+    repository.get_suite("suite-a")
+    original_open = Path.open
+    handles = []
+
+    def track_open(path: Path, mode: str = "r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if path.name == "inference_set.jsonl" and mode == "rb":
+            handles.append(handle)
+        return handle
+
+    with patch.object(Path, "open", track_open):
+        with pytest.raises(ServiceError) as oversized:
+            repository.list_scores("suite-a", "run-a", stop_reason="completed")
+
+    assert oversized.value.code == ServiceErrorCode.ARTIFACT_TOO_LARGE
+    assert len(handles) == 1
+    assert handles[0].closed
+
+
+def test_score_filter_rejects_inference_changes_during_query(tmp_path: Path) -> None:
+    repository = ResultRepository(_build_legacy_fixture(tmp_path))
+    repository.get_suite("suite-a")
+    original_read = repository._read_index_item
+    changed = False
+
+    def mutate_inference(handle, source: Path, item: dict) -> dict:
+        nonlocal changed
+        row = original_read(handle, source, item)
+        if source.name == "inference_set.jsonl" and not changed:
+            changed = True
+            with source.open("ab") as writer:
+                writer.write(b'{"type":"prompt","test_case_id":"new"}\n')
+        return row
+
+    with patch.object(repository, "_read_index_item", mutate_inference):
+        with pytest.raises(ServiceError) as stale:
+            repository.list_scores("suite-a", "run-a", stop_reason="completed")
+
+    assert stale.value.code == ServiceErrorCode.STALE_CURSOR
+
+
+@pytest.mark.parametrize("filter_inference", [False, True])
+def test_score_cursor_tracks_inference_only_when_used_by_filter(
+    tmp_path: Path, filter_inference: bool
+) -> None:
+    results_root = _build_legacy_fixture(tmp_path)
+    repository = ResultRepository(results_root, default_page_size=1)
+    filters = {"stop_reason": "completed"} if filter_inference else {}
+    first = repository.list_scores("suite-a", "run-a", **filters)
+    assert first.next_cursor is not None
+    inference = results_root / "suite-a" / "run-a" / "inference_set.jsonl"
+    rows = [
+        json.loads(line)
+        for line in inference.read_text(encoding="utf-8").splitlines()
+    ]
+    rows[1]["stop_reason"] = "completed"
+    _write_jsonl(inference, rows)
+
+    if filter_inference:
+        with pytest.raises(ServiceError) as stale:
+            repository.list_scores(
+                "suite-a", "run-a", cursor=first.next_cursor, **filters
+            )
+        assert stale.value.code == ServiceErrorCode.STALE_CURSOR
+    else:
+        second = repository.list_scores(
+            "suite-a", "run-a", cursor=first.next_cursor
+        )
+        assert [row["test_case_id"] for row in second.items] == ["p2"]
+
+
+def test_score_filter_without_inference_returns_no_matches(tmp_path: Path) -> None:
+    results_root = _build_legacy_fixture(tmp_path)
+    (results_root / "suite-a" / "run-a" / "inference_set.jsonl").unlink()
+    repository = ResultRepository(results_root)
+
+    page = repository.list_scores("suite-a", "run-a", has_tool_use=False)
+
+    assert page.items == []
+    assert page.next_cursor is None
+
+
+def test_replaced_results_root_does_not_move_containment_boundary(
+    tmp_path: Path, symlink_or_skip
+) -> None:
+    results_root = _build_legacy_fixture(tmp_path)
+    repository = ResultRepository(results_root)
+    outside = tmp_path / "outside"
+    _build_legacy_fixture(outside)
+    results_root.rename(tmp_path / "original-results")
+    symlink_or_skip(results_root, outside / "results")
+
+    with pytest.raises(ServiceError) as escaped:
+        repository.list_suite_catalog_entries()
+
+    assert escaped.value.code == ServiceErrorCode.WORKSPACE_VIOLATION
+
+
 def test_compare_runs_reports_binary_ordinal_structural_and_sample_warnings() -> None:
     with TemporaryDirectory() as tmp:
         results_root = _build_legacy_fixture(Path(tmp), second_run=True)

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -643,3 +645,143 @@ def test_event_retention_prefers_lifecycle_events(tmp_path: Path) -> None:
     assert len(events) == 1000
     assert events[0]["event_type"] == "queued"
     assert events[-1]["payload"]["completed"] == 1004
+
+
+@pytest.mark.parametrize("job_kinds", [(), ("evaluation",)])
+def test_claim_only_materializes_candidates_until_an_available_job(
+    tmp_path: Path, job_kinds: tuple[str, ...]
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    for number in range(16):
+        store.create_or_get(
+            _new_job(
+                f"{number:02d}",
+                resource_keys=("suite:busy",) if number < 2 else (),
+            ),
+            max_queued_jobs=16,
+        )
+    assert store.acquire_operation_locks(
+        ("suite:busy",), owner="curator", lease_seconds=30
+    )
+    original_connection = store._connection
+    materialized_jobs = 0
+
+    @contextmanager
+    def count_rows():
+        nonlocal materialized_jobs
+        with original_connection() as connection:
+            def row_factory(cursor, row):
+                nonlocal materialized_jobs
+                if cursor.description[0][0] == "job_id":
+                    materialized_jobs += 1
+                return sqlite3.Row(cursor, row)
+
+            connection.row_factory = row_factory
+            yield connection
+
+    with patch.object(store, "_connection", count_rows):
+        claimed = store.claim_next(
+            lease_owner="manager",
+            lease_seconds=30,
+            max_active_jobs=1,
+            job_kinds=job_kinds,
+        )
+
+    assert claimed is not None
+    assert claimed.job_id == "job-02"
+    assert materialized_jobs == 4
+    assert store.get("job-00").state is JobState.QUEUED
+
+
+def test_job_history_queries_use_ordered_and_case_insensitive_indexes(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    first = store.create_or_get(_new_job("first"), max_queued_jobs=10).record
+    original_connection = store._connection
+    queries: list[str] = []
+
+    @contextmanager
+    def trace_queries():
+        with original_connection() as connection:
+            connection.set_trace_callback(queries.append)
+            yield connection
+
+    with patch.object(store, "_connection", trace_queries):
+        store.list_records(limit=2)
+        store.list_records(limit=2, before=(first.created_at, first.job_id))
+        store.create_or_get(_new_job("second"), max_queued_jobs=10)
+
+    listings = [
+        query for query in queries
+        if "ORDER BY created_at DESC, job_id DESC" in query
+    ]
+    collision_queries = [
+        query for query in queries
+        if "suite_id = " in query and "COLLATE NOCASE" in query
+    ]
+    assert len(listings) == 2
+    assert len(collision_queries) == 1
+    with original_connection() as connection:
+        for query in listings:
+            plan = " ".join(
+                row["detail"]
+                for row in connection.execute("EXPLAIN QUERY PLAN " + query)
+            )
+            assert "jobs_created" in plan
+            assert "TEMP B-TREE" not in plan
+            if "(created_at, job_id) <" in query:
+                assert "SEARCH jobs" in plan
+        plan = " ".join(
+            row["detail"]
+            for row in connection.execute("EXPLAIN QUERY PLAN " + collision_queries[0])
+        )
+        assert "SEARCH jobs USING INDEX jobs_suite_run_lookup" in plan
+
+
+@pytest.mark.parametrize("states", [(), (JobState.QUEUED,)])
+def test_job_pagination_preserves_timestamp_ties_and_state_filters(
+    tmp_path: Path, states: tuple[JobState, ...]
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    with patch(
+        "assert_ai.services.job_store._now",
+        return_value="2026-08-25T00:00:00+00:00",
+    ):
+        for number in range(5):
+            store.create_or_get(_new_job(str(number)), max_queued_jobs=10)
+    store.request_cancel("job-2")
+    before = None
+    seen: list[str] = []
+    for _ in range(4):
+        page = store.list_records(limit=2, states=states, before=before)
+        if not page:
+            break
+        seen.extend(record.job_id for record in page)
+        before = (page[-1].created_at, page[-1].job_id)
+    else:
+        pytest.fail("Job pagination did not reach the end of the catalog")
+
+    assert seen == (
+        ["job-4", "job-3", "job-1", "job-0"]
+        if states else ["job-4", "job-3", "job-2", "job-1", "job-0"]
+    )
+
+
+def test_nonterminal_state_filter_excludes_unrelated_jobs(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    for name in ("cancel", "start", "queue"):
+        store.create_or_get(_new_job(name), max_queued_jobs=10)
+    for _ in range(2):
+        assert store.claim_next(
+            lease_owner="manager", lease_seconds=30, max_active_jobs=2
+        ) is not None
+    cancelled = store.request_cancel("job-cancel")
+
+    assert store.list_nonterminal_records(
+        states=(JobState.CANCELLING,),
+    ) == (cancelled,)
+    assert store.list_nonterminal_records(
+        job_kinds=("trace_judging",), states=(JobState.CANCELLING,),
+    ) == ()
+    assert len(store.list_nonterminal_records()) == 3

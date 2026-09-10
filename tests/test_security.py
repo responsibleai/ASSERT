@@ -325,6 +325,24 @@ class SanitizePayloadTest(unittest.TestCase):
         self.assertEqual(result[0]["api_key"], "[REDACTED]")
         self.assertEqual(result[1]["name"], "test")
 
+    def test_redacts_nested_tuples_without_mutating_input(self) -> None:
+        payload = {"items": ({"api_key": "synthetic-value"}, ({"password": "test"},))}
+
+        result = sanitize_payload(payload)
+
+        self.assertIsInstance(result["items"], tuple)
+        self.assertEqual(result["items"][0]["api_key"], "[REDACTED]")
+        self.assertEqual(result["items"][1][0]["password"], "[REDACTED]")
+        self.assertEqual(payload["items"][0]["api_key"], "synthetic-value")
+        self.assertEqual(payload["items"][1][0]["password"], "test")
+
+    def test_tuple_nesting_obeys_max_depth(self) -> None:
+        payload = (({"api_key": "synthetic-value"},),)
+
+        result = sanitize_payload(payload, max_depth=1)
+
+        self.assertEqual(result, (("[REDACTED: max depth exceeded]",),))
+
     def test_max_depth_redacts_instead_of_passthrough(self) -> None:
         """Payloads exceeding max_depth must be redacted, not returned as-is."""
         # Build a payload nested 12 levels deep with a secret at the bottom

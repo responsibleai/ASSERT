@@ -17,15 +17,26 @@ from mcp.server.mcpserver.exceptions import (
     ResourceNotFoundError,
     ToolError,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from assert_ai.core.config_document import ConfigValidationReport
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.mcp.sanitize import sanitize_for_mcp
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
+from assert_ai.services.run_planning import PreflightIssue
 
 log = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+
+class _DiagnosticDetails(BaseModel):
+    """Typed locations in config/preflight errors; other details stay opaque."""
+
+    model_config = ConfigDict(extra="allow")
+
+    validation: ConfigValidationReport | None = None
+    blocking_issues: tuple[PreflightIssue, ...] = ()
 
 
 class _McpToolError(ToolError):
@@ -152,13 +163,24 @@ def _service_error_payload(
     *,
     workspace: WorkspaceService,
 ) -> str:
+    diagnostics = None
+    if error.code in {ServiceErrorCode.CONFIG_INVALID, ServiceErrorCode.PREFLIGHT_FAILED}:
+        try:
+            diagnostics = _DiagnosticDetails.model_validate(error.details)
+        except ValidationError:
+            log.warning(
+                "Malformed %s diagnostic details; redacting as unstructured data",
+                error.code.value,
+            )
     payload = {
         "code": error.code.value,
-        "message": str(error),
-        "details": error.details,
+        "message": sanitize_for_mcp(str(error), workspace=workspace),
+        "details": sanitize_for_mcp(
+            error.details, workspace=workspace, diagnostics=diagnostics
+        ),
     }
     return json.dumps(
-        sanitize_for_mcp(payload, workspace=workspace),
+        payload,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,

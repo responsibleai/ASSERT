@@ -15,6 +15,14 @@ from mcp.types import ToolAnnotations
 
 from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 from assert_ai.core.workspace import WorkspaceService
+from assert_ai.mcp.capabilities import resolve_capability_groups
+from assert_ai.mcp.dependencies import (
+    AuthorServices,
+    CurationServices,
+    InspectServices,
+    JobServices,
+    ProbeServices,
+)
 from assert_ai.mcp.models import (
     CapabilityGroup,
     ServerLimits,
@@ -24,11 +32,6 @@ from assert_ai.mcp.models import (
 )
 from assert_ai.mcp.resources import register_inspect_resources
 from assert_ai.mcp.tools import (
-    AuthorServices,
-    CurationServices,
-    InspectServices,
-    JobServices,
-    ProbeServices,
     register_author_tools,
     register_curation_tools,
     register_design_tools,
@@ -57,27 +60,6 @@ from assert_ai.services.target_probe import TargetProbeService
 
 SERVER_NAME = "ASSERT"
 
-_MODE_GROUPS: dict[ServerMode, tuple[CapabilityGroup, ...]] = {
-    ServerMode.INSPECT: (CapabilityGroup.INSPECT,),
-    ServerMode.AUTHOR: (
-        CapabilityGroup.INSPECT,
-        CapabilityGroup.AUTHOR,
-    ),
-    ServerMode.FULL: (
-        CapabilityGroup.INSPECT,
-        CapabilityGroup.AUTHOR,
-        CapabilityGroup.DESIGN,
-        CapabilityGroup.EXECUTE,
-        CapabilityGroup.PROBE,
-        CapabilityGroup.CURATE,
-    ),
-}
-_GROUP_ORDER = {group: index for index, group in enumerate(CapabilityGroup)}
-_AUTHOR_EXTENSION_GROUPS = {
-    CapabilityGroup.DESIGN,
-    CapabilityGroup.PROBE,
-}
-
 
 @dataclass(frozen=True)
 class ServerOptions:
@@ -104,8 +86,16 @@ class ServerOptions:
     allowed_endpoint_hosts: tuple[str, ...] = ()
     target_probe_timeout_s: float = 15.0
     workspace: WorkspaceService = field(init=False, repr=False)
+    _capability_groups: tuple[CapabilityGroup, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        mode = ServerMode(self.mode)
+        enabled_groups = tuple(CapabilityGroup(group) for group in self.enabled_groups)
+        object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "enabled_groups", enabled_groups)
+        object.__setattr__(
+            self, "_capability_groups", resolve_capability_groups(mode, enabled_groups)
+        )
         if self.default_page_size < 1:
             raise ValueError("default_page_size must be positive")
         if self.max_page_size < self.default_page_size:
@@ -188,12 +178,6 @@ class ServerOptions:
     ) -> "ServerOptions":
         parsed_mode = ServerMode(mode)
         parsed_groups = tuple(CapabilityGroup(group) for group in enabled_groups)
-        invalid_groups = _AUTHOR_EXTENSION_GROUPS.intersection(parsed_groups)
-        if parsed_mode is ServerMode.INSPECT and invalid_groups:
-            names = ", ".join(sorted(group.value for group in invalid_groups))
-            raise ValueError(
-                f"Capability group(s) {names} require --mode author or --mode full."
-            )
         return cls(
             workspace_root=Path(workspace_root),
             mode=parsed_mode,
@@ -223,8 +207,7 @@ class ServerOptions:
 
     @property
     def capability_groups(self) -> tuple[CapabilityGroup, ...]:
-        groups = {*_MODE_GROUPS[self.mode], *self.enabled_groups}
-        return tuple(sorted(groups, key=_GROUP_ORDER.__getitem__))
+        return self._capability_groups
 
 
 def _server_version() -> str:

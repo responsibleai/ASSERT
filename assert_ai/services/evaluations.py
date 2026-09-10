@@ -404,9 +404,9 @@ class EvaluationJobManager:
                 self.enqueue()
 
     def _sweep_cancelling_jobs(self) -> None:
-        for record in self.store.list_nonterminal_records():
-            if record.state is not JobState.CANCELLING:
-                continue
+        for record in self.store.list_nonterminal_records(
+            states=(JobState.CANCELLING,),
+        ):
             try:
                 self.reconcile(record)
             except Exception:  # noqa: BLE001 - scheduler boundary

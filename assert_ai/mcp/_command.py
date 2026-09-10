@@ -13,27 +13,28 @@ import click
 
 from assert_ai.core.environment import bootstrap_environment
 from assert_ai.core.workspace import WorkspaceService
-from assert_ai.mcp.models import CapabilityGroup, ServerMode
+from assert_ai.mcp.capabilities import OPTIONAL_CAPABILITY_GROUPS
+from assert_ai.mcp.models import ServerMode
 
 _INSTALL_HINT = 'Install the MCP dependencies with: python -m pip install "assert-ai[mcp]"'
-_EXPLICIT_GROUPS = [
-    CapabilityGroup.DESIGN.value,
-    CapabilityGroup.PROBE.value,
-    CapabilityGroup.TRACE.value,
-    CapabilityGroup.ANALYSIS.value,
-    CapabilityGroup.ACS.value,
-    CapabilityGroup.EXPORT.value,
-]
+_EXPLICIT_GROUPS = [group.value for group in OPTIONAL_CAPABILITY_GROUPS]
 
 
 def _load_server_module() -> ModuleType:
     """Import the MCP SDK-dependent server only when serving starts."""
     try:
         return importlib.import_module("assert_ai.mcp.server")
-    except ModuleNotFoundError as exc:
-        if exc.name == "mcp" or (exc.name and exc.name.startswith("mcp.")):
-            raise click.ClickException(_INSTALL_HINT) from exc
-        raise
+    except ImportError as exc:
+        if not (exc.name == "mcp" or (exc.name and exc.name.startswith("mcp."))):
+            raise
+        message = _INSTALL_HINT
+        if not isinstance(exc, ModuleNotFoundError):
+            message = (
+                "The installed MCP SDK is incompatible; ASSERT requires MCP 2.x. "
+                "Use a dedicated environment if other dependencies require MCP 1.x. "
+                + _INSTALL_HINT
+            )
+        raise click.ClickException(message) from exc
 
 
 @click.group(short_help="Expose ASSERT workflows through an MCP server.")

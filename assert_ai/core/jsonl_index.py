@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from assert_ai.core.io import load_json, write_json
 
@@ -82,6 +82,29 @@ def scan_jsonl(
     max_row_bytes: int | None = None,
 ) -> JsonlScan:
     """Scan one JSONL file in binary mode and preserve exact byte ranges."""
+    records: list[JsonlRecord] = []
+    size_bytes, mtime_ns, sha256 = _scan_jsonl_records(
+        path,
+        records.append,
+        allow_trailing_partial=allow_trailing_partial,
+        max_row_bytes=max_row_bytes,
+    )
+    return JsonlScan(
+        path=path,
+        records=tuple(records),
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+        sha256=sha256,
+    )
+
+
+def _scan_jsonl_records(
+    path: Path,
+    consume: Callable[[JsonlRecord], None],
+    *,
+    allow_trailing_partial: bool = False,
+    max_row_bytes: int | None = None,
+) -> tuple[int, int, str]:
     try:
         before = path.stat()
     except FileNotFoundError as exc:
@@ -91,7 +114,6 @@ def scan_jsonl(
             path=path,
         ) from exc
 
-    records: list[JsonlRecord] = []
     digest = hashlib.sha256()
     offset = 0
     with path.open("rb") as handle:
@@ -133,7 +155,7 @@ def scan_jsonl(
                     path=path,
                     line_number=line_number,
                 )
-            records.append(
+            consume(
                 JsonlRecord(
                     offset=offset,
                     length=length,
@@ -153,13 +175,7 @@ def scan_jsonl(
             f"JSONL source changed while it was being indexed: {path}",
             path=path,
         )
-    return JsonlScan(
-        path=path,
-        records=tuple(records),
-        size_bytes=after.st_size,
-        mtime_ns=after.st_mtime_ns,
-        sha256=digest.hexdigest(),
-    )
+    return after.st_size, after.st_mtime_ns, digest.hexdigest()
 
 
 def build_jsonl_index(
@@ -167,16 +183,17 @@ def build_jsonl_index(
     *,
     index_path: Path | None = None,
     scan: JsonlScan | None = None,
+    allow_trailing_partial: bool = False,
 ) -> dict[str, Any]:
-    """Build and atomically persist a unique type/test-case lookup index."""
+    """Build a unique lookup index without retaining the source row payloads."""
     source_path = source_path.resolve()
-    current_scan = scan or scan_jsonl(source_path)
-    if current_scan.path.resolve() != source_path:
+    if scan is not None and scan.path.resolve() != source_path:
         raise ValueError("scan path does not match source_path")
 
     items: dict[str, dict[str, Any]] = {}
     order: list[str] = []
-    for record in current_scan.records:
+
+    def index_record(record: JsonlRecord) -> None:
         kind, test_case_id = _row_identity(record.row, path=source_path)
         key = jsonl_row_key(kind, test_case_id)
         if key in items:
@@ -196,13 +213,28 @@ def build_jsonl_index(
         }
         order.append(key)
 
+    if scan is None:
+        size_bytes, mtime_ns, sha256 = _scan_jsonl_records(
+            source_path,
+            index_record,
+            allow_trailing_partial=allow_trailing_partial,
+        )
+    else:
+        for record in scan.records:
+            index_record(record)
+        size_bytes, mtime_ns, sha256 = (
+            scan.size_bytes,
+            scan.mtime_ns,
+            scan.sha256,
+        )
+
     payload = {
         "schema_version": JSONL_INDEX_SCHEMA_VERSION,
         "source": {
             "name": source_path.name,
-            "size_bytes": current_scan.size_bytes,
-            "mtime_ns": current_scan.mtime_ns,
-            "sha256": current_scan.sha256,
+            "size_bytes": size_bytes,
+            "mtime_ns": mtime_ns,
+            "sha256": sha256,
         },
         "key_fields": ["type", "test_case_id"],
         "row_count": len(order),
@@ -383,8 +415,7 @@ def _valid_index_payload(payload: dict[str, Any] | None) -> bool:
         and isinstance(row_count, int)
         and row_count == len(order)
         and row_count == len(items)
-        and len(set(order)) == len(order)
-        and set(order) == set(items)
+        and set(order) == items.keys()
     )
 
 

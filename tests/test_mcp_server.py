@@ -11,21 +11,26 @@ import sys
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 from unittest.mock import Mock, patch
 
 import pytest
+import yaml
 
 pytest.importorskip("mcp")
 
 from mcp.client import Client
 from mcp.client._transport import TransportStreams
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
 from assert_ai.core.config_document import ConfigValidationReport
+from assert_ai.core.workspace import WorkspaceService
+from assert_ai.mcp.errors import invoke_resource, invoke_tool
 from assert_ai.mcp.models import CapabilityGroup, ServerMode
 from assert_ai.mcp.server import ServerOptions, build_server
 from assert_ai.services.configs import ConfigDraft
+from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from tests.result_catalog_fixture import create_result_catalog_fixture
 
 EXPECTED_INSPECT_TOOLS = {
@@ -496,16 +501,35 @@ def test_server_options_validate_preflight_policy(
         )
 
 
-@pytest.mark.parametrize("group", ["design", "probe"])
+@pytest.mark.parametrize("group", [CapabilityGroup.DESIGN, CapabilityGroup.PROBE])
+@pytest.mark.parametrize("factory", [ServerOptions, ServerOptions.create])
 def test_author_extension_groups_require_author_or_full_mode(
     tmp_path: Path,
-    group: str,
+    group: CapabilityGroup,
+    factory: Callable[..., ServerOptions],
 ) -> None:
     with pytest.raises(ValueError, match="require --mode author or --mode full"):
-        ServerOptions.create(
+        factory(
             workspace_root=tmp_path,
-            mode="inspect",
-            enabled_groups=[group],
+            mode=ServerMode.INSPECT,
+            enabled_groups=(group,),
+        )
+
+
+@pytest.mark.parametrize(
+    "group", [CapabilityGroup.ANALYSIS, CapabilityGroup.ACS, CapabilityGroup.EXPORT]
+)
+@pytest.mark.parametrize("factory", [ServerOptions, ServerOptions.create])
+def test_unimplemented_capabilities_cannot_be_advertised(
+    tmp_path: Path,
+    group: CapabilityGroup,
+    factory: Callable[..., ServerOptions],
+) -> None:
+    with pytest.raises(ValueError, match=f"{group.value}.*not implemented"):
+        factory(
+            workspace_root=tmp_path,
+            mode=ServerMode.FULL,
+            enabled_groups=(group,),
         )
 
 
@@ -638,7 +662,7 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
         options = ServerOptions.create(
             workspace_root=tmp_path,
             mode="full",
-            enabled_groups=["analysis"],
+            enabled_groups=["trace"],
             allowed_model_patterns=["azure/*"],
             allowed_endpoint_hosts=["api.example.test"],
         )
@@ -691,7 +715,7 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
         "execute",
         "probe",
         "curate",
-        "analysis",
+        "trace",
     ]
 
 
@@ -852,6 +876,45 @@ def test_trace_tools_publish_stable_schemas_and_annotations(
             actual.open_world_hint,
         ) == annotations
         assert _schema_digest(tool) == digest
+
+
+@pytest.mark.parametrize("source", ["config", "yaml", "document"])
+def test_config_validation_sources_share_the_response_contract(
+    tmp_path: Path, source: str
+) -> None:
+    document = {
+        "pipeline": {
+            "inference": {
+                "target": {"callable": "agent:run"},
+                "test_set_path": "fixtures/test_set.jsonl",
+            }
+        }
+    }
+    _write_json(tmp_path / "evals" / "saved.yaml", document)
+    requests = {
+        "config": {"config_ref": "saved.yaml"},
+        "yaml": {"yaml_text": yaml.safe_dump(document), "validation_ref": "draft.yaml"},
+        "document": {"document": document, "validation_ref": "draft.yaml"},
+    }
+
+    async def run() -> dict[str, Any]:
+        async with Client(
+            build_server(ServerOptions.create(workspace_root=tmp_path, mode="author")),
+            raise_exceptions=True,
+        ) as client:
+            result = await client.call_tool("validate_config", requests[source])
+            assert result.is_error is False, result
+            assert isinstance(result.structured_content, dict)
+            return result.structured_content
+
+    payload = asyncio.run(run())
+
+    assert payload["source"] == source
+    assert payload["config_ref"] == (
+        "saved.yaml" if source == "config" else "draft.yaml"
+    )
+    assert payload["validation"]["valid"] is True
+    assert str(tmp_path) not in json.dumps(payload)
 
 
 def test_complete_author_preflight_and_probe_workflow(
@@ -1814,6 +1877,78 @@ def test_service_errors_are_stable_tool_errors(
 
     assert '"code":"NOT_FOUND"' in text
     assert str(tmp_path) not in text
+
+
+@pytest.mark.parametrize("resource", [True, False])
+@pytest.mark.parametrize(
+    "code", [ServiceErrorCode.CONFIG_INVALID, ServiceErrorCode.PREFLIGHT_FAILED]
+)
+def test_structured_error_pointers_survive_without_exempting_other_paths(
+    tmp_path: Path,
+    resource: bool,
+    code: ServiceErrorCode,
+) -> None:
+    pointer = "/pipeline/inference/new~1field"
+    details = {
+        "validation": {
+            "valid": False,
+            "issues": [{
+                "code": "UNKNOWN_FIELD",
+                "path": pointer,
+                "message": f"Bad field in {tmp_path}",
+                "extra_hint": "preserved",
+            }],
+        },
+        "blocking_issues": [{"code": "INVALID_VALUE", "path": pointer, "message": "Bad"}],
+        "path": "/private/worker.log",
+        "other": {"path": pointer},
+        "api_key": "synthetic-value",
+    }
+    original = deepcopy(details)
+    error = ServiceError(code, f"Failure in {tmp_path}", details=details)
+
+    def fail() -> None:
+        raise error
+
+    invoke = invoke_resource if resource else invoke_tool
+    with pytest.raises(ResourceError if resource else ToolError) as raised:
+        invoke(fail, workspace=WorkspaceService.create(tmp_path))
+
+    payload = json.loads(str(raised.value))
+    assert payload["code"] == code.value
+    assert str(tmp_path) not in payload["message"]
+    validation = payload["details"]["validation"]
+    assert set(validation) == {"valid", "issues"}
+    assert validation["issues"][0]["path"] == pointer
+    assert validation["issues"][0]["extra_hint"] == "preserved"
+    assert str(tmp_path) not in validation["issues"][0]["message"]
+    assert payload["details"]["blocking_issues"][0]["path"] == pointer
+    assert payload["details"]["path"] == "[EXTERNAL_PATH]"
+    assert payload["details"]["other"]["path"] == "[EXTERNAL_PATH]"
+    assert payload["details"]["api_key"] == "[REDACTED]"
+    assert error.details == original
+
+
+def test_malformed_diagnostics_remain_sanitized_errors(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    error = ServiceError(
+        ServiceErrorCode.CONFIG_INVALID,
+        "Invalid config",
+        details={"validation": {"path": "/private/worker.log"}, "api_key": "test"},
+    )
+
+    def fail() -> None:
+        raise error
+
+    with pytest.raises(ToolError) as raised:
+        invoke_tool(fail, workspace=WorkspaceService.create(tmp_path))
+
+    payload = json.loads(str(raised.value))
+    assert payload["code"] == "CONFIG_INVALID"
+    assert payload["details"]["validation"]["path"] == "[EXTERNAL_PATH]"
+    assert payload["details"]["api_key"] == "[REDACTED]"
+    assert "Malformed CONFIG_INVALID diagnostic details" in caplog.text
 
 
 def test_result_cursor_reports_stale_source_through_mcp(tmp_path: Path) -> None:

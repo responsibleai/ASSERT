@@ -3,14 +3,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.services.result_metadata import (
+    suite_run_catalog_identity,
+    suite_run_set_identity,
     write_run_summary,
     write_suite_summary,
 )
@@ -309,3 +315,83 @@ def test_strict_summary_redacts_managed_paths_from_stage_and_model_metadata() ->
         serialized = json.dumps(payload)
         assert str(workspace.root) not in serialized
         assert payload["models"]["target"]["identifier"].startswith(".")
+
+
+def test_run_identities_reuse_directory_metadata_and_preserve_hashes(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    expected_entries = []
+    run_names = ["a-run", "B-run"]
+    for run_name in sorted(run_names, key=Path):
+        run_root = suite_root / run_name
+        run_root.mkdir(parents=True)
+        files = {}
+        for filename in ("run_summary.json", "scores.jsonl"):
+            source = run_root / filename
+            source.write_text("{}\n", encoding="utf-8")
+            identity = source.stat()
+            files[filename] = {
+                "size_bytes": identity.st_size,
+                "mtime_ns": identity.st_mtime_ns,
+            }
+        expected_entries.append({"run_id": run_name, "files": files})
+    for ignored in ("artifacts", ".partial", "empty"):
+        directory = suite_root / ignored
+        directory.mkdir()
+        if ignored != "empty":
+            (directory / "run_summary.json").write_text("{}", encoding="utf-8")
+    (suite_root / "notes.txt").write_text("not a run", encoding="utf-8")
+
+    expected_catalog_hash = hashlib.sha256(
+        json.dumps(
+            expected_entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    expected_set_hash = hashlib.sha256(
+        json.dumps(sorted(run_names), separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    with patch.object(
+        Path, "stat", side_effect=AssertionError("identity must reuse directory metadata")
+    ):
+        assert suite_run_catalog_identity(suite_root) == {
+            "run_count": 2,
+            "sha256": expected_catalog_hash,
+        }
+        assert suite_run_set_identity(suite_root) == {
+            "run_count": 2,
+            "sha256": expected_set_hash,
+        }
+
+
+def test_run_identities_detect_changes_between_calls(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    assert suite_run_set_identity(suite_root)["run_count"] == 0
+    assert suite_run_catalog_identity(suite_root)["run_count"] == 0
+    run_root = suite_root / "run"
+    run_root.mkdir(parents=True)
+    source = run_root / "scores.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    original_catalog = suite_run_catalog_identity(suite_root)
+    original_set = suite_run_set_identity(suite_root)
+
+    source.write_text('{"changed":true}\n', encoding="utf-8")
+    assert suite_run_catalog_identity(suite_root) != original_catalog
+    assert suite_run_set_identity(suite_root) == original_set
+
+    source.unlink()
+    assert suite_run_catalog_identity(suite_root)["run_count"] == 0
+    assert suite_run_set_identity(suite_root)["run_count"] == 0
+    source.mkdir()
+    assert suite_run_catalog_identity(suite_root)["run_count"] == 0
+    assert suite_run_set_identity(suite_root)["run_count"] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows filename matching")
+def test_run_identities_preserve_case_insensitive_metadata_names(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    source = run_root / "RUN_SUMMARY.JSON"
+    source.write_text("{}", encoding="utf-8")
+
+    assert suite_run_catalog_identity(tmp_path)["run_count"] == 1
+    assert suite_run_set_identity(tmp_path)["run_count"] == 1

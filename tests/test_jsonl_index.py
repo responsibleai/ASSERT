@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import json
+import tracemalloc
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import pytest
 
@@ -130,3 +132,85 @@ def test_invalid_index_and_missing_row_are_typed() -> None:
                 test_case_id="missing",
             )
         assert missing_row.value.code == JsonlIndexErrorCode.NOT_FOUND
+
+
+def test_streamed_index_matches_materialized_scan_with_partial_tail(tmp_path: Path) -> None:
+    source = tmp_path / "scores.jsonl"
+    source.write_bytes(
+        b'\r\n{"type":"prompt","test_case_id":"one","text":"caf\\u00e9"}\r\n'
+        b'{"type":"scenario","test_case_id":"two"}\n'
+        b'{"type":"prompt"'
+    )
+    scan = scan_jsonl(source, allow_trailing_partial=True)
+    expected = build_jsonl_index(source, scan=scan)
+
+    actual = build_jsonl_index(source, allow_trailing_partial=True)
+
+    assert actual == expected
+    assert read_indexed_jsonl_row(
+        source, kind="prompt", test_case_id="one"
+    )["text"] == "caf\u00e9"
+    with pytest.raises(JsonlIndexError) as incomplete:
+        build_jsonl_index(source)
+    assert incomplete.value.code == JsonlIndexErrorCode.INVALID_JSON
+    assert load_jsonl_index(source) == expected
+
+
+def test_index_build_does_not_retain_source_payloads(tmp_path: Path) -> None:
+    source = tmp_path / "inference_set.jsonl"
+    row_count = 256
+    text = "x" * (64 * 1024)
+    with source.open("w", encoding="utf-8") as handle:
+        for number in range(row_count):
+            handle.write(
+                json.dumps(
+                    {"type": "prompt", "test_case_id": str(number), "text": text}
+                )
+                + "\n"
+            )
+
+    tracemalloc.start()
+    try:
+        index = build_jsonl_index(source)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert index["row_count"] == row_count
+    assert peak_bytes < row_count * len(text) // 2
+
+
+def test_index_build_rejects_source_change_before_publishing(tmp_path: Path) -> None:
+    source = tmp_path / "scores.jsonl"
+    _write_rows(source, [{"type": "prompt", "test_case_id": "one"}])
+    build_jsonl_index(source)
+    original_index = jsonl_index_path(source).read_bytes()
+
+    def change_source(row: dict, *, path: Path) -> tuple[str, str]:
+        _write_rows(path, [{"type": "prompt", "test_case_id": "x"}])
+        return row["type"], row["test_case_id"]
+
+    with patch("assert_ai.core.jsonl_index._row_identity", side_effect=change_source):
+        with pytest.raises(JsonlIndexError) as changed:
+            build_jsonl_index(source)
+
+    assert changed.value.code == JsonlIndexErrorCode.SOURCE_CHANGED
+    assert jsonl_index_path(source).read_bytes() == original_index
+
+
+def test_duplicate_index_order_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "scores.jsonl"
+    _write_rows(
+        source,
+        [
+            {"type": "prompt", "test_case_id": "one"},
+            {"type": "prompt", "test_case_id": "two"},
+        ],
+    )
+    payload = build_jsonl_index(source)
+    payload["order"] = ["prompt:one", "prompt:one"]
+    jsonl_index_path(source).write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(JsonlIndexError) as duplicate:
+        load_jsonl_index(source)
+    assert duplicate.value.code == JsonlIndexErrorCode.INVALID_INDEX

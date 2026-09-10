@@ -8,9 +8,9 @@ from __future__ import annotations
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from assert_ai.mcp.errors import adapt_tool_errors, invoke_tool
+from assert_ai.mcp.dependencies import JobServices
+from assert_ai.mcp.errors import adapt_tool_errors
 from assert_ai.mcp.sanitize import sanitize_for_mcp
-from assert_ai.mcp.tools.jobs import JobServices
 from assert_ai.services.job_models import JobStartResult, TraceJudgingPreflight
 
 _PREFLIGHT_ANNOTATIONS = ToolAnnotations(
@@ -50,15 +50,12 @@ def register_trace_tools(
         run_id: str | None = None,
     ) -> TraceJudgingPreflight:
         """Validate OTLP JSON and estimate the judge calls without writing."""
-        plan = invoke_tool(
-            lambda: services.evaluations.preflight_trace_judging(
-                config_ref,
-                trace_ref,
-                group_by=group_by,
-                suite_id=suite_id,
-                run_id=run_id,
-            ),
-            workspace=services.workspace,
+        plan = services.evaluations.preflight_trace_judging(
+            config_ref,
+            trace_ref,
+            group_by=group_by,
+            suite_id=suite_id,
+            run_id=run_id,
         )
         return TraceJudgingPreflight.model_validate(
             sanitize_for_mcp(plan, workspace=services.workspace)
@@ -82,16 +79,13 @@ def register_trace_tools(
         run_id: str | None = None,
     ) -> JobStartResult:
         """Snapshot OTLP JSON and enqueue judging without blocking."""
-        started = invoke_tool(
-            lambda: services.evaluations.start_trace_judging(
-                config_ref,
-                trace_ref,
-                request_id=request_id,
-                group_by=group_by,
-                suite_id=suite_id,
-                run_id=run_id,
-            ),
-            workspace=services.workspace,
+        started = services.evaluations.start_trace_judging(
+            config_ref,
+            trace_ref,
+            request_id=request_id,
+            group_by=group_by,
+            suite_id=suite_id,
+            run_id=run_id,
         )
         return JobStartResult.model_validate(
             sanitize_for_mcp(started, workspace=services.workspace)
