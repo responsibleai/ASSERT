@@ -10,7 +10,7 @@ from unittest.mock import patch
 import httpx
 from langchain_openai import ChatOpenAI
 
-import agent
+import bank_agent_common as agent
 
 
 class ModelConfigTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class ModelConfigTests(unittest.TestCase):
     def tearDown(self):
         self.environment.stop()
 
-    @patch("agent.AzureChatOpenAI")
+    @patch("bank_agent_common.AzureChatOpenAI")
     def test_gpt_model_uses_azure_openai_route(self, model_class):
         with patch.dict(os.environ, {"AGENT_MODEL": "gpt-4o-mini"}):
             agent._build_llm()
@@ -42,21 +42,21 @@ class ModelConfigTests(unittest.TestCase):
             temperature=0.0,
         )
 
-    @patch("agent.ChatOpenAI")
-    def test_non_gpt_model_uses_openai_v1_route(self, model_class):
+    @patch("bank_agent_common.ChatOpenAI")
+    def test_non_gpt_model_uses_azure_ai_inference_route(self, model_class):
         with patch.dict(os.environ, {"AGENT_MODEL": "DeepSeek-V3"}):
             agent._build_llm()
 
         model_class.assert_called_once_with(
-            base_url="https://example.openai.azure.com/openai/v1",
+            base_url="https://example.openai.azure.com/models",
             api_key="test-key",
             model="DeepSeek-V3",
             temperature=0.0,
             max_tokens=4000,
         )
 
-    @patch("agent.ChatOpenAI")
-    def test_non_gpt_model_sends_openai_v1_chat_request(self, model_class):
+    @patch("bank_agent_common.ChatOpenAI")
+    def test_non_gpt_model_sends_azure_ai_inference_chat_request(self, model_class):
         with patch.dict(os.environ, {"AGENT_MODEL": "DeepSeek-V3"}):
             agent._build_llm()
 
@@ -87,7 +87,7 @@ class ModelConfigTests(unittest.TestCase):
         )
         model.invoke("Hello")
 
-        self.assertEqual(requests[0].url.path, "/openai/v1/chat/completions")
+        self.assertEqual(requests[0].url.path, "/models/chat/completions")
         self.assertEqual(json.loads(requests[0].content)["model"], "DeepSeek-V3")
 
 

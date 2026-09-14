@@ -92,19 +92,30 @@ class AgentControl:
             input=json.dumps(doc), capture_output=True, text=True,
         )
         if proc.returncode != 0:
-            # Fail-open, but LOUDLY: a silently-unguarded arm (misconfigured
-            # bundle / missing opa) must be visible in logs, not pass as a clean
-            # eval. A reviewer audit flagged the silent allow-and-continue.
+            # Fail closed and loudly: a misconfigured bundle or unavailable
+            # policy engine must never widen the allow path.
             import sys
-            sys.stderr.write(f"[acs_shim] WARNING opa eval failed (fail-open to allow) "
+            sys.stderr.write(f"[acs_shim] ERROR opa eval failed (deny) "
                              f"ip={ip}: {(proc.stderr or '')[:160]}\n")
-            return Verdict({"decision": "allow", "reason": "opa_error",
+            return Verdict({"decision": "deny", "reason": "policy_invocation_failed",
                             "message": (proc.stderr or "")[:200]})
         try:
             val = json.loads(proc.stdout or "{}")["result"][0]["expressions"][0]["value"]
         except (KeyError, IndexError, ValueError):
-            val = {"decision": "allow"}
-        return Verdict(val if isinstance(val, dict) else {"decision": "allow"})
+            val = {
+                "decision": "deny",
+                "reason": "policy_result_invalid",
+                "message": "The policy engine did not return a valid verdict.",
+            }
+        return Verdict(
+            val
+            if isinstance(val, dict)
+            else {
+                "decision": "deny",
+                "reason": "policy_result_invalid",
+                "message": "The policy engine returned a non-object verdict.",
+            }
+        )
 
     async def run_tool(self, tool_name, args, execute, snapshot=None, mode=None, post_enrich=None):
         snap = snapshot or {}
