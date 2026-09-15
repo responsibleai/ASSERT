@@ -1518,21 +1518,38 @@ function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, see
 	);
 }
 
+function withDrawerPermissibilitySplit(
+	suiteId: string,
+	runId: string,
+	item: ViewerResultItem | null
+): ViewerResultItem | null {
+	if (!item) return null;
+	const taxonomy =
+		loadRunJudgeTaxonomyForRun(suiteId, runId) ?? loadSuiteSnapshot(suiteId)?.taxonomy;
+	return applyPermissibilitySplit([item], taxonomy?.behavior_categories)[0];
+}
+
 export async function loadPromptDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
+			return withDrawerPermissibilitySplit(
+				suiteId, runId, loadPromptDrawerItemFromReadModel(suiteId, runId, seedId)
+			);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
 	}
-	return loadPromptDrawerItemFromCanonical(suiteId, runId, seedId);
+	return withDrawerPermissibilitySplit(
+		suiteId, runId, await loadPromptDrawerItemFromCanonical(suiteId, runId, seedId)
+	);
 }
 
 export async function loadScenarioDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
+			return withDrawerPermissibilitySplit(
+				suiteId, runId, loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId)
+			);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
@@ -1547,7 +1564,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 
 	const runtimeMode = loadRuntimeModeForRun(suiteId, runId);
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
-	return buildScenarioDrawerItem(
+	const item = buildScenarioDrawerItem(
 		runtimeMode,
 		transcriptRow,
 		matchedScoreRow ?? undefined,
@@ -1557,6 +1574,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 			matchedScoreRow ? [buildAuditScoreRow(runtimeMode, matchedScoreRow, transcriptRow)] : []
 		)
 	);
+	return withDrawerPermissibilitySplit(suiteId, runId, item);
 }
 
 export function loadComparePageData(
