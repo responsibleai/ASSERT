@@ -1909,8 +1909,23 @@ def analysis_test_set_metrics(
 )
 @click.option("--group-by", default="session.id", show_default=True, help="OTel attribute to group spans by")
 @click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
-def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
+@click.option("--parse-only", is_flag=True, help="Convert traces without calling a judge (legacy behavior).")
+def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None, parse_only: bool):
     """Judge pre-collected OTel traces without running inference."""
+    if not parse_only:
+        from assert_ai.config import ConfigError
+        from assert_ai.trace_judging import judge_trace_file
+
+        try:
+            code, run_root, counts = judge_trace_file(
+                traces=traces, config=config_path, group_by=group_by, output=output,
+            )
+        except (ConfigError, OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Trace evaluation: {json.dumps(counts, sort_keys=True)}")
+        click.echo(f"Run dir: {run_root}")
+        raise SystemExit(code)
+
     from assert_ai.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")
@@ -1935,11 +1950,9 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
             f.write(json.dumps(row) + "\n")
     click.echo(f"Wrote {len(inference_rows)} inference rows to {inference_set_path}")
 
-    click.echo(f"Judging {len(inference_rows)} conversations...")
-    # Full judge execution requires LLM access; the inference rows are ready
-    # for the judge stage to consume.
+    click.echo("Parse only: no judge or target was called.")
     click.echo(f"Inference set written to {inference_set_path}")
-    click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
+    click.echo("Use judge-traces without --parse-only to create a scored run.")
 
 
 @cli.group(

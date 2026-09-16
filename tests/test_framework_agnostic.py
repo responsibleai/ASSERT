@@ -1546,6 +1546,7 @@ class TestJudgeTracesCLI(unittest.TestCase):
                 "--traces", str(SAMPLE_TRACES),
                 "--config", str(config_path),
                 "--group-by", "session.id",
+                "--parse-only",
             ])
             self.assertIn("Found 2 conversations", result.output)
             self.assertEqual(result.exit_code, 0)
@@ -1572,6 +1573,7 @@ class TestJudgeTracesCLI(unittest.TestCase):
                 "judge-traces",
                 "--traces", str(empty_traces),
                 "--config", str(config_path),
+                "--parse-only",
             ])
             self.assertIn("No conversations found", result.output)
             self.assertEqual(result.exit_code, 1)

@@ -21,6 +21,7 @@ from assert_ai.core.io import append_jsonl_row, load_jsonl, load_prompt_text, re
 from assert_ai.core.judge import (
     build_judge_contract,
     infer_judge_status,
+    inference_row_sha256,
     run_transcript_judge as run_llm_judge,
 )
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
@@ -45,6 +46,7 @@ _UNSCORABLE_STOP_REASONS = frozenset({
     "target_input_refused",
     "target_error",
     "tester_error",
+    "trace_evidence_missing",
 })
 
 
@@ -158,6 +160,7 @@ async def run_judge(
                 "judge_error": f"scoring_skipped: {stop_reason}",
                 "score_keys": judge_contract["score_keys"],
                 "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
+                "inference_row_sha256": inference_row_sha256(row),
                 "verdict": {},
             }
             if judge_contract["dimension_scales"]:
@@ -213,6 +216,7 @@ async def run_judge(
             "tester_model": row.get("tester_model", ""),
             "score_keys": judge_contract["score_keys"],
             "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
+            "inference_row_sha256": inference_row_sha256(row),
             "judge_status": infer_judge_status({
                 "judge_status": judge_result["judge_status"],
                 "verdict": judge_result["verdict"],
@@ -297,6 +301,7 @@ async def run_judge(
                 "judge_error": f"judge_input_refused: {exc}",
                 "score_keys": judge_contract["score_keys"],
                 "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
+                "inference_row_sha256": inference_row_sha256(row),
                 "verdict": {},
             }
             if judge_contract["dimension_scales"]:

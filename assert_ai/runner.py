@@ -751,7 +751,11 @@ def run_pipeline(
         run_root.mkdir(parents=True, exist_ok=True)
         manifest = _build_manifest(ctx)
         config_path = ctx.get("config_path")
-        if config_path is not None and Path(config_path).is_file():
+        if (
+            config_path is not None
+            and Path(config_path).is_file()
+            and Path(config_path).resolve() != (run_root / "config.yaml").resolve()
+        ):
             shutil.copy2(config_path, run_root / "config.yaml")
     failed_stage: str | None = None
     pipeline_start = time.monotonic()
