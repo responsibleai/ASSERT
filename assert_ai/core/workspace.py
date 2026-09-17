@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Workspace layout and safe path references for application services."""
+"""Workspace layout and contained path references for application services."""
 
 from __future__ import annotations
 
@@ -61,9 +61,4 @@ class WorkspaceService:
 
     def reference(self, path: str | Path) -> str:
         """Return a workspace-relative, forward-slash reference."""
-        resolved = self.path_policy.require_workspace_path(
-            path,
-            field_name="workspace reference",
-        )
-        relative = resolved.relative_to(self.root)
-        return "." if not relative.parts else relative.as_posix()
+        return self.path_policy.workspace_reference(path)

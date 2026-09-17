@@ -1,7 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Workspace-aware runtime path resolution and containment policy."""
+"""Workspace-aware runtime path resolution and containment policy.
+
+Containment and link checks in this module are pathname snapshots.  A returned
+``Path`` does not pin filesystem objects or make a later open/write atomic.
+Callers must use these APIs only with trees that untrusted processes cannot
+modify concurrently.  Hostile writable trees require an OS-specific,
+handle-relative open API with no-follow semantics, which this module does not
+provide.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +17,23 @@ import os
 import stat
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable
+
+
+_WINDOWS_FORBIDDEN_OUTPUT_CHARS = frozenset('<>:"|?*')
+_WINDOWS_RESERVED_OUTPUT_STEMS = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "CONIN$",
+        "CONOUT$",
+        *(f"COM{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+        *(f"LPT{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+    }
+)
 
 
 class RuntimePathErrorCode(StrEnum):
@@ -26,6 +49,7 @@ class RuntimePathErrorCode(StrEnum):
     MANAGED_PATH_LINK = "managed_path_link"
     PATH_NOT_FOUND = "path_not_found"
     NOT_A_FILE = "not_a_file"
+    INVALID_OUTPUT_PATH = "invalid_output_path"
 
 
 class RuntimePathError(ValueError):
@@ -70,14 +94,66 @@ def _comparison_path(path: Path) -> Path:
     return Path(value)
 
 
-def _resolved(path: str | Path) -> Path:
-    return Path(path).expanduser().resolve()
+def _resolved(path: str | Path, *, base: Path | None = None) -> Path:
+    candidate = Path(path).expanduser()
+    if base is not None and not candidate.is_absolute():
+        candidate = base / candidate
+    return candidate.resolve()
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return _comparison_path(left) == _comparison_path(right)
+
+
+def _strictly_within(path: Path, root: Path) -> bool:
+    return not _same_path(path, root) and _is_within(path, root)
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    return _is_within(left, right) or _is_within(right, left)
+
+
+def _rebase_within(path: Path, root: Path) -> Path:
+    comparison_relative = _comparison_path(path).relative_to(
+        _comparison_path(root)
+    )
+    if not comparison_relative.parts:
+        return root
+    return root.joinpath(*path.parts[-len(comparison_relative.parts) :])
+
+
+def _component_matches(left: str, right: str) -> bool:
+    if os.name == "nt":
+        return os.path.normcase(left) == os.path.normcase(right)
+    return left == right
+
+
+def _windows_unsafe_output_component(path: str | Path) -> str | None:
+    """Return the first component that is unsafe under Win32 naming rules."""
+    candidate = PureWindowsPath(os.fspath(path))
+    if candidate.drive and not candidate.root:
+        return candidate.drive
+    for component in candidate.parts:
+        if component == candidate.anchor or component in {".", ".."}:
+            continue
+        if component.endswith((" ", ".")):
+            return component
+        if any(
+            ord(character) < 32
+            or character in _WINDOWS_FORBIDDEN_OUTPUT_CHARS
+            for character in component
+        ):
+            return component
+        stem = component.split(".", maxsplit=1)[0].rstrip(" ").upper()
+        if stem in _WINDOWS_RESERVED_OUTPUT_STEMS:
+            return component
+    return None
 
 
 def _deduplicate_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
     unique: list[Path] = []
     for path in paths:
-        if path not in unique:
+        if not any(_same_path(path, existing) for existing in unique):
             unique.append(path)
     return tuple(unique)
 
@@ -104,11 +180,12 @@ class RuntimePathPolicy:
                 path=workspace_root,
             )
 
-        config_root = _resolved(self.config_root)
-        artifacts_root = _resolved(self.artifacts_root)
-        results_root = _resolved(self.results_root)
+        config_root = _resolved(self.config_root, base=workspace_root)
+        artifacts_root = _resolved(self.artifacts_root, base=workspace_root)
+        results_root = _resolved(self.results_root, base=workspace_root)
         additional_read_roots = _deduplicate_paths(
-            _resolved(root) for root in self.additional_read_roots
+            _resolved(root, base=workspace_root)
+            for root in self.additional_read_roots
         )
 
         for field_name, root in (
@@ -125,10 +202,40 @@ class RuntimePathPolicy:
                     expected_root=workspace_root,
                 )
 
-        if self.force_managed_outputs and not _is_within(results_root, artifacts_root):
+            if root.exists() and not root.is_dir():
+                raise RuntimePathError(
+                    RuntimePathErrorCode.INVALID_ROOT,
+                    f"{field_name} is not a directory: {root}",
+                    field_name=field_name,
+                    path=root,
+                )
+
+        for index, root in enumerate(additional_read_roots):
+            if root.exists() and not root.is_dir():
+                field_name = f"additional_read_roots[{index}]"
+                raise RuntimePathError(
+                    RuntimePathErrorCode.INVALID_ROOT,
+                    f"{field_name} is not a directory: {root}",
+                    field_name=field_name,
+                    path=root,
+                )
+
+        if _paths_overlap(config_root, artifacts_root):
             raise RuntimePathError(
                 RuntimePathErrorCode.INVALID_ROOT,
-                "results_root must be inside artifacts_root",
+                "config_root and artifacts_root must be disjoint",
+                field_name="config_root",
+                path=config_root,
+                expected_root=artifacts_root,
+            )
+
+        if not _strictly_within(
+            results_root,
+            artifacts_root,
+        ):
+            raise RuntimePathError(
+                RuntimePathErrorCode.INVALID_ROOT,
+                "results_root must be a strict descendant of artifacts_root",
                 field_name="results_root",
                 path=results_root,
                 expected_root=artifacts_root,
@@ -158,13 +265,17 @@ class RuntimePathPolicy:
         must_exist: bool = False,
         reject_links: bool = False,
     ) -> Path:
-        """Resolve a config path strictly under ``config_root``."""
+        """Resolve a config path strictly under ``config_root``.
+
+        ``reject_links`` is a pathname snapshot, not authorization for a later
+        open against a concurrently mutable tree.
+        """
         candidate = Path(path).expanduser()
         if candidate.is_absolute():
             unresolved = candidate
         else:
             parts = candidate.parts
-            if parts and parts[0] == self.config_root.name:
+            if parts and _component_matches(parts[0], self.config_root.name):
                 candidate = Path(*parts[1:]) if len(parts) > 1 else Path()
             unresolved = self.config_root / candidate
         self._require_within(
@@ -211,8 +322,15 @@ class RuntimePathPolicy:
                 self._require_within_any_read_root(resolved, field_name=field_name)
         else:
             artifact_relative = self._artifact_relative(candidate)
-            root = self.artifacts_root if artifact_relative is not None else _resolved(base_dir)
-            self._require_within_any_read_root(root, field_name=f"{field_name} base directory")
+            root = (
+                self.artifacts_root
+                if artifact_relative is not None
+                else _resolved(base_dir, base=self.workspace_root)
+            )
+            self._require_within_any_read_root(
+                root,
+                field_name=f"{field_name} base directory",
+            )
             suffix = artifact_relative if artifact_relative is not None else candidate
             resolved = (root / suffix).resolve()
             self._require_within(
@@ -235,8 +353,17 @@ class RuntimePathPolicy:
         *,
         field_name: str,
     ) -> Path:
-        """Resolve an output path under the managed artifacts root."""
-        resolved = self._output_candidate(path).resolve()
+        """Resolve an output path under the managed artifacts root.
+
+        On Windows, Win32 device names, alternate data streams, forbidden
+        characters, controls, and trailing-dot/space aliases are rejected
+        before resolution.
+        """
+        raw_candidate = Path(path).expanduser()
+        self._require_valid_output_path(raw_candidate, field_name=field_name)
+        candidate = self._output_candidate(raw_candidate)
+        self._require_valid_output_path(candidate, field_name=field_name)
+        resolved = candidate.resolve()
         if self.force_managed_outputs:
             self._require_within(
                 resolved,
@@ -254,12 +381,26 @@ class RuntimePathPolicy:
         expected_root: str | Path,
         reject_links: bool = False,
     ) -> Path:
-        """Resolve an output within one operation-specific managed root."""
+        """Resolve an output within one operation-specific managed root.
+
+        ``reject_links`` performs a best-effort snapshot check of the current
+        pathname.  It does not authorize a later write against a directory tree
+        that an untrusted process can replace concurrently.
+        """
         expected_candidate = Path(expected_root).expanduser()
+        self._require_valid_output_path(
+            expected_candidate,
+            field_name=f"{field_name} expected root",
+        )
         if not expected_candidate.is_absolute():
             expected_candidate = self._output_candidate(expected_candidate)
+        self._require_valid_output_path(
+            expected_candidate,
+            field_name=f"{field_name} expected root",
+        )
         expected = expected_candidate.resolve()
         raw_candidate = Path(path).expanduser()
+        self._require_valid_output_path(raw_candidate, field_name=field_name)
         if (
             raw_candidate.is_absolute()
             or self._artifact_relative(raw_candidate) is not None
@@ -267,6 +408,7 @@ class RuntimePathPolicy:
             candidate = self._output_candidate(raw_candidate)
         else:
             candidate = expected / raw_candidate
+        self._require_valid_output_path(candidate, field_name=field_name)
         self._require_within(
             expected,
             self.artifacts_root,
@@ -308,13 +450,7 @@ class RuntimePathPolicy:
         file_only: bool = False,
     ) -> Path:
         """Resolve a path relative to the workspace and keep it contained."""
-        candidate = Path(path).expanduser()
-        resolved = (
-            candidate.resolve()
-            if candidate.is_absolute()
-            else (self.workspace_root / candidate).resolve()
-        )
-        self.require_workspace_path(resolved, field_name=field_name)
+        resolved = self.require_workspace_path(path, field_name=field_name)
         self._require_kind(
             resolved,
             field_name=field_name,
@@ -330,7 +466,12 @@ class RuntimePathPolicy:
         field_name: str,
         expected_root: str | Path,
     ) -> Path:
-        """Reject links or junctions anywhere in an existing managed tree."""
+        """Snapshot-check an existing managed tree for links or junctions.
+
+        The scan is not atomic with later filesystem operations.  It is suitable
+        only for runtime-owned trees that cannot be changed by an adversary
+        during or after validation.
+        """
         root = self.resolve_managed_output(
             path,
             field_name=field_name,
@@ -354,15 +495,24 @@ class RuntimePathPolicy:
         return root
 
     def require_workspace_path(self, path: str | Path, *, field_name: str) -> Path:
-        """Re-resolve and require a path to remain inside the workspace."""
-        resolved = _resolved(path)
+        """Resolve against the workspace and require the result to remain inside."""
+        resolved = _resolved(path, base=self.workspace_root)
         self._require_within(
             resolved,
             self.workspace_root,
             field_name=field_name,
             code=RuntimePathErrorCode.OUTSIDE_WORKSPACE,
         )
-        return resolved
+        return _rebase_within(resolved, self.workspace_root)
+
+    def workspace_reference(self, path: str | Path) -> str:
+        """Return a canonical workspace-relative, forward-slash reference."""
+        resolved = self.require_workspace_path(
+            path,
+            field_name="workspace reference",
+        )
+        relative = resolved.relative_to(self.workspace_root)
+        return "." if not relative.parts else relative.as_posix()
 
     def module_search_roots(self, config_path: Path | None) -> tuple[tuple[str, Path], ...]:
         """Return the only roots strict dynamic imports may add to ``sys.path``."""
@@ -373,30 +523,35 @@ class RuntimePathPolicy:
                 field_name="config module root",
             )
             roots.append(("Relative to config", config_dir))
-        if self.workspace_root not in {root for _, root in roots}:
+        if not any(_same_path(self.workspace_root, root) for _, root in roots):
             roots.append(("Relative to workspace", self.workspace_root))
         return tuple(roots)
 
     def require_managed_root(
         self,
-        configured: Path,
-        expected: Path,
+        configured: str | Path,
+        expected: str | Path,
         *,
         field_name: str,
     ) -> None:
         """Reject a config root override that differs from the managed root."""
-        if configured != expected:
+        configured_path = _resolved(configured, base=self.workspace_root)
+        expected_path = _resolved(expected, base=self.workspace_root)
+        if not _same_path(configured_path, expected_path):
             raise RuntimePathError(
                 RuntimePathErrorCode.MANAGED_ROOT_OVERRIDE,
                 f"{field_name} is managed by the runtime and cannot be overridden",
                 field_name=field_name,
-                path=configured,
-                expected_root=expected,
+                path=configured_path,
+                expected_root=expected_path,
             )
 
     def _artifact_relative(self, path: Path) -> Path | None:
         parts = path.parts
-        if not parts or parts[0] not in {"artifacts", self.artifacts_root.name}:
+        if not parts or not any(
+            _component_matches(parts[0], prefix)
+            for prefix in ("artifacts", self.artifacts_root.name)
+        ):
             return None
         return Path(*parts[1:]) if len(parts) > 1 else Path()
 
@@ -407,6 +562,23 @@ class RuntimePathPolicy:
         artifact_relative = self._artifact_relative(candidate)
         suffix = artifact_relative if artifact_relative is not None else candidate
         return self.artifacts_root / suffix
+
+    @staticmethod
+    def _require_valid_output_path(path: Path, *, field_name: str) -> None:
+        if os.name != "nt":
+            return
+        invalid_component = _windows_unsafe_output_component(path)
+        if invalid_component is None:
+            return
+        raise RuntimePathError(
+            RuntimePathErrorCode.INVALID_OUTPUT_PATH,
+            (
+                f"{field_name} contains a component that is not a valid "
+                f"Windows output name: {invalid_component!r}"
+            ),
+            field_name=field_name,
+            path=path,
+        )
 
     @staticmethod
     def _require_no_links(
