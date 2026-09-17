@@ -364,7 +364,13 @@ export type TokenEstimateAccuracyView =
 
 export interface TokenUsageView {
 	estimate: TokenEstimateView | null;
+	estimateScope: 'current_invocation' | 'prior_invocation' | null;
+	/** Cumulative usage across all invocations retained in this run. */
 	actual: TokenActualUsageView | null;
+	/** Usage recorded by the current runner invocation. */
+	invocationActual: TokenActualUsageView | null;
+	/** Scope-matched actual used for estimate accuracy and range comparisons. */
+	estimateActual: TokenActualUsageView | null;
 	accuracy: TokenEstimateAccuracyView | null;
 }
 

@@ -15,26 +15,49 @@
 
 	let { tokenUsage }: { tokenUsage: TokenUsageView } = $props();
 	let estimate = $derived(tokenUsage.estimate);
-	let actual = $derived(tokenUsage.actual);
+	let estimateScope = $derived(tokenUsage.estimateScope ?? null);
+	let cumulativeActual = $derived(tokenUsage.actual);
+	let invocationActual = $derived(tokenUsage.invocationActual ?? null);
+	let displayActual = $derived(invocationActual ?? cumulativeActual);
+	let estimateActual = $derived(
+		tokenUsage.estimateActual === undefined
+			? displayActual
+			: tokenUsage.estimateActual
+	);
 	let accuracy = $derived(tokenUsage.accuracy);
 	let notes = $derived(splitTokenEstimateNotes(estimate?.notes));
-	let hasReportedActual = $derived(!!actual && (actual.calls > 0 || actual.totalTokens > 0));
+	let estimateLabel = $derived(
+		estimateScope === 'current_invocation'
+			? 'Estimated this invocation'
+			: estimateScope === 'prior_invocation'
+				? 'Prior invocation estimate'
+				: 'Estimated'
+	);
+	let hasReportedActual = $derived(
+		!!displayActual && (displayActual.calls > 0 || displayActual.totalTokens > 0)
+	);
 	let providerUsageIncomplete = $derived(
-		!!actual && (actual.missingUsageCalls > 0 || actual.calls < actual.requests)
+		!!displayActual &&
+			(displayActual.missingUsageCalls > 0 || displayActual.calls < displayActual.requests)
 	);
 	let actualLabel = $derived(providerUsageIncomplete || notes.caveats.length > 0 ? 'Reported' : 'Actual');
 	let actualUnavailableMessage = $derived(
 		accuracy?.status === 'unavailable'
 			? tokenAccuracyUnavailableMessage(accuracy.reason, accuracy.usageCoverage)
 			: providerUsageIncomplete
-				? tokenAccuracyUnavailableMessage('provider_usage_incomplete', actual?.usageCoverage ?? null)
+				? tokenAccuracyUnavailableMessage(
+						'provider_usage_incomplete',
+						displayActual?.usageCoverage ?? null
+					)
 				: null
 	);
 	let stageEstimates = $derived(
 		Object.entries(estimate?.stages ?? {}).filter(([, stage]) => stage.totalTokens > 0)
 	);
 	let withinRange = $derived(
-		estimate && actual ? actualIsWithinEstimate(actual.totalTokens, estimate) : null
+		estimate && estimateActual
+			? actualIsWithinEstimate(estimateActual.totalTokens, estimate)
+			: null
 	);
 
 	function exactTokenTitle(value: number): string {
@@ -51,7 +74,7 @@
 					{#if estimate.totalTokens === 0 && notes.caveats.length > 0}
 						0 known tokens · total unknown
 					{:else}
-						Estimated{notes.caveats.length > 0 ? ' (partial)' : ''}
+						{estimateLabel}{notes.caveats.length > 0 ? ' (partial)' : ''}
 						<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(estimate.totalTokens)}>~{formatTokenCount(estimate.totalTokens)}</strong>
 						<span class="text-xs text-text-muted">({formatTokenCount(estimate.lowerBoundTokens)}–{formatTokenCount(estimate.upperBoundTokens)})</span>
 					{/if}
@@ -59,16 +82,22 @@
 			{:else}
 				<span class="text-xs text-text-muted">Estimate unavailable</span>
 			{/if}
-			{#if actual && hasReportedActual}
+			{#if displayActual && hasReportedActual}
 				<span class="text-text-secondary">
-					{actualLabel}
-					<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(actual.totalTokens)}>{formatTokenCount(actual.totalTokens)}</strong>
+					{invocationActual ? 'This invocation ' : ''}{actualLabel}
+					<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(displayActual.totalTokens)}>{formatTokenCount(displayActual.totalTokens)}</strong>
 				</span>
 			{:else}
-				<span class="text-xs text-text-muted">Actual unavailable</span>
+				<span class="text-xs text-text-muted">{invocationActual ? 'Current invocation usage unavailable' : 'Actual unavailable'}</span>
 			{/if}
 			{#if accuracy?.status === 'available'}
 				<span class="font-medium tabular-nums text-text">{formatActualVsEstimate(accuracy.differenceRatio)}</span>
+			{/if}
+			{#if invocationActual && cumulativeActual}
+				<span class="text-text-secondary">
+					Cumulative
+					<strong class="font-semibold tabular-nums text-text" title={exactTokenTitle(cumulativeActual.totalTokens)}>{formatTokenCount(cumulativeActual.totalTokens)}</strong>
+				</span>
 			{/if}
 		</div>
 		{#if accuracy?.status === 'available' && withinRange !== null}
@@ -78,11 +107,11 @@
 		{/if}
 	</div>
 
-	{#if actual && hasReportedActual}
+	{#if displayActual && hasReportedActual}
 		<div class="mt-1 text-xs text-text-muted">
-			{actual.calls}/{actual.requests || actual.calls} calls · {formatTokenCount(actual.inputTokens)} input / {formatTokenCount(actual.outputTokens)} output
-			{#if actual.inputTokens > 0}
-				· {formatTokenPercent(actual.cacheHitRate)} cached input
+			{displayActual.calls}/{displayActual.requests || displayActual.calls} calls · {formatTokenCount(displayActual.inputTokens)} input / {formatTokenCount(displayActual.outputTokens)} output
+			{#if displayActual.inputTokens > 0}
+				· {formatTokenPercent(displayActual.cacheHitRate)} cached input
 			{/if}
 		</div>
 		{#if actualUnavailableMessage}
@@ -94,8 +123,10 @@
 		<div class="mt-1 text-xs text-text-muted">
 			{tokenAccuracyUnavailableMessage(accuracy.reason, accuracy.usageCoverage)}
 		</div>
-	{:else if actual}
-		<div class="mt-1 text-xs text-text-muted">{actual.calls}/{actual.requests || actual.calls} calls reported complete usage.</div>
+	{:else if invocationActual}
+		<div class="mt-1 text-xs text-text-muted">No provider token usage was recorded for this invocation.</div>
+	{:else if displayActual}
+		<div class="mt-1 text-xs text-text-muted">{displayActual.calls}/{displayActual.requests || displayActual.calls} calls reported complete usage.</div>
 	{:else}
 		<div class="mt-1 text-xs text-text-muted">No provider token usage was recorded.</div>
 	{/if}

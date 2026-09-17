@@ -68,7 +68,7 @@ class ViewerTokenUsageWiringTest(unittest.TestCase):
 
         self.assertIn("<details", source)
         self.assertIn("In range", source)
-        self.assertIn("actual.missingUsageCalls > 0", source)
+        self.assertIn("displayActual.missingUsageCalls > 0", source)
         self.assertIn("'Reported' : 'Actual'", source)
         self.assertGreaterEqual(
             source.count("tokenAccuracyUnavailableMessage"),
@@ -225,6 +225,375 @@ class ViewerTokenUsageFormattingTest(unittest.TestCase):
                     else:
                         self.assertIn("65–4K", visible)
                         self.assertIn("In range", visible)
+
+    def test_resumed_run_compares_invocation_usage_and_shows_cumulative_total(self) -> None:
+        helper = server_artifacts.ViewerServerArtifactsTest()
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            root = Path(tmp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            data_path = helper._copy_data_harness(harness)
+            artifacts_root = root / "results"
+            run_dir = artifacts_root / "suite-a" / "run-a"
+            run_dir.mkdir(parents=True)
+            (run_dir / "manifest.json").write_text(
+                '{"status":"completed","stages":{"judge":"completed"}}',
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text("pipeline: {}\n", encoding="utf-8")
+            for file_name in ("inference_set.jsonl", "scores.jsonl"):
+                (run_dir / file_name).write_text("", encoding="utf-8")
+            helper._build_viewer_read_model(run_dir)
+            (run_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "token_estimate": {
+                            "calls": 1,
+                            "input_tokens": 90,
+                            "output_tokens": 20,
+                            "total_tokens": 110,
+                            "lower_bound_tokens": 90,
+                            "upper_bound_tokens": 120,
+                            "stages": {
+                                "judge": {
+                                    "calls": 1,
+                                    "total_tokens": 110,
+                                }
+                            },
+                        },
+                        "token_estimate_scope": "current_invocation",
+                        "totals": {
+                            "requests": 11,
+                            "calls": 11,
+                            "input_tokens": 9_000,
+                            "output_tokens": 1_100,
+                            "total_tokens": 10_100,
+                        },
+                        "invocation": {
+                            "totals": {
+                                "requests": 1,
+                                "calls": 1,
+                                "input_tokens": 80,
+                                "output_tokens": 20,
+                                "total_tokens": 100,
+                            }
+                        },
+                        "token_estimate_accuracy": {
+                            "status": "available",
+                            "actual_total_tokens": 100,
+                            "estimated_total_tokens": 110,
+                            "difference_tokens": -10,
+                            "difference_ratio": -10 / 110,
+                            "absolute_percentage_error": 10 / 110,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            compiled_path = root / "summary.mjs"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(root),
+                }
+            )
+            script = textwrap.dedent(
+                f"""\
+                import fs from 'node:fs';
+                import {{ compile }} from 'svelte/compiler';
+                import {{ render }} from 'svelte/server';
+                const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
+                const {{ loadViewerRunReadModel }} = await import(
+                  {json.dumps((harness / 'artifacts.ts').as_uri())}
+                );
+                loadViewerRunReadModel('suite-a', 'run-a');
+                const tokenUsage = loadRunPageData('suite-a', 'run-a').tokenUsage;
+                const source = fs.readFileSync(
+                  {json.dumps(str(TOKEN_SUMMARY_SRC))},
+                  'utf-8'
+                ).replace(
+                  '$lib/token-usage.js',
+                  {json.dumps(TOKEN_USAGE_SRC.as_uri())}
+                );
+                const compiled = compile(source, {{
+                  generate: 'server',
+                  filename: 'TokenUsageSummary.svelte'
+                }});
+                fs.writeFileSync({json.dumps(str(compiled_path))}, compiled.js.code);
+                const {{ default: Summary }} = await import(
+                  {json.dumps(compiled_path.as_uri())}
+                );
+                console.log(JSON.stringify({{
+                  tokenUsage,
+                  html: render(Summary, {{ props: {{ tokenUsage }} }}).body
+                }}));
+                """
+            )
+            result = helper._run_node(harness_dir=harness, script=script, env=env)
+
+        self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+        payload = json.loads(result.stdout)
+        token_usage = payload["tokenUsage"]
+        self.assertEqual(token_usage["actual"]["totalTokens"], 10_100)
+        self.assertEqual(token_usage["invocationActual"]["totalTokens"], 100)
+        self.assertEqual(token_usage["estimateActual"]["totalTokens"], 100)
+        visible = payload["html"].split("<details", 1)[0]
+        self.assertIn("Estimated this invocation", visible)
+        self.assertIn("This invocation Actual", visible)
+        self.assertIn("Cumulative", visible)
+        self.assertIn("10.1K", visible)
+        self.assertIn("In range", visible)
+        self.assertNotIn("Outside range", visible)
+
+    def test_resumed_run_displays_current_usage_with_prior_estimate(self) -> None:
+        helper = server_artifacts.ViewerServerArtifactsTest()
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            root = Path(tmp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            data_path = helper._copy_data_harness(harness)
+            artifacts_root = root / "results"
+            run_dir = artifacts_root / "suite-a" / "run-a"
+            run_dir.mkdir(parents=True)
+            (run_dir / "manifest.json").write_text(
+                '{"status":"completed","stages":{"judge":"completed"}}',
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text("pipeline: {}\n", encoding="utf-8")
+            for file_name in ("inference_set.jsonl", "scores.jsonl"):
+                (run_dir / file_name).write_text("", encoding="utf-8")
+            helper._build_viewer_read_model(run_dir)
+            (run_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "token_estimate": {
+                            "calls": 1,
+                            "input_tokens": 900,
+                            "output_tokens": 100,
+                            "total_tokens": 1_000,
+                            "lower_bound_tokens": 900,
+                            "upper_bound_tokens": 1_100,
+                            "stages": {
+                                "judge": {
+                                    "calls": 1,
+                                    "total_tokens": 1_000,
+                                }
+                            },
+                        },
+                        "token_estimate_scope": "prior_invocation",
+                        "totals": {
+                            "requests": 11,
+                            "calls": 11,
+                            "input_tokens": 9_000,
+                            "output_tokens": 1_100,
+                            "total_tokens": 10_100,
+                        },
+                        "invocation": {
+                            "totals": {
+                                "requests": 1,
+                                "calls": 1,
+                                "input_tokens": 80,
+                                "output_tokens": 20,
+                                "total_tokens": 100,
+                            }
+                        },
+                        "token_estimate_accuracy": {
+                            "status": "unavailable",
+                            "reason": "estimate_scope_mismatch",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            compiled_path = root / "summary-prior.mjs"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(root),
+                }
+            )
+            script = textwrap.dedent(
+                f"""\
+                import fs from 'node:fs';
+                import {{ compile }} from 'svelte/compiler';
+                import {{ render }} from 'svelte/server';
+                const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
+                const {{ loadViewerRunReadModel }} = await import(
+                  {json.dumps((harness / 'artifacts.ts').as_uri())}
+                );
+                loadViewerRunReadModel('suite-a', 'run-a');
+                const tokenUsage = loadRunPageData('suite-a', 'run-a').tokenUsage;
+                const source = fs.readFileSync(
+                  {json.dumps(str(TOKEN_SUMMARY_SRC))},
+                  'utf-8'
+                ).replace(
+                  '$lib/token-usage.js',
+                  {json.dumps(TOKEN_USAGE_SRC.as_uri())}
+                );
+                const compiled = compile(source, {{
+                  generate: 'server',
+                  filename: 'TokenUsageSummary.svelte'
+                }});
+                fs.writeFileSync({json.dumps(str(compiled_path))}, compiled.js.code);
+                const {{ default: Summary }} = await import(
+                  {json.dumps(compiled_path.as_uri())}
+                );
+                console.log(JSON.stringify({{
+                  tokenUsage,
+                  html: render(Summary, {{ props: {{ tokenUsage }} }}).body
+                }}));
+                """
+            )
+            result = helper._run_node(harness_dir=harness, script=script, env=env)
+
+        self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+        payload = json.loads(result.stdout)
+        token_usage = payload["tokenUsage"]
+        self.assertEqual(token_usage["estimateScope"], "prior_invocation")
+        self.assertEqual(token_usage["actual"]["totalTokens"], 10_100)
+        self.assertEqual(token_usage["invocationActual"]["totalTokens"], 100)
+        self.assertIsNone(token_usage["estimateActual"])
+        visible = payload["html"].split("<details", 1)[0]
+        self.assertIn("Prior invocation estimate", visible)
+        self.assertNotIn("Estimated this invocation", visible)
+        self.assertIn("This invocation Actual", visible)
+        self.assertNotIn("Actual unavailable", visible)
+        self.assertIn("Cumulative", visible)
+        self.assertIn("10.1K", visible)
+        self.assertNotIn("In range", visible)
+        self.assertNotIn("Outside range", visible)
+
+    def test_explicit_zero_invocation_and_legacy_metrics_render_distinctly(self) -> None:
+        helper = server_artifacts.ViewerServerArtifactsTest()
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            root = Path(tmp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            data_path = helper._copy_data_harness(harness)
+            artifacts_root = root / "results"
+            run_dir = artifacts_root / "suite-a" / "run-a"
+            run_dir.mkdir(parents=True)
+            (run_dir / "manifest.json").write_text(
+                '{"status":"completed","stages":{"judge":"completed"}}',
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text("pipeline: {}\n", encoding="utf-8")
+            for file_name in ("inference_set.jsonl", "scores.jsonl"):
+                (run_dir / file_name).write_text("", encoding="utf-8")
+            helper._build_viewer_read_model(run_dir)
+            compiled_path = root / "summary-zero.mjs"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(root),
+                }
+            )
+            metrics_cases = {
+                "explicit_zero": {
+                    "token_estimate": {
+                        "calls": 1,
+                        "total_tokens": 900,
+                        "lower_bound_tokens": 800,
+                        "upper_bound_tokens": 1_000,
+                    },
+                    "token_estimate_scope": "prior_invocation",
+                    "token_estimate_accuracy": {
+                        "status": "unavailable",
+                        "reason": "estimate_scope_mismatch",
+                    },
+                    "totals": {
+                        "requests": 11,
+                        "calls": 11,
+                        "input_tokens": 9_000,
+                        "output_tokens": 1_100,
+                        "total_tokens": 10_100,
+                    },
+                    "invocation": {
+                        "totals": {
+                            "requests": 0,
+                            "calls": 0,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0,
+                        }
+                    },
+                },
+                "legacy": {
+                    "totals": {
+                        "requests": 11,
+                        "calls": 11,
+                        "input_tokens": 9_000,
+                        "output_tokens": 1_100,
+                        "total_tokens": 10_100,
+                    }
+                },
+            }
+            script = textwrap.dedent(
+                f"""\
+                import fs from 'node:fs';
+                import {{ compile }} from 'svelte/compiler';
+                import {{ render }} from 'svelte/server';
+                const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
+                const {{ loadViewerRunReadModel }} = await import(
+                  {json.dumps((harness / 'artifacts.ts').as_uri())}
+                );
+                loadViewerRunReadModel('suite-a', 'run-a');
+                const source = fs.readFileSync(
+                  {json.dumps(str(TOKEN_SUMMARY_SRC))},
+                  'utf-8'
+                ).replace(
+                  '$lib/token-usage.js',
+                  {json.dumps(TOKEN_USAGE_SRC.as_uri())}
+                );
+                const compiled = compile(source, {{
+                  generate: 'server',
+                  filename: 'TokenUsageSummary.svelte'
+                }});
+                fs.writeFileSync({json.dumps(str(compiled_path))}, compiled.js.code);
+                const {{ default: Summary }} = await import(
+                  {json.dumps(compiled_path.as_uri())}
+                );
+                const metricsCases = {json.dumps(metrics_cases)};
+                const result = {{}};
+                for (const [name, metrics] of Object.entries(metricsCases)) {{
+                  fs.writeFileSync(
+                    {json.dumps(str(run_dir / 'metrics.json'))},
+                    JSON.stringify(metrics)
+                  );
+                  const tokenUsage = loadRunPageData('suite-a', 'run-a').tokenUsage;
+                  result[name] = {{
+                    tokenUsage,
+                    html: render(Summary, {{ props: {{ tokenUsage }} }}).body
+                  }};
+                }}
+                console.log(JSON.stringify(result));
+                """
+            )
+            result = helper._run_node(harness_dir=harness, script=script, env=env)
+
+        self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+        payload = json.loads(result.stdout)
+        explicit = payload["explicit_zero"]
+        self.assertEqual(explicit["tokenUsage"]["invocationActual"]["totalTokens"], 0)
+        self.assertIsNone(explicit["tokenUsage"]["estimateActual"])
+        explicit_visible = explicit["html"].split("<details", 1)[0]
+        self.assertIn("Prior invocation estimate", explicit_visible)
+        self.assertIn("Current invocation usage unavailable", explicit_visible)
+        self.assertIn("Cumulative", explicit_visible)
+        self.assertIn("10.1K", explicit_visible)
+        self.assertNotIn("This invocation Actual", explicit_visible)
+
+        legacy = payload["legacy"]
+        self.assertIsNone(legacy["tokenUsage"]["invocationActual"])
+        self.assertEqual(legacy["tokenUsage"]["actual"]["totalTokens"], 10_100)
+        legacy_visible = legacy["html"].split("<details", 1)[0]
+        self.assertIn("Actual", legacy_visible)
+        self.assertIn("10.1K", legacy_visible)
+        self.assertNotIn("Current invocation usage unavailable", legacy_visible)
+        self.assertNotIn("Cumulative", legacy_visible)
 
     def test_preview_renders_zero_and_nonzero_exclusions_and_legacy_estimates(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:

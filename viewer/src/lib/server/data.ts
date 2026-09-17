@@ -213,7 +213,10 @@ function normalizeTokenEstimate(value: unknown): TokenEstimateView | null {
 	};
 }
 
-function normalizeActualTokenUsage(value: unknown): TokenActualUsageView | null {
+function normalizeActualTokenUsage(
+	value: unknown,
+	{ preserveZero = false }: { preserveZero?: boolean } = {}
+): TokenActualUsageView | null {
 	const record = readObject(value);
 	if (!record) return null;
 	const requests = readNonNegativeInteger(record.requests) ?? 0;
@@ -226,6 +229,7 @@ function normalizeActualTokenUsage(value: unknown): TokenActualUsageView | null 
 	const cacheCreationInputTokens =
 		readNonNegativeInteger(record.cache_creation_input_tokens) ?? 0;
 	if (
+		!preserveZero &&
 		requests === 0 &&
 		calls === 0 &&
 		inputTokens === 0 &&
@@ -297,8 +301,26 @@ function loadRunTokenUsage(suiteId: string, runId: string): TokenUsageView | nul
 	if (!payload) return null;
 	const estimate = normalizeTokenEstimate(payload.token_estimate);
 	const actual = normalizeActualTokenUsage(payload.totals);
+	const hasInvocation = Object.prototype.hasOwnProperty.call(payload, 'invocation');
+	const invocation = readObject(payload.invocation);
+	const invocationActual = normalizeActualTokenUsage(invocation?.totals, {
+		preserveZero: hasInvocation
+	});
+	const estimateScope =
+		payload.token_estimate_scope === 'current_invocation' ||
+		payload.token_estimate_scope === 'prior_invocation'
+			? payload.token_estimate_scope
+			: null;
+	const estimateActual =
+		estimateScope === 'prior_invocation'
+			? null
+			: hasInvocation
+				? invocationActual
+				: actual;
 	const accuracy = normalizeTokenEstimateAccuracy(payload.token_estimate_accuracy);
-	return estimate || actual ? { estimate, actual, accuracy } : null;
+	return estimate || actual || invocationActual
+		? { estimate, estimateScope, actual, invocationActual, estimateActual, accuracy }
+		: null;
 }
 
 function readSeedPayload(row: UnifiedSeedRow | undefined): Record<string, unknown> | null {
