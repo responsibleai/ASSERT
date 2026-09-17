@@ -124,11 +124,14 @@ can resolve or serve those domains end to end.
 
 ### Behavior 2: control-reference check + classifier annotator
 
-The host extracts canonical AUTH-/CB-/OPS-/CRD-/DA- references, checks them
-against the synthetic bank registry, and passes that evidence to the classifier
-annotation. The pinned native ACS runtime invokes the host classifier
-dispatcher, keeps invalid evidence in the escalation band, and maps clear
-coercion to deny.
+Before any arm runs, the host extracts canonical AUTH-/CB-/OPS-/CRD-/DA-
+references, checks them against the synthetic bank registry, and emits the
+result as a normal OpenTelemetry tool span. This makes request legitimacy
+evidence available even when an arm refuses without attempting a tool. The ACS
+arm then passes tool-bound verification to the classifier annotation. The
+example's local OPA-backed compatibility dispatcher keeps invalid evidence in
+the escalation band and maps clear coercion to deny; this path does not execute
+the native ACS annotator dispatcher.
 
 The checked-in calibration fixture names `gpt-4o-mini`, but the historical
 three-arm source runs did not commit their environment. The raw scorer's
@@ -138,8 +141,9 @@ drift. The current prompt fixture also corrects authorization contracts after
 those source runs. Historical outcome files retain their original hashes and
 declare that they do not apply to the corrected fixture until it is rerun.
 
-Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span.
-ASSERT's judge can cite that decision alongside the bank tool call.
+Every pre-target verification and ACS verdict is emitted as a normal
+OpenTelemetry tool span. ASSERT's judge can cite request legitimacy even when
+there is no bank tool call, and can cite an ACS decision when there is one.
 
 ## Run references
 

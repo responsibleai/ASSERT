@@ -50,6 +50,7 @@ from assert_ai import auto_trace; auto_trace.enable()  # noqa: E402
 import asyncio  # noqa: E402
 import json  # noqa: E402
 import sys  # noqa: E402
+from collections.abc import Awaitable, Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from dotenv import load_dotenv  # noqa: E402
@@ -58,10 +59,12 @@ load_dotenv()
 from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 from langchain_core.tools import ToolException  # noqa: E402
 from langgraph.prebuilt import create_react_agent  # noqa: E402
+from opentelemetry import trace  # noqa: E402
 
 from .runtime import bank_core  # noqa: E402
 
 _TRACE_LOCK = __import__("threading").Lock()
+_VERIFICATION_TRACER = trace.get_tracer("assert.bank_manager.request_verification")
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
@@ -266,23 +269,69 @@ def _write_gate_trace(message: str, control, scorer) -> None:
     del threading
 
 
+def _emit_request_verification(message: str) -> dict:
+    """Trace bank-owned request evidence before any experimental arm runs."""
+    verification = bank_core.verify_request_control_artifacts(
+        message,
+        bank_core.CONTROL_SESSION_ID,
+    )
+    with _VERIFICATION_TRACER.start_as_current_span(
+        "bank.control_artifact_verification"
+    ) as span:
+        span.set_attribute("openinference.span.kind", "TOOL")
+        span.set_attribute("tool.name", "bank_control_artifact_verification")
+        span.set_attribute(
+            "input.value",
+            json.dumps({"user_message": message}, ensure_ascii=False, sort_keys=True),
+        )
+        span.set_attribute(
+            "output.value",
+            json.dumps(verification, ensure_ascii=False, sort_keys=True),
+        )
+        span.set_attribute(
+            "bank.control_artifact.verification_source",
+            verification["verification_source"],
+        )
+        span.set_attribute(
+            "bank.control_artifact.artifact_verified",
+            verification["artifact_verified"],
+        )
+    return verification
+
+
+def _run_with_request_verification(
+    message: str,
+    awaitable_factory: Callable[[], Awaitable[str]],
+) -> str:
+    _emit_request_verification(message)
+    return asyncio.run(awaitable_factory())
 
 
 # ── ASSERT callable targets ────────────────────────────────────────────────
 
 def chat_coercion_baseline(message: str) -> str:
     """Arm 1 — realistic baseline: control-aware system prompt + keyword tripwire."""
-    return asyncio.run(_run_prompt_arm(message, BASE_PROMPT, heuristic=True))
+    return _run_with_request_verification(
+        message,
+        lambda: _run_prompt_arm(message, BASE_PROMPT, heuristic=True),
+    )
 
 
 def chat_coercion_hardened_prompt(message: str) -> str:
     """Arm 2 — prompt-only intervention pushed as far as it reasonably goes."""
-    return asyncio.run(_run_prompt_arm(message, BASE_PROMPT + HARDENED_ADDENDUM, heuristic=True))
+    return _run_with_request_verification(
+        message,
+        lambda: _run_prompt_arm(
+            message,
+            BASE_PROMPT + HARDENED_ADDENDUM,
+            heuristic=True,
+        ),
+    )
 
 
 def chat_coercion_acs_classifier(message: str) -> str:
     """Arm 3 — Arm 1's prompt, tripwire replaced by the calibrated ACS annotator."""
-    return asyncio.run(_run_acs_arm(message))
+    return _run_with_request_verification(message, lambda: _run_acs_arm(message))
 
 
 def chat_coercion_acs_naive_classifier(message: str) -> str:
@@ -292,7 +341,10 @@ def chat_coercion_acs_naive_classifier(message: str) -> str:
     carried by the calibration and out-of-distribution tables instead. Kept so
     the runtime diagnostic stays reproducible via --override.
     """
-    return asyncio.run(_run_acs_arm(message, scorer=cc.naive_keyword_score))
+    return _run_with_request_verification(
+        message,
+        lambda: _run_acs_arm(message, scorer=cc.naive_keyword_score),
+    )
 
 
 if __name__ == "__main__":

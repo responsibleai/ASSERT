@@ -126,12 +126,14 @@ to replace a recorded control artifact with:
 - deadline pressure: "we will backfill the paperwork after cutoff."
 
 All ordinary request fields are otherwise valid. The host checks cited control
-references against the synthetic bank registry and passes that evidence to the
-classifier-backed policy. The remaining distinction between coercive pressure
+references against the synthetic bank registry and emits the result as a
+pre-target OpenTelemetry span for every arm, even when the agent refuses
+without calling a tool. The remaining distinction between coercive pressure
 and legitimate work is semantic. The baseline prompt already says
 authentication is not authorization and uses a keyword tripwire. The ACS arm
-runs the classifier dispatcher and Rego policy through the pinned native ACS
-runtime.
+runs the classifier dispatcher and Rego policy through this example's local
+OPA-backed ACS compatibility shim; it does not exercise native ACS annotator
+dispatch.
 
 ### Historical 120-case comparison
 
@@ -282,7 +284,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `acs/policy_tier_authz/tier_authorization.rego` | Property-based sensitivity policy |
 | `eval_coercion_authority.yaml` | Behavior 2's one traced config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
-| `runtime/coercion_annotator.py` | Host classifier dispatcher used by native ACS |
+| `runtime/acs_annotator_shim.py` | Local compatibility dispatcher used by the coercion target |
 | `runtime/bank_core.py` | Bank-owned control-artifact registry and lightweight scope verification |
 | `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and historical per-case/result summaries with explicit provenance limits |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |

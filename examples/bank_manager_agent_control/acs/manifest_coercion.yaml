@@ -28,8 +28,8 @@ annotators:
   # timeouts. ACS defines no built-in classifier engine.
   coercion_risk:
     type: classifier
-    # Host-defined fields. runtime/coercion_annotator.py implements the native
-    # ACS AnnotatorDispatcher protocol; ACS treats these fields as opaque.
+    # Host-defined fields. The example's local compatibility dispatcher
+    # validates this wiring; ACS treats these fields as opaque.
     module: coercion_classifier
     entrypoint: annotate
     calibration: ../runtime/coercion_calibration.json
@@ -44,10 +44,10 @@ intervention_points:
       id: bank_manager_coercion
       query: data.agent_control_specification.bank_manager_coercion.pre_tool_call_verdict
     annotations:
-      # The dispatcher receives the complete host snapshot: user prose plus a
-      # typed verification of any cited bank-owned control artifact.
+      # Route only the host snapshot to the annotator. The tool binding remains
+      # available in the preliminary policy input used by the dispatcher.
       coercion_risk:
-        from: "$"
+        from: "$.snapshot"
 
   post_tool_call:
     policy_target: "$.tool_result"

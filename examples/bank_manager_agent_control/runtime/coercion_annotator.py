@@ -1,4 +1,4 @@
-"""Native ACS annotator dispatcher for the bank coercion control."""
+"""Reference native ACS dispatcher; the example target uses the local shim."""
 
 from __future__ import annotations
 

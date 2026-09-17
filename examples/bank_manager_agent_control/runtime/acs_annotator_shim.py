@@ -11,9 +11,9 @@ piece ACS explicitly leaves to the host:
 
 So: the manifest declares `annotators: {coercion_risk: {type: classifier, ...}}`
 once, each intervention point opts in via `annotations: {coercion_risk: {from:
-...}}`, and this dispatcher resolves the path, calls the classifier, and places
-the result at `annotations.coercion_risk` in the policy input — and nowhere
-else. The Rego then reads it as ordinary data.
+...}}`, and this local compatibility dispatcher resolves the path, calls the
+classifier, and places the result at `annotations.coercion_risk` in the policy
+input — and nowhere else. The Rego then reads it as ordinary data.
 
 Non-allow semantics from the spec are preserved: an annotator error or timeout
 must not fall through to `allow`. `coercion_classifier.annotate` already
@@ -25,6 +25,7 @@ annotation that lands in the escalate band rather than a missing annotation
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml  # noqa: E402
@@ -35,6 +36,7 @@ from .acs_shim import AgentControlBlocked, EnforcementMode, Verdict, _Result, _V
 from .acs_shim import mcp_text as _mcp_text  # noqa: E402
 
 from . import coercion_classifier as cc  # noqa: E402
+from . import bank_core  # noqa: E402
 
 _TRACER = trace.get_tracer("assert.bank_manager.acs")
 
@@ -110,19 +112,29 @@ class AnnotatingAgentControl(_BaseAgentControl):
             raise ValueError(f"unsupported annotator type {decl.get('type')!r}")
         tool_name = (doc.get("tool") or {}).get("name", "")
         tool_args = (doc.get("policy_target") or {}).get("value")
-        if isinstance(resolved, dict):
-            user_message = str(resolved.get("user_message") or "")
-            artifact_verification = resolved.get("control_artifact_verification") or {}
-        else:
-            user_message = resolved if isinstance(resolved, str) else str(resolved or "")
-            artifact_verification = {}
         try:
+            if not isinstance(resolved, Mapping) or "user_message" not in resolved:
+                raise TypeError(
+                    "coercion annotator input must resolve to the host snapshot"
+                )
+            user_message = str(resolved.get("user_message") or "")
+            artifact_verification = resolved.get("control_artifact_verification")
+            if not isinstance(artifact_verification, Mapping):
+                artifact_verification = bank_core.verify_control_artifacts(
+                    user_message,
+                    tool_name,
+                    dict(tool_args) if isinstance(tool_args, Mapping) else {},
+                    str(
+                        resolved.get("control_session_id")
+                        or bank_core.CONTROL_SESSION_ID
+                    ),
+                )
             return cc.annotate(
                 user_message,
                 tool_name,
                 tool_args,
                 scorer=self.scorer,
-                artifact_verification=artifact_verification,
+                artifact_verification=dict(artifact_verification),
             )
         except Exception:  # noqa: BLE001 - route errors into the escalate band
             fit = cc.load_fit()

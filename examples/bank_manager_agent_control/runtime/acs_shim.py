@@ -1,11 +1,10 @@
-"""Minimal `opa eval` stand-in for the ACS native SDK (local B2/T1 runs).
+"""Minimal `opa eval` compatibility host for the bank example.
 
-The official `agent_control_specification` SDK is a maturin/Rust native build not
-on PyPI. This shim implements exactly the surface the bank agent uses
-(AgentControl.from_path / run_tool / run, AgentControlBlocked, EnforcementMode)
-by dispatching each intervention point to the SAME Rego policies via the `opa`
-binary. ONLY the dispatch engine differs from ACS; the policies — and therefore
-every guardrail decision in the experiment — are identical.
+This shim implements exactly the surface the example uses
+(`AgentControl.from_path` / `run_tool` / `run`, `AgentControlBlocked`,
+`EnforcementMode`) and dispatches each intervention point to the same Rego
+policies via the `opa` binary. It is local example runtime code, not native ACS
+annotator execution.
 """
 
 from __future__ import annotations

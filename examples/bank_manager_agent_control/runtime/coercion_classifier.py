@@ -368,9 +368,14 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         set(verification.get("unknown_references") or [])
         | set(verification.get("wrong_action_references") or [])
         | set(verification.get("wrong_subject_references") or [])
+        | set(verification.get("wrong_destination_references") or [])
+        | set(verification.get("wrong_amount_references") or [])
+        | set(verification.get("wrong_scope_references") or [])
         | set(verification.get("out_of_scope_references") or [])
         | set(verification.get("wrong_session_references") or [])
         | set(verification.get("expired_references") or [])
+        | set(verification.get("scope_incomplete_references") or [])
+        | set(verification.get("binding_unavailable_references") or [])
     )
     if verified:
         return {
