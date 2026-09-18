@@ -54,7 +54,11 @@ from assert_ai.core.session import (
     serialize_response,
 )
 from assert_ai.core.tool_backend import ToolBackendResolver, inspect_tool_module
-from assert_ai.core.tools import load_toolset_file, normalize_tool_defs
+from assert_ai.core.tools import (
+    load_toolset_file,
+    normalize_tool_defs,
+    resolve_toolset_path,
+)
 from assert_ai.core.transcript import (
     AddMessageEdit,
     Message as TranscriptMessage,
@@ -77,13 +81,43 @@ _INFERENCE_CONFIG_HASH_FILE = ".inference_config_hash"
 _JUDGE_ARTIFACTS_TO_CLEAN = ("scores.jsonl", ".judge_config_hash")
 
 
-def _remove_stale_judge_artifacts(run_dir: Path) -> None:
+def _remove_stale_judge_artifacts(
+    run_dir: Path,
+    usage_merge_state: dict[str, Any] | None = None,
+) -> dict[str, str]:
     """Remove judge-stage outputs that depend on the inference data being replaced."""
-    for name in _JUDGE_ARTIFACTS_TO_CLEAN:
-        path = run_dir / name
-        if path.exists():
+    outcomes: dict[str, str] = {}
+    try:
+        for name in _JUDGE_ARTIFACTS_TO_CLEAN:
+            path = run_dir / name
+            if not path.exists():
+                outcomes[name] = "absent"
+                continue
             log.info("[inference] Removing stale %s from %s", name, run_dir)
-            path.unlink()
+            try:
+                path.unlink()
+            except OSError:
+                outcomes[name] = "failed"
+                raise
+            outcomes[name] = "removed"
+    finally:
+        if outcomes.get("scores.jsonl") in {"absent", "removed"}:
+            _register_usage_merge(usage_merge_state, "judge", "replace")
+    return outcomes
+
+
+def _register_usage_merge(
+    state: dict[str, Any] | None,
+    stage_name: str,
+    mode: str,
+) -> None:
+    if state is None:
+        return
+    if stage_name == "inference":
+        state["_usage_merge_mode"] = mode
+    merge_modes = state.get("_usage_merge_modes")
+    if isinstance(merge_modes, dict):
+        merge_modes[stage_name] = mode
 
 
 _VERSIONED_ARTIFACT_RE = re.compile(r"^v\d{4}$")
@@ -147,6 +181,7 @@ def _inference_config_fingerprint(
     max_tokens: int,
     test_set_path: Path | None = None,
     config_path: Path | None = None,
+    test_set_content: bytes | None = None,
 ) -> str:
     """Deterministic hash of config values that affect inference output.
 
@@ -157,7 +192,9 @@ def _inference_config_fingerprint(
     """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or "")
     test_set_sha = ""
-    if test_set_path is not None and test_set_path.exists():
+    if test_set_content is not None:
+        test_set_sha = hashlib.sha256(test_set_content).hexdigest()
+    elif test_set_path is not None and test_set_path.exists():
         test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
     sandbox_sha = ""
     if target.sandbox:
@@ -532,14 +569,10 @@ def _build_hosted_session(
         if tools is None:
             if not isinstance(toolset_path, str) or not toolset_path.strip():
                 raise ValueError("simulated tools require target.tools.toolset or per-test-case tools")
-            resolved_path = Path(toolset_path).expanduser()
-            if not resolved_path.is_absolute():
-                candidates = []
-                if config_path is not None:
-                    candidates.append((config_path.parent / resolved_path).resolve())
-                candidates.append((Path.cwd() / resolved_path).resolve())
-                found = next((c for c in candidates if c.exists()), None)
-                resolved_path = found if found is not None else candidates[0]
+            resolved_path = resolve_toolset_path(
+                toolset_path,
+                config_path=config_path,
+            )
             tools = load_toolset_file(resolved_path)
         return HostedSession(
             model=model,
@@ -1104,6 +1137,7 @@ async def run_inference(
     forced: bool = False,
     heartbeat: Any = None,
     rewrite_test_set_path: bool = True,
+    usage_merge_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run all test-case inferences and write the transcript artifact."""
     if not target.model and not target.connector and not target.callable and not target.endpoint and not target.sandbox:
@@ -1153,6 +1187,7 @@ async def run_inference(
 
     # Resume: load already-completed test_case_ids and skip them.
     completed_test_case_ids: set[str] = set()
+    usage_merge = "replace"
     config_hash = _inference_config_fingerprint(
         target,
         evaluation,
@@ -1169,7 +1204,12 @@ async def run_inference(
             # be byte-identical (deterministic test-case generation, no stratification
             # dimensions, etc.) which would otherwise leave the cache intact.
             inference_set_path.unlink()
-            _remove_stale_judge_artifacts(out_dir)
+            _register_usage_merge(
+                usage_merge_state,
+                "inference",
+                "replace",
+            )
+            _remove_stale_judge_artifacts(out_dir, usage_merge_state)
         else:
             # Check that existing inference rows were produced with the same config.
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
@@ -1178,17 +1218,31 @@ async def run_inference(
                     f"Inference config changed since last run - discarding {inference_set_path} and starting fresh"
                 )
                 inference_set_path.unlink()
-                _remove_stale_judge_artifacts(out_dir)
+                _register_usage_merge(
+                    usage_merge_state,
+                    "inference",
+                    "replace",
+                )
+                _remove_stale_judge_artifacts(out_dir, usage_merge_state)
             else:
                 for row in load_jsonl(inference_set_path):
                     sid = row.get("test_case_id")
                     if sid:
                         completed_test_case_ids.add(str(sid))
+                if completed_test_case_ids:
+                    usage_merge = "accumulate"
+    elif forced:
+        _remove_stale_judge_artifacts(out_dir, usage_merge_state)
     if completed_test_case_ids:
         log.info(
             f"Resuming inference: {len(completed_test_case_ids)} test cases already completed, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
+    _register_usage_merge(
+        usage_merge_state,
+        "inference",
+        usage_merge,
+    )
     pending_test_cases = [
         (i, test_case) for i, test_case in indexed_test_cases
         if str(test_case.get("test_case_id", "")) not in completed_test_case_ids
@@ -1430,6 +1484,7 @@ async def run_inference(
         "count": len(completed_test_case_ids) + len(results),
         "new_count": len(results),
         "cached_count": len(completed_test_case_ids),
+        "usage_merge": usage_merge,
         # Surfaced for the runner / benchmark CSV / metrics so the user
         # can see how many test_set the next re-run will need to retry,
         # and how often the target failed mid-conversation.
@@ -1470,6 +1525,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
         rewrite_test_set_path=rewrite_test_set_path,
+        usage_merge_state=ctx,
     )
     target_obj = ctx["target"]
     target_model = ""
@@ -1489,4 +1545,5 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             # future cache hit would silently reuse the smaller file.
             "errored_count": int(result.get("errored_count", 0) or 0),
         },
+        "_usage_merge": result.get("usage_merge", "replace"),
     }
