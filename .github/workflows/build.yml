@@ -125,7 +125,7 @@ jobs:
           - example: bank-manager-agent-control
             assert_extras: acs
             requirements: examples/bank_manager_agent_control/requirements.txt
-            import: examples.bank_manager_agent_control.agent
+            import: examples.bank_manager_agent_control.agent_tier_authz; import examples.bank_manager_agent_control.coercion_agent
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -158,12 +158,14 @@ jobs:
       - name: Test Phoenix collector against installed client
         if: matrix.example == 'phoenix-auto-trace-openai'
         run: python source/tests/test_phoenix_collector.py -v
-      - name: Test Bank Manager model routing
+      - name: Test Bank Manager model and annotation routing
         if: matrix.example == 'bank-manager-agent-control'
         working-directory: source
         env:
           PYTHONPATH: examples/bank_manager_agent_control/tests
-        run: python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+        run: |
+          python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+          python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_coercion_routing.py' -v
       - name: Test Science Research Agent tools
         if: matrix.example == 'science-research-agent'
         working-directory: source
