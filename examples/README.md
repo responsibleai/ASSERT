@@ -78,7 +78,7 @@ scenario, setup, run commands, and artifact paths.
 |---|---|
 | [`prompt_agents/`](prompt_agents/) | Prompt Agent target shapes: model-only, simulated tools, sandbox tools, generated tools, and external connector. |
 | [`phoenix_auto_trace/`](phoenix_auto_trace/) | Auto-instrumentation across supported agent frameworks, with two atomic LangGraph evals. |
-| [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry. |
+| [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry, plus [platform-native custom evaluation](langgraph-foundry-hosted/evaluation/) for agent, trace, and precomputed-dataset routes. |
 | [`azure_managed_identity/`](azure_managed_identity/) | Azure OpenAI authentication with managed identity or `az login`. |
 
 ## Specialized demos and shared assets
