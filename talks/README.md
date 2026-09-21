@@ -11,3 +11,8 @@ The AIEWF deck walks the same three beats as the
 [`bank_manager_agent_control`](../examples/bank_manager_agent_control/README.md) example:
 baseline → defensive prompting → principled control plane, then the ASSERT + ACS
 announcement.
+
+The merged `main` branch intentionally contains no generated evaluation results.
+For speaker setup, the preserved
+`examples/bank-manager-two-behaviors` branch includes a
+[local viewer package and demo runbook](aiewf-18min/speaker-assets/README.md).
