@@ -37,6 +37,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+python -m pip install "pytest>=9.0.3"
 Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -48,6 +49,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+python -m pip install "pytest>=9.0.3"
 cp examples/bank_manager_agent_control/.env.example .env
 ```
 

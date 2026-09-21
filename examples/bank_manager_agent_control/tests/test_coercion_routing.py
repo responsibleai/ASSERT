@@ -2,13 +2,16 @@
 
 import _bootstrap  # noqa: F401
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import examples.bank_manager_agent_control.coercion_agent as agent
 from examples.bank_manager_agent_control.runtime import bank_core
+from examples.bank_manager_agent_control.runtime import coercion_classifier as classifier
 from examples.bank_manager_agent_control.runtime.acs_annotator_shim import (
     AnnotatingAgentControl,
 )
@@ -62,6 +65,43 @@ class _CapturedTracer:
 
 
 class CoercionRoutingTests(unittest.TestCase):
+    def test_classifier_failure_state_is_isolated_between_concurrent_calls(self):
+        failed_state_set = threading.Event()
+        clean_state_set = threading.Event()
+        fit = {"a": 1.0, "b": 2.0, "escalate_lo": 0.35, "deny_hi": 0.75}
+
+        def raw_score(user_message, *_args, **_kwargs):
+            if user_message == "failed":
+                classifier._set_last_call_failed(True)
+                failed_state_set.set()
+                self.assertTrue(clean_state_set.wait(timeout=2))
+                return classifier._FAILSAFE_SCORE
+            self.assertTrue(failed_state_set.wait(timeout=2))
+            classifier._set_last_call_failed(False)
+            clean_state_set.set()
+            return 0.1
+
+        with (
+            patch.object(classifier, "raw_llm_score", side_effect=raw_score),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            failed = pool.submit(
+                classifier.calibrated_score,
+                "failed",
+                fit=fit,
+            )
+            clean = pool.submit(
+                classifier.calibrated_score,
+                "clean",
+                fit=fit,
+            )
+
+            self.assertEqual(failed.result(), 0.55)
+            self.assertAlmostEqual(
+                clean.result(),
+                classifier.apply_platt(0.1, fit["a"], fit["b"]),
+            )
+
     def test_manifest_routes_snapshot_to_classifier(self):
         captured = {}
 

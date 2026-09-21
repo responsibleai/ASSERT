@@ -178,9 +178,12 @@ The behavior specification defines the dimensions that matter:
 Over-refusal is one example of a permissible violation, not the name of the
 general axis.
 
-The published article also visualized these comparisons as a Pareto plot. The
-talk asset is split out from this prep branch, so use the tables above as the
-committed source of context here.
+The published article also visualized these comparisons as a Pareto plot:
+
+![Pareto comparison of impermissible and permissible behavior violations across the bank-support experiment arms](../../talks/aiewf-18min/assets/pareto.png)
+
+Use the tables above for the exact historical values and evidence boundaries
+behind the snapshot.
 
 Add operating cost—model and tool spend, latency, and human-review time—and the
 same comparison becomes an ROI frontier: a better, safer product at lower cost.
@@ -200,6 +203,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+python -m pip install "pytest>=9.0.3"
 Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
@@ -211,6 +215,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
+python -m pip install "pytest>=9.0.3"
 cp examples/bank_manager_agent_control/.env.example .env
 ```
 
