@@ -58,6 +58,130 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.request_payload["model"], "openai/gpt-5-mini")
         self.assertEqual(response.request_payload["messages"], [{"role": "user", "content": "say hi"}])
 
+    def test_estimate_token_count_uses_model_aware_tokenizer(self) -> None:
+        captured: dict[str, object] = {}
+
+        def token_counter(**kwargs):
+            captured.update(kwargs)
+            return 37
+
+        fake_litellm = SimpleNamespace(token_counter=token_counter)
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            return_value=fake_litellm,
+        ):
+            count = model_client.estimate_token_count(
+                "openai/gpt-5-mini",
+                messages=[model_client.Message(role="user", content="hello")],
+            )
+
+        self.assertEqual(count, 37)
+        self.assertEqual(captured["model"], "gpt-5-mini")
+        self.assertEqual(
+            captured["messages"],
+            [{"role": "user", "content": "hello"}],
+        )
+
+    def test_estimate_token_count_normalizes_versioned_azure_model(self) -> None:
+        captured: dict[str, object] = {}
+
+        def token_counter(**kwargs):
+            captured.update(kwargs)
+            return 11
+
+        fake_litellm = SimpleNamespace(token_counter=token_counter)
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            return_value=fake_litellm,
+        ):
+            count = model_client.estimate_token_count(
+                "azure/gpt-5.4-mini",
+                text="hello",
+            )
+
+        self.assertEqual(count, 11)
+        self.assertEqual(captured["model"], "gpt-5-mini")
+
+    def test_estimate_token_count_normalizes_dated_gpt5_snapshot(self) -> None:
+        captured: dict[str, object] = {}
+
+        def token_counter(**kwargs):
+            captured.update(kwargs)
+            return 9
+
+        fake_litellm = SimpleNamespace(token_counter=token_counter)
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            return_value=fake_litellm,
+        ):
+            count = model_client.estimate_token_count(
+                "azure/gpt-5-mini-2025-08-07",
+                text="hello",
+            )
+
+        self.assertEqual(count, 9)
+        self.assertEqual(captured["model"], "gpt-5-mini")
+
+    def test_estimate_token_count_normalizes_legacy_openai_snapshots(self) -> None:
+        routed_models: list[str] = []
+
+        def token_counter(**kwargs):
+            routed_models.append(kwargs["model"])
+            return 9
+
+        fake_litellm = SimpleNamespace(token_counter=token_counter)
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            return_value=fake_litellm,
+        ):
+            model_client.estimate_token_count(
+                "openai/gpt-4-0125-preview",
+                text="hello",
+            )
+            model_client.estimate_token_count(
+                "openai/gpt-3.5-turbo-0125",
+                text="hello",
+            )
+            model_client.estimate_token_count(
+                "azure/gpt-35-turbo",
+                text="hello",
+            )
+
+        self.assertEqual(
+            routed_models,
+            ["gpt-4", "gpt-3.5-turbo", "gpt-3.5-turbo"],
+        )
+
+    def test_estimate_token_count_falls_back_to_character_ratio(self) -> None:
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            side_effect=AssertionError("unknown aliases should not reach LiteLLM"),
+        ):
+            count = model_client.estimate_token_count(
+                "custom/provider-model",
+                text="abcdefgh",
+            )
+
+        self.assertEqual(count, 2)
+
+    def test_estimate_token_count_rejects_gpt_like_deployment_alias(self) -> None:
+        with patch.object(
+            model_client,
+            "_get_litellm_module",
+            side_effect=AssertionError("deployment aliases should use fallback"),
+        ):
+            count = model_client.estimate_token_count(
+                "azure/gpt-prod",
+                text="abcdefgh",
+            )
+
+        self.assertEqual(count, 2)
+
     async def test_generate_structured_adds_json_schema_response_format(self) -> None:
         captured: dict[str, object] = {}
 
@@ -304,6 +428,19 @@ class NormalizeUsageTest(unittest.TestCase):
         assert usage is not None
         self.assertEqual(usage.cached_input_tokens, 2048)
 
+    def test_preserves_explicit_zero_token_fields(self) -> None:
+        usage = model_client._normalize_usage(
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 0,
+            }
+        )
+
+        assert usage is not None
+        self.assertEqual(usage.prompt_tokens, 100)
+        self.assertEqual(usage.completion_tokens, 0)
+        self.assertEqual(usage.total_tokens, 100)
+
     def test_extracts_anthropic_cache_tokens(self) -> None:
         # Anthropic surfaces both read and creation counts at the top level.
         usage = model_client._normalize_usage({
@@ -392,21 +529,67 @@ class UsageAccumulatorTest(unittest.TestCase):
             ),
             model="azure/gpt-5.4-mini",
         )
+        self.assertEqual(acc.requests, 2)
         self.assertEqual(acc.calls, 2)
         self.assertEqual(acc.input_tokens, 300)
         self.assertEqual(acc.output_tokens, 130)
+        self.assertEqual(acc.total_tokens, 430)
         self.assertEqual(acc.cached_input_tokens, 100)
         self.assertAlmostEqual(acc.cache_hit_rate(), 100 / 300)
         per_model = acc.per_model["azure/gpt-5.4-mini"]
         self.assertEqual(per_model["calls"], 2)
         self.assertEqual(per_model["input_tokens"], 300)
+        self.assertEqual(per_model["total_tokens"], 430)
         self.assertEqual(per_model["cached_input_tokens"], 100)
 
     def test_add_handles_none_usage_silently(self) -> None:
         acc = model_client.UsageAccumulator()
         acc.add(None, model="azure/gpt-5.4-mini")
+        self.assertEqual(acc.requests, 1)
         self.assertEqual(acc.calls, 0)
+        self.assertEqual(acc.missing_usage_calls, 1)
         self.assertEqual(acc.input_tokens, 0)
+        payload = acc.to_dict()
+        self.assertEqual(payload["usage_coverage"], 0.0)
+        self.assertEqual(
+            payload["per_model"]["azure/gpt-5.4-mini"]["requests"],
+            1,
+        )
+
+    def test_add_uses_total_only_usage_payload(self) -> None:
+        acc = model_client.UsageAccumulator()
+        acc.add(
+            model_client.UsageStats(total_tokens=123),
+            model="custom/model",
+        )
+
+        self.assertEqual(acc.requests, 1)
+        self.assertEqual(acc.calls, 1)
+        self.assertEqual(acc.total_tokens, 123)
+        self.assertEqual(acc.input_tokens, 0)
+        self.assertEqual(acc.output_tokens, 0)
+        self.assertEqual(acc.missing_usage_calls, 0)
+
+    def test_add_treats_empty_usage_payload_as_missing(self) -> None:
+        acc = model_client.UsageAccumulator()
+        acc.add(model_client.UsageStats(), model="custom/model")
+
+        self.assertEqual(acc.requests, 1)
+        self.assertEqual(acc.calls, 0)
+        self.assertEqual(acc.missing_usage_calls, 1)
+
+    def test_add_tracks_one_sided_usage_as_incomplete(self) -> None:
+        acc = model_client.UsageAccumulator()
+        acc.add(
+            model_client.UsageStats(prompt_tokens=100),
+            model="custom/model",
+        )
+
+        self.assertEqual(acc.requests, 1)
+        self.assertEqual(acc.calls, 0)
+        self.assertEqual(acc.missing_usage_calls, 1)
+        self.assertEqual(acc.input_tokens, 100)
+        self.assertEqual(acc.total_tokens, 100)
 
     def test_cache_hit_rate_is_zero_when_no_input_tokens(self) -> None:
         acc = model_client.UsageAccumulator()
@@ -465,6 +648,54 @@ class TrackUsageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage.output_tokens, 3 * 32)
         self.assertEqual(usage.cached_input_tokens, 3 * 512)
         self.assertIn("azure/gpt-5.4-mini", usage.per_model)
+
+    async def test_track_usage_records_terminal_request_failure(self) -> None:
+        async def fail_request(*_args, **_kwargs):
+            raise model_client.LLMInputError("refused")
+
+        with (
+            patch.object(
+                model_client,
+                "_get_litellm_module",
+                return_value=SimpleNamespace(),
+            ),
+            patch.object(model_client, "_with_retries", new=fail_request),
+            model_client.track_usage() as usage,
+        ):
+            with self.assertRaises(model_client.LLMInputError):
+                await model_client.generate(
+                    "openai/gpt-5-mini",
+                    "hello",
+                )
+
+        self.assertEqual(usage.requests, 1)
+        self.assertEqual(usage.calls, 0)
+        self.assertEqual(usage.missing_usage_calls, 1)
+
+    async def test_track_usage_records_chat_responses_marker_failure(self) -> None:
+        async def fail_request(*_args, **_kwargs):
+            raise model_client._ResponsesApiNotAvailableError("unsupported")
+
+        with (
+            patch.object(
+                model_client,
+                "_get_litellm_module",
+                return_value=SimpleNamespace(),
+            ),
+            patch.object(model_client, "_with_retries", new=fail_request),
+            model_client.track_usage() as usage,
+        ):
+            with self.assertRaises(
+                model_client._ResponsesApiNotAvailableError
+            ):
+                await model_client.generate(
+                    "openai/gpt-5-mini",
+                    "hello",
+                )
+
+        self.assertEqual(usage.requests, 1)
+        self.assertEqual(usage.calls, 0)
+        self.assertEqual(usage.missing_usage_calls, 1)
 
     async def test_record_usage_outside_scope_is_a_noop(self) -> None:
         # Should not raise even when no accumulator is active.

@@ -1308,6 +1308,101 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["auditScoreCount"], 1)
             self.assertEqual(payload["turnsCount"], 0)
 
+    def test_load_run_page_data_exposes_token_usage_metrics(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            harness_dir = tmp_root / "harness"
+            harness_dir.mkdir()
+            data_path = self._copy_data_harness(harness_dir)
+
+            artifacts_root = tmp_root / "artifacts" / "results"
+            run_dir = artifacts_root / "suite-a" / "run-a"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "stages": {"inference": "completed", "judge": "running"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text(
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
+                encoding="utf-8",
+            )
+            (run_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "totals": {
+                            "requests": 2,
+                            "calls": 2,
+                            "missing_usage_calls": 0,
+                            "input_tokens": 800,
+                            "output_tokens": 200,
+                            "total_tokens": 1000,
+                            "cached_input_tokens": 100,
+                            "cache_creation_input_tokens": 0,
+                            "cache_hit_rate": 0.125,
+                            "usage_coverage": 1.0,
+                        },
+                        "token_estimate": {
+                            "calls": 2,
+                            "input_tokens": 900,
+                            "output_tokens": 200,
+                            "total_tokens": 1100,
+                            "lower_bound_tokens": 770,
+                            "upper_bound_tokens": 1430,
+                            "stages": {
+                                "judge": {
+                                    "calls": 1,
+                                    "input_tokens": 700,
+                                    "output_tokens": 200,
+                                    "total_tokens": 900,
+                                }
+                            },
+                            "notes": ["Retries are not included."],
+                        },
+                        "token_estimate_accuracy": {
+                            "actual_total_tokens": 1000,
+                            "estimated_total_tokens": 1100,
+                            "difference_tokens": -100,
+                            "difference_ratio": -100 / 1100,
+                            "absolute_percentage_error": 100 / 1100,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(tmp_root),
+                }
+            )
+            script = textwrap.dedent(
+                f"""\
+                const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
+                const payload = loadRunPageData('suite-a', 'run-a');
+                console.log(JSON.stringify(payload.tokenUsage));
+                """
+            )
+            result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["estimate"]["totalTokens"], 1100)
+            self.assertEqual(payload["estimate"]["lowerBoundTokens"], 770)
+            self.assertEqual(payload["estimate"]["stages"]["judge"]["totalTokens"], 900)
+            self.assertEqual(payload["estimate"]["notes"], ["Retries are not included."])
+            self.assertEqual(payload["actual"]["totalTokens"], 1000)
+            self.assertEqual(payload["actual"]["usageCoverage"], 1)
+            self.assertEqual(payload["accuracy"]["status"], "available")
+            self.assertAlmostEqual(payload["accuracy"]["differenceRatio"], -100 / 1100)
+
     def test_completed_run_page_data_preserves_pipeline_manifest_fields(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -1756,6 +1851,141 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["scenarioDrawerTurns"], 2)
             self.assertEqual(payload["scenarioDrawerStopReason"], "max_turns")
             self.assertEqual(payload["scenarioDrawerMessages"], 3)
+
+    def test_drawers_preserve_original_judgments_and_derive_permissibility(self) -> None:
+        for completed in (False, True):
+            for taxonomy_source in ("suite", "run", "missing"):
+                with self.subTest(completed=completed, taxonomy_source=taxonomy_source):
+                    with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+                        tmp_root = Path(tmp_dir)
+                        harness_dir = tmp_root / "harness"
+                        harness_dir.mkdir()
+                        data_path = self._copy_data_harness(harness_dir)
+                        artifacts_root = tmp_root / "artifacts"
+                        suite_dir = artifacts_root / "suite-a"
+                        run_dir = suite_dir / "run-a"
+                        run_dir.mkdir(parents=True)
+                        taxonomy = {
+                            "behavior_categories": [
+                                {"name": "allowed-work", "definition": "Serve legitimate work.", "permissible": True},
+                                {"name": "unsafe-action", "definition": "Do not perform this action.", "permissible": False},
+                            ]
+                        }
+                        config = "suite: suite-a\npipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n"
+                        if taxonomy_source == "suite":
+                            (suite_dir / "taxonomy.json").write_text(json.dumps(taxonomy), encoding="utf-8")
+                        elif taxonomy_source == "run":
+                            (run_dir / "judge-taxonomy.json").write_text(json.dumps(taxonomy), encoding="utf-8")
+                            config += "  judge:\n    taxonomy_path: judge-taxonomy.json\n"
+                            (suite_dir / "taxonomy.json").write_text(
+                                json.dumps({
+                                    "behavior_categories": [
+                                        {"name": "allowed-work", "permissible": False},
+                                        {"name": "unsafe-action", "permissible": True},
+                                    ]
+                                }),
+                                encoding="utf-8",
+                            )
+                        (run_dir / "config.yaml").write_text(config, encoding="utf-8")
+                        (suite_dir / "suite.json").write_text("{}", encoding="utf-8")
+                        manifest = {
+                            "status": "completed" if completed else "running",
+                            "stages": {"inference": "completed", "judge": "completed" if completed else "running"},
+                        }
+                        (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                        seeds, transcripts, scores = [], [], []
+                        for kind in ("prompt", "scenario"):
+                            # The same ID in both kinds must still resolve to the correct result.
+                            seeds.append({
+                                "type": kind,
+                                "test_case_id": "shared-id",
+                                "behavior": "behavior",
+                                "dimensions": {"behavior": "allowed-work"},
+                                "seed": {"title": f"{kind} title", "description": f"{kind} request"},
+                            })
+                            transcripts.append({
+                                "type": kind,
+                                "test_case_id": "shared-id",
+                                "behavior": "behavior",
+                                "dimensions": {"behavior": "allowed-work"},
+                                "target": "target-model",
+                                "events": [
+                                    {"view": ["target"], "actor": "target", "edit": {
+                                        "type": "add_message", "message": {"role": "user", "content": f"{kind} request"},
+                                    }},
+                                    {"view": ["target"], "actor": "target", "edit": {
+                                        "type": "add_message", "message": {"role": "assistant", "content": f"{kind} answer"},
+                                    }},
+                                ],
+                                "llm_calls": [],
+                                "stop_reason": "completed",
+                            })
+                            scores.append({
+                                "type": kind,
+                                "test_case_id": "shared-id",
+                                "behavior": "behavior",
+                                "dimensions": {"behavior": "allowed-work"},
+                                "judge_model": "judge-model",
+                                "judge_status": "ok",
+                                "verdict": {
+                                    "dimensions": {"policy_violation": True, "overrefusal": False},
+                                    "justification": f"Original {kind} explanation.",
+                                    "narrative": f"Original {kind} narrative.",
+                                    "citations": [],
+                                    "citation_warnings": ["unresolved_original_evidence"],
+                                    "node_judgments": [
+                                        {"node_index": 0, "node_name": "allowed-work",
+                                         "relevant": kind == "prompt", "violated": False if kind == "prompt" else None,
+                                         "confidence": "high", "evidence_turns": [2], "reasoning": "Original allowed-work reasoning."},
+                                        {"node_index": 1, "node_name": "unsafe-action",
+                                         "relevant": True, "violated": True, "confidence": "high",
+                                         "evidence_turns": [2], "reasoning": "Original unsafe-action reasoning."},
+                                    ],
+                                },
+                            })
+                        for path, records in (
+                            (suite_dir / "test_set.jsonl", seeds),
+                            (run_dir / "inference_set.jsonl", transcripts),
+                            (run_dir / "scores.jsonl", scores),
+                        ):
+                            path.write_text("\n".join(json.dumps(row) for row in records) + "\n", encoding="utf-8")
+                        score_bytes = (run_dir / "scores.jsonl").read_bytes()
+                        if completed:
+                            self._build_viewer_read_model(run_dir)
+                        env = {**os.environ, "ARTIFACTS_ROOT": str(artifacts_root), "MEASUREMENTS_ROOT": str(tmp_root)}
+                        script = textwrap.dedent(
+                            f"""\
+                            const {{ loadPromptDrawerItem, loadScenarioDrawerItem }} = await import({json.dumps(data_path.as_uri())});
+                            console.log(JSON.stringify({{
+                              prompt: await loadPromptDrawerItem('suite-a', 'run-a', 'shared-id'),
+                              scenario: await loadScenarioDrawerItem('suite-a', 'run-a', 'shared-id')
+                            }}));
+                            """
+                        )
+                        result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+                        self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+                        payload = json.loads(result.stdout)
+                        for kind, original in zip(("prompt", "scenario"), scores):
+                            item = payload[kind]
+                            self.assertEqual(item["kind"], kind)
+                            verdict = item["verdict"]
+                            for field in ("justification", "narrative", "citations", "citation_warnings", "node_judgments"):
+                                self.assertEqual(verdict[field], original["verdict"][field])
+                            self.assertTrue(verdict["dimensions"]["policy_violation"])
+                            self.assertFalse(verdict["dimensions"]["overrefusal"])
+                            if taxonomy_source == "missing":
+                                self.assertNotIn("policy_violation_not_permissible", verdict["dimensions"])
+                            else:
+                                self.assertTrue(verdict["dimensions"]["policy_violation_not_permissible"])
+                                self.assertEqual(
+                                    verdict["dimensions"]["policy_violation_permissible"],
+                                    False if kind == "prompt" else None,
+                                )
+                                self.assertEqual(
+                                    verdict["dimension_applicability"]["policy_violation_permissible"],
+                                    kind == "prompt",
+                                )
+                        self.assertEqual((run_dir / "scores.jsonl").read_bytes(), score_bytes)
 
     def test_prompt_drawer_reads_canonical_detail_before_judge_completion(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
