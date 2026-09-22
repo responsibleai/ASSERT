@@ -26,6 +26,7 @@ from assert_ai.core.config_model import (
     DEFAULT_MODEL_TIMEOUT_S,
     DEFAULT_INFERENCE_MAX_TOKENS,
     BusConfig,
+    HorseConfig,
     EvaluationConfig,
     ModelConfig,
     InferenceConfig,
@@ -193,20 +194,22 @@ def _inference_config_fingerprint(
                 sandbox_hash.update(b"\0")
                 sandbox_hash.update(cassette_bytes)
         sandbox_sha = sandbox_hash.hexdigest()
-    key = json_module.dumps(
-        {
-            "target": target_name,
-            "target_bus": asdict(target.model.bus) if isinstance(target.model, ModelConfig) and target.model.bus else None,
-            "max_tokens": max_tokens,
-            "max_turns": evaluation.inference.max_turns if evaluation else None,
-            "concurrency": evaluation.inference.concurrency if evaluation else None,
-            "tester": evaluation.tester.model.name if evaluation and evaluation.tester else None,
-            "tester_bus": asdict(evaluation.tester.model.bus) if evaluation and evaluation.tester and evaluation.tester.model.bus else None,
-            "test_set_sha": test_set_sha,
-            "sandbox_sha": sandbox_sha,
-        },
-        sort_keys=True,
-    )
+    inputs = {
+        "target": target_name,
+        "target_bus": asdict(target.model.bus) if isinstance(target.model, ModelConfig) and target.model.bus else None,
+        "max_tokens": max_tokens,
+        "max_turns": evaluation.inference.max_turns if evaluation else None,
+        "concurrency": evaluation.inference.concurrency if evaluation else None,
+        "tester": evaluation.tester.model.name if evaluation and evaluation.tester else None,
+        "tester_bus": asdict(evaluation.tester.model.bus) if evaluation and evaluation.tester and evaluation.tester.model.bus else None,
+        "test_set_sha": test_set_sha,
+        "sandbox_sha": sandbox_sha,
+    }
+    if isinstance(target.model, ModelConfig) and target.model.horse is not None:
+        inputs["target_horse"] = asdict(target.model.horse)
+    if evaluation and evaluation.tester and evaluation.tester.model.horse is not None:
+        inputs["tester_horse"] = asdict(evaluation.tester.model.horse)
+    key = json_module.dumps(inputs, sort_keys=True)
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 TESTER_SYSTEM_PROMPT = load_prompt_text("inference_tester_system.md")
@@ -657,6 +660,7 @@ def _build_target_session(
             timeout_s=DEFAULT_MODEL_TIMEOUT_S,
             call_label=call_label,
             bus=target.model.bus,
+            horse=target.model.horse,
         ),
         max_tool_calls=inference.max_tool_calls,
         synthetic_prompt_template=TOOL_SIM_PROMPT,
@@ -810,6 +814,7 @@ async def _run_tester_target_loop(
     target_runtime: HostedSession | ExternalSession | CallableSession | HTTPEndpointSession,
     max_turns: int,
     tester_bus: BusConfig | None = None,
+    tester_horse: HorseConfig | None = None,
 ) -> tuple[str | None, list[Message], list[Message]]:
     """Run the alternating tester and target loop for one scenario test case."""
     stop_reason = None
@@ -836,6 +841,7 @@ async def _run_tester_target_loop(
                         call_label=f"tester:{test_case_id}:turn{turn_index}",
                         extra_kwargs={"extra_body": {"store": True}},
                         bus=tester_bus,
+                        horse=tester_horse,
                     ),
                 )
                 action_message = (tester_response.text or "").strip()
@@ -1073,6 +1079,7 @@ async def _run_scenario_test_case(
             target_runtime=runtime,
             max_turns=evaluation.inference.max_turns,
             tester_bus=tester.model.bus,
+            tester_horse=tester.model.horse,
         )
     except Exception as exc:  # noqa: BLE001
         runtime_error = exc

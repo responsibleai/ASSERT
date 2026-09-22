@@ -143,6 +143,7 @@ async def run_systematization(
             max_tokens=model_cfg.max_tokens,
             web_search=web_search,
             reasoning_effort=model_cfg.reasoning_effort,
+            horse=model_cfg.horse,
         ),
     )
     if is_truncated_response(response):

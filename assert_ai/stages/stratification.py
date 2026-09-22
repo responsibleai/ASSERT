@@ -12,6 +12,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 from assert_ai.config import parse_model_config, resolve_stage_paths
+from assert_ai.core.config_model import HorseConfig
 from assert_ai.core.io import (
     STRATIFICATION_FILE,
     stratification_dimensions,
@@ -243,6 +244,7 @@ async def run_stratification(
     level_count: int = DEFAULT_LEVEL_COUNT,
     reasoning_effort: str | None = None,
     temperature: float | None = None,
+    horse_config: HorseConfig | None = None,
 ) -> dict[str, Any]:
     if level_count <= 0:
         raise ValueError("level_count must be > 0")
@@ -316,6 +318,11 @@ async def run_stratification(
                 )
             if reasoning_effort is not None:
                 temperature = None
+            if horse_config is not None:
+                log.warning(
+                    "Horse model transport does not support web_search; "
+                    "generating variation levels without web search."
+                )
             prompt = fill_template(
                 STRATIFICATION_PROMPT_TEMPLATE,
                 {
@@ -336,8 +343,9 @@ async def run_stratification(
                 options=GenerateOptions(
                     temperature=temperature,
                     max_tokens=50_000,
-                    web_search=True,
+                    web_search=horse_config is None,
                     reasoning_effort=reasoning_effort,
+                    horse=horse_config,
                 ),
             )
             parsed = response.parsed
@@ -407,6 +415,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         level_count=level_count,
         reasoning_effort=model_cfg.reasoning_effort if model_cfg is not None else None,
         temperature=model_cfg.temperature if model_cfg is not None else None,
+        horse_config=model_cfg.horse if model_cfg is not None else None,
     )
     log.debug(f"stratification: factor_sizes={result.get('factor_sizes', {})}")
     return {

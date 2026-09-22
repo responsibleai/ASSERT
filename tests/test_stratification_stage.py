@@ -135,9 +135,10 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
                 ],
             }
 
-            async def fake_run_stratification(*, taxonomy_path, out_dir, dimensions=None, context=None, model=None, level_count, reasoning_effort=None, temperature=None):
+            async def fake_run_stratification(*, taxonomy_path, out_dir, dimensions=None, context=None, model=None, level_count, reasoning_effort=None, temperature=None, horse_config=None):
                 self.assertEqual(Path(taxonomy_path).resolve(), (suite_root / "taxonomy.json").resolve())
                 self.assertEqual(model, "test-model")
+                self.assertIsNone(horse_config)
                 self.assertEqual(context, "A coding agent with shell access.")
                 self.assertEqual(Path(out_dir).resolve(), (root / "artifacts" / "custom-output").resolve())
                 self.assertEqual(level_count, DEFAULT_LEVEL_COUNT)

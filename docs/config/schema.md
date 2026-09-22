@@ -446,6 +446,7 @@ Accepted fields:
 - `max_tokens` — optional positive integer
 - `reasoning_effort` — optional non-empty string
 - `bus` — optional BUS transport mapping for inference targets, inference testers, and judges
+- `horse` — optional Horse transport mapping for generation, inference targets, inference testers, and judges; mutually exclusive with `bus`
 
 Defaults depend on the stage that reads the model:
 
@@ -509,6 +510,62 @@ come from the surrounding model config. BUS-backed judge calls use the judge
 prompt's JSON contract and validate the returned JSON, but BUS does not enforce
 the JSON schema at transport level. BUS-backed models do not currently support
 `target.tools` or `web_search`.
+
+### Horse transport
+
+Set `model.horse` to use `Ev3TokenCompleter` in Horse mode instead of LiteLLM.
+This works for behavior-category generation and conversion, prompt and scenario
+test-case generation, variation-level generation, inference targets, inference
+testers, and judges. Existing `model.bus` configs continue to select BUS;
+ASSERT does not fall back between Horse, BUS, and LiteLLM.
+
+The `ev3_token_completer`, `chat`, and `message_completer` packages and their
+dependencies must be available on `PYTHONPATH`, with the Horse client's usual
+authentication and network access configured. These optional packages are
+imported only when a Horse-backed model is invoked; they are not installed by
+the base ASSERT package.
+
+Use this model mapping in `default_model` or in any stage-level `model`.
+Replace the placeholders with an existing Horse virtual model and its matching
+renderer; ASSERT does not derive a virtual model name from a BUS snapshot.
+
+```yaml
+default_model:
+  name: horse/eval-model
+  horse:
+    model_name: "<horse-virtual-model>"
+    renderer: "<matching-renderer>"
+    top_p: 1.0
+
+pipeline:
+  systematize:
+    web_search: false
+```
+
+This is a config fragment, not a complete eval. `name` remains the model label
+in artifacts; `horse.model_name` selects the Horse virtual model.
+
+Horse fields:
+
+- `model_name` — required, non-empty Horse virtual model name
+- `renderer` — required renderer matching the virtual model
+- `top_p` — optional sampling value greater than 0 and at most 1; defaults to `1.0`
+
+`temperature` and `max_tokens` come from the surrounding model config. The client
+uses `use_horse=True`, without BUS topic, user, line, or QoS parameters. Message
+rendering and final/analysis channel extraction are shared with the BUS path.
+
+Horse does not support `target.tools`, `web_search`, or `reasoning_effort`;
+these settings are rejected rather than silently ignored. Set
+`pipeline.systematize.web_search: false` for Horse-backed behavior-category
+generation. Variation-level generation automatically omits web search for Horse
+and logs a warning; other transports retain their existing behavior.
+
+As with BUS, structured generation uses the prompt's JSON contract and the
+stage's existing output validation; the transport does not enforce JSON schemas.
+Horse routing and sampling settings are included in inference and judge resume
+fingerprints so changing them does not reuse results from a different Horse
+configuration.
 
 ## What goes where
 

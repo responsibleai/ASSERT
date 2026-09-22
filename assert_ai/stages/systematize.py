@@ -15,6 +15,7 @@ from assert_ai.config import parse_model_config, resolve_stage_paths
 from assert_ai.core.config_model import (
     DEFAULT_SYSTEMATIZE_MAX_TOKENS,
     DEFAULT_SYSTEMATIZE_TEMPERATURE,
+    HorseConfig,
 )
 from assert_ai.core.io import load_prompt_text, write_json
 from assert_ai.core.model_client import GenerateOptions, Message, generate_structured
@@ -90,6 +91,7 @@ async def run_systematize(
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
     save_dir: str | None = None,
+    horse_config: HorseConfig | None = None,
 ) -> dict[str, Any]:
     """Generate one taxonomy JSON artifact from the provided behavior text."""
     if not behavior:
@@ -117,6 +119,7 @@ async def run_systematize(
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            horse=horse_config,
         ),
     )
     taxonomy_json = response.parsed
@@ -183,6 +186,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         temperature=model_cfg.temperature,
         max_tokens=model_cfg.max_tokens or DEFAULT_SYSTEMATIZE_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
+        horse=model_cfg.horse,
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
     log.debug(f"systematize: model={model_cfg.name}, behavior_category_count={behavior_category_count}, web_search={web_search}")
@@ -204,6 +208,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         temperature=model_cfg.temperature,
         max_tokens=model_cfg.max_tokens or DEFAULT_SYSTEMATIZE_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
+        horse=model_cfg.horse,
     )
     log.info("[systematize] [2/2] Converting to structured taxonomy...")
     async with log_heartbeat("[systematize] [2/2] Converting to structured taxonomy"):

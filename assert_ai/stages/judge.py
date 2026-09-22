@@ -66,25 +66,26 @@ def _judge_config_fingerprint(
     policy_raw: dict[str, Any],
     system_prompt: str,
     inference_set_path: Path,
+    judge_horse: dict[str, Any] | None = None,
 ) -> str:
     """Deterministic hash of inputs that affect judge output."""
     inference_set_sha = hashlib.sha256(inference_set_path.read_bytes()).hexdigest()
-    key = json.dumps(
-        {
-            "judge_model": judge_model,
-            "judge_temperature": judge_temperature,
-            "judge_max_tokens": judge_max_tokens,
-            "judge_reasoning_effort": judge_reasoning_effort,
-            "judge_bus": judge_bus,
-            "judge_n": judge_n,
-            "judge_dimensions": judge_dimensions,
-            "disabled_dimensions": disabled_dimensions,
-            "taxonomy": policy_raw,
-            "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
-            "inference_set_sha": inference_set_sha,
-        },
-        sort_keys=True,
-    )
+    inputs = {
+        "judge_model": judge_model,
+        "judge_temperature": judge_temperature,
+        "judge_max_tokens": judge_max_tokens,
+        "judge_reasoning_effort": judge_reasoning_effort,
+        "judge_bus": judge_bus,
+        "judge_n": judge_n,
+        "judge_dimensions": judge_dimensions,
+        "disabled_dimensions": disabled_dimensions,
+        "taxonomy": policy_raw,
+        "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+        "inference_set_sha": inference_set_sha,
+    }
+    if judge_horse is not None:
+        inputs["judge_horse"] = judge_horse
+    key = json.dumps(inputs, sort_keys=True)
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
@@ -105,6 +106,7 @@ async def run_judge(
     judge_max_tokens = evaluation.judge.model.max_tokens
     judge_reasoning_effort = evaluation.judge.model.reasoning_effort
     judge_bus = evaluation.judge.model.bus
+    judge_horse = evaluation.judge.model.horse
     judge_n = evaluation.judge.n
     effective_judge_dimensions = (
         judge_dimensions
@@ -205,6 +207,7 @@ async def run_judge(
             response_schema=judge_contract["response_schema"],
             reasoning_effort=judge_reasoning_effort,
             bus_config=judge_bus,
+            horse_config=judge_horse,
             not_applicable_score_keys=judge_contract["not_applicable_score_keys"],
             dimension_scales=judge_contract["dimension_scales"],
         )
@@ -355,6 +358,7 @@ async def run_judge(
         judge_max_tokens=judge_max_tokens,
         judge_reasoning_effort=judge_reasoning_effort,
         judge_bus=asdict(judge_bus) if judge_bus else None,
+        judge_horse=asdict(judge_horse) if judge_horse else None,
         judge_n=judge_n,
         judge_dimensions=effective_judge_dimensions,
         disabled_dimensions=effective_disabled_dimensions,

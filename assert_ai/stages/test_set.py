@@ -22,6 +22,7 @@ from assert_ai.core.async_utils import gather_limited
 from assert_ai.core.config_model import (
     DEFAULT_GENERATION_MAX_TOKENS,
     DEFAULT_GENERATION_TEMPERATURE,
+    HorseConfig,
     TargetConfig,
 )
 from assert_ai.core.io import (
@@ -957,6 +958,7 @@ async def _generate_records(
     sampling: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
+    horse_config: HorseConfig | None = None,
 ) -> dict[str, Any]:
     """Call the LLM once per covering-array tuple and return records.
 
@@ -1026,6 +1028,7 @@ async def _generate_records(
                     temperature=temperature, max_tokens=max_tokens,
                     reasoning_effort=reasoning_effort, timeout_s=timeout_s,
                     call_label=f"test_set:{kind}:{slug}",
+                    horse=horse_config,
                 ),
             )
             payload = response.parsed
@@ -1161,6 +1164,7 @@ async def run_test_set(
                 else None
             ),
             reasoning_effort=cfg.get("reasoning_effort"),
+            horse_config=cfg.get("horse_config"),
             timeout_s=cfg.get("timeout_s"),
             tool_source=tool_source, fixed_system_prompt=fixed_system_prompt,
             context=normalized_context,
@@ -1248,6 +1252,7 @@ def _parse_kind_config(
         "temperature": model_cfg.temperature,
         "max_tokens": model_cfg.max_tokens,
         "reasoning_effort": model_cfg.reasoning_effort,
+        "horse_config": model_cfg.horse,
         "timeout_s": raw.get("timeout_s") or raw_cfg.get("timeout_s"),
         "sampling": validate_sampling_config(
             raw.get("sampling"),
@@ -1347,6 +1352,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         level_count=level_count,
         reasoning_effort=stratify_model_cfg.reasoning_effort if stratify_model_cfg is not None else None,
         temperature=stratify_model_cfg.temperature if stratify_model_cfg is not None else None,
+        horse_config=stratify_model_cfg.horse if stratify_model_cfg is not None else None,
     )
     stratification_path = Path(stratification_result["stratification_path"])
     raw_stratification = json.loads(stratification_path.read_text(encoding="utf-8"))

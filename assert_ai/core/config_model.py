@@ -74,15 +74,31 @@ class BusConfig:
 
 
 @dataclass
+class HorseConfig:
+    model_name: str
+    renderer: str
+    top_p: float = 1.0
+
+    def __post_init__(self) -> None:
+        self.model_name = _require_nonempty_string(self.model_name, field_name="model.horse.model_name")
+        self.renderer = _require_nonempty_string(self.renderer, field_name="model.horse.renderer")
+        if not 0 < self.top_p <= 1:
+            raise ValueError("model.horse.top_p must be > 0 and <= 1")
+
+
+@dataclass
 class ModelConfig:
     name: str
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
     bus: BusConfig | None = None
+    horse: HorseConfig | None = None
 
     def __post_init__(self) -> None:
         self.name = _require_nonempty_string(self.name, field_name="model.name")
+        if self.bus is not None and self.horse is not None:
+            raise ValueError("model.bus and model.horse are mutually exclusive")
         if self.max_tokens is not None and self.max_tokens <= 0:
             raise ValueError("model.max_tokens must be > 0")
         if self.reasoning_effort is not None:
@@ -91,6 +107,8 @@ class ModelConfig:
             self.reasoning_effort = self.reasoning_effort.strip()
             if not self.reasoning_effort:
                 raise ValueError("model.reasoning_effort must be a non-empty string")
+            if self.horse is not None:
+                raise ValueError("model.reasoning_effort is not supported with model.horse")
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
@@ -180,6 +198,8 @@ class TargetConfig:
             assert isinstance(self.model, ModelConfig)
             if self.model.bus is not None and self.tools is not None:
                 raise ValueError("target.tools is not supported with model.bus")
+            if self.model.horse is not None and self.tools is not None:
+                raise ValueError("target.tools is not supported with model.horse")
             model_name = self.model.name.strip().lower()
             if model_name.startswith("azure_ai/agents/"):
                 if self.tools is not None:

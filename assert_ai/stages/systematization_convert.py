@@ -175,6 +175,7 @@ async def run_systematization_to_taxonomy(
                 temperature=temperature,
                 max_tokens=model_cfg.max_tokens,
                 reasoning_effort=model_cfg.reasoning_effort,
+                horse=model_cfg.horse,
             ),
         )
         last_response = response

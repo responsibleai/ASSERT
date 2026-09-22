@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 from assert_ai.core import azure_auth
-from assert_ai.core.config_model import BusConfig
+from assert_ai.core.config_model import BusConfig, HorseConfig
 
 log = logging.getLogger(__name__)
 
@@ -261,6 +261,11 @@ class GenerateOptions:
     call_label: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     bus: BusConfig | None = None
+    horse: HorseConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.bus is not None and self.horse is not None:
+            raise ValueError("model.bus and model.horse are mutually exclusive")
 
 
 @dataclass(slots=True)
@@ -1712,24 +1717,31 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
             raise classified from exc
 
 
-async def _generate_bus(
+async def _generate_token_model(
     model: str,
     messages: str | Sequence[MessageLike],
     options: GenerateOptions,
     *,
     response_format: dict[str, Any] | None = None,
 ) -> ModelResponse:
-    if options.web_search:
-        raise ValueError("BUS model transport does not support web_search")
     bus_config = options.bus
-    if bus_config is None:
-        raise ValueError("BUS model transport requires model.bus configuration")
-    from assert_ai.core.bus_client import complete
+    horse_config = options.horse
+    if bus_config is not None and horse_config is not None:
+        raise ValueError("model.bus and model.horse are mutually exclusive")
+    config = horse_config if horse_config is not None else bus_config
+    if config is None:
+        raise ValueError("Token model transport requires model.bus or model.horse configuration")
+    transport = "horse" if horse_config is not None else "bus"
+    display_name = "Horse" if horse_config is not None else "BUS"
+    if options.web_search:
+        raise ValueError(f"{display_name} model transport does not support web_search")
+    if horse_config is not None and options.reasoning_effort is not None:
+        raise ValueError("Horse model transport does not support reasoning_effort")
 
     request_payload: dict[str, Any] = {
         "model": model,
         "messages": messages_to_openai(messages),
-        "bus": asdict(bus_config),
+        transport: asdict(config),
     }
     if options.temperature is not None:
         request_payload["temperature"] = options.temperature
@@ -1739,17 +1751,31 @@ async def _generate_bus(
         request_payload["response_format"] = response_format
     t0 = time.monotonic()
     try:
-        raw_response = await _await_with_timeout(
-            complete(
+        if horse_config is not None:
+            from assert_ai.core.horse_client import complete as horse_complete
+
+            completion = horse_complete(
+                request_payload["messages"],
+                config=horse_config,
+                max_tokens=options.max_tokens or options.max_output_tokens,
+                temperature=options.temperature,
+            )
+        else:
+            from assert_ai.core.bus_client import complete as bus_complete
+
+            assert bus_config is not None
+            completion = bus_complete(
                 request_payload["messages"],
                 config=bus_config,
                 max_tokens=options.max_tokens or options.max_output_tokens,
                 temperature=options.temperature,
-            ),
+            )
+        raw_response = await _await_with_timeout(
+            completion,
             timeout_s=options.timeout_s,
         )
     except Exception as exc:
-        raise LLMProviderError(f"BUS completion failed for {model}: {exc}") from exc
+        raise LLMProviderError(f"{display_name} completion failed for {model}: {exc}") from exc
     result = ModelResponse(
         text=raw_response.text,
         content=raw_response.text,
@@ -1757,11 +1783,11 @@ async def _generate_bus(
         reasoning=raw_response.reasoning,
         finish_reason=raw_response.finish_reason,
         model=model,
-        api_mode="bus",
+        api_mode=transport,
         request_payload=request_payload,
         raw=raw_response.raw,
     )
-    _log_response("generate_bus", model, result, time.monotonic() - t0)
+    _log_response(f"generate_{transport}", model, result, time.monotonic() - t0)
     _record_usage(UsageStats(), model=model)
     return result
 
@@ -1773,8 +1799,8 @@ async def generate(
 ) -> ModelResponse:
     """Run a standard async text generation call."""
     resolved_options = options or GenerateOptions()
-    if resolved_options.bus is not None:
-        return await _generate_bus(model, messages, resolved_options)
+    if resolved_options.bus is not None or resolved_options.horse is not None:
+        return await _generate_token_model(model, messages, resolved_options)
     # Proactive degradation: if the Chat-Completions fallback is already
     # active for this run (another task tripped it, or the user opted in
     # via ASSERT_PREFER_CHAT_COMPLETIONS), drop web_search up front —
@@ -1852,8 +1878,8 @@ async def generate_structured(
 ) -> ModelResponse:
     """Run a structured generation call constrained by a JSON schema."""
     resolved_options = options or GenerateOptions()
-    if resolved_options.bus is not None:
-        return await _generate_bus(
+    if resolved_options.bus is not None or resolved_options.horse is not None:
+        return await _generate_token_model(
             model,
             messages,
             resolved_options,
@@ -1941,6 +1967,8 @@ async def generate_with_tools(
     resolved_options = options or GenerateOptions()
     if resolved_options.bus is not None:
         raise ValueError("BUS model transport does not support target.tools")
+    if resolved_options.horse is not None:
+        raise ValueError("Horse model transport does not support target.tools")
     t0 = time.monotonic()
     payload = _build_chat_payload(model, messages, resolved_options)
     payload["tools"] = tools

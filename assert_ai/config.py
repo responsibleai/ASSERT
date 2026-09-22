@@ -24,6 +24,7 @@ from assert_ai.core.config_model import (
     DEFAULT_INFERENCE_MAX_TOKENS,
     DEFAULT_INFERENCE_TEMPERATURE,
     BusConfig,
+    HorseConfig,
     TesterConfig,
     EvaluationConfig,
     JudgeConfig,
@@ -419,7 +420,7 @@ def parse_model_config(
     reject_unknown_keys(
         raw,
         field_name=field_name,
-        allowed={"name", "temperature", "max_tokens", "reasoning_effort", "bus"},
+        allowed={"name", "temperature", "max_tokens", "reasoning_effort", "bus", "horse"},
     )
     name = _optional_str(raw.get("name"), field_name=f"{field_name}.name")
     if not name:
@@ -440,12 +441,14 @@ def parse_model_config(
     if "reasoning_effort" in raw and reasoning_effort_raw is not None and reasoning_effort is None:
         raise ValueError(f"{field_name}.reasoning_effort must be a non-empty string")
     bus = parse_bus_config(raw["bus"], field_name=f"{field_name}.bus") if "bus" in raw else None
+    horse = parse_horse_config(raw["horse"], field_name=f"{field_name}.horse") if "horse" in raw else None
     return ModelConfig(
         name=name,
         temperature=temperature if temperature is not None else default_temperature,
         max_tokens=max_tokens if max_tokens is not None else default_max_tokens,
         reasoning_effort=reasoning_effort,
         bus=bus,
+        horse=horse,
     )
 
 
@@ -473,6 +476,28 @@ def parse_bus_config(raw: Any, *, field_name: str) -> BusConfig:
         user=user,
         renderer=renderer,
         bus_line=bus_line or "bus",
+        top_p=top_p if top_p is not None else 1.0,
+    )
+
+
+def parse_horse_config(raw: Any, *, field_name: str) -> HorseConfig:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    reject_unknown_keys(
+        raw,
+        field_name=field_name,
+        allowed={"model_name", "renderer", "top_p"},
+    )
+    model_name = _optional_str(raw.get("model_name"), field_name=f"{field_name}.model_name")
+    renderer = _optional_str(raw.get("renderer"), field_name=f"{field_name}.renderer")
+    top_p = _optional_float(raw.get("top_p"), field_name=f"{field_name}.top_p")
+    if not model_name:
+        raise ValueError(f"{field_name}.model_name is required")
+    if not renderer:
+        raise ValueError(f"{field_name}.renderer is required")
+    return HorseConfig(
+        model_name=model_name,
+        renderer=renderer,
         top_p=top_p if top_p is not None else 1.0,
     )
 
