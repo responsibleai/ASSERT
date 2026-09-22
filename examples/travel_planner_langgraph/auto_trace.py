@@ -3,7 +3,7 @@
 
 """OpenInference auto-instrumentation for the LangGraph travel planner.
 
-Central helper installs available OpenInference instrumentors without starting
+Central helper activates installed OpenInference instrumentors without starting
 Phoenix unless a collector is configured or reachable.
 """
 

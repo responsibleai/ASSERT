@@ -1,0 +1,4 @@
+langchain-core>=1.6.0
+langchain-openai>=1.6.0
+langgraph>=1.2.11
+openinference-instrumentation-langchain>=0.1.62

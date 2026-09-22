@@ -4,7 +4,7 @@ run: aad-smoke-1
 # (Managed Identity / az login) instead of a static AZURE_API_KEY.
 #
 # Setup (see ./README.md for the full walkthrough):
-#   pip install -e ".[azure-aad]"
+#   pip install -e ".[azure-auth]"
 #   az login                              # or attach a managed identity
 #   export ASSERT_AZURE_USE_AAD=1
 #   export AZURE_API_BASE=https://<your-resource>.openai.azure.com/

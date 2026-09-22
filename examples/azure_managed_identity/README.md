@@ -5,7 +5,7 @@ A minimal end-to-end eval that proves ASSERT can call Azure OpenAI using
 a static `AZURE_API_KEY`. The eval itself is intentionally tiny — its purpose
 is to validate the AAD auth wiring on a real Azure OpenAI deployment.
 
-> **TL;DR:** install the `azure-aad` extra, grant the caller the
+> **TL;DR:** install the `azure-auth` extra, grant the caller the
 > *Cognitive Services OpenAI User* role on the target resource, set
 > `ASSERT_AZURE_USE_AAD=1`, and run the example. No code changes required.
 
@@ -24,10 +24,10 @@ is to validate the AAD auth wiring on a real Azure OpenAI deployment.
 python -m venv .venv
 source .venv/bin/activate           # PowerShell: .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[azure-aad]"
+python -m pip install -e ".[azure-auth]"
 ```
 
-The `azure-aad` extra pulls in `azure-identity` so ASSERT can mint bearer
+The `azure-auth` extra pulls in `azure-identity` so ASSERT can mint bearer
 tokens through `DefaultAzureCredential`.
 
 ## Configure
@@ -71,10 +71,10 @@ artifacts/results/azure-mi-auth-demo/aad-smoke-1/
 If the wiring is wrong you will see one of these instead:
 
 - `LLMAuthError: ... azure-identity package is not installed` → run
-  `pip install -e ".[azure-aad]"`.
+  `pip install -e ".[azure-auth]"`.
 - `401` with a hint about *Cognitive Services OpenAI User* → the credential
   resolved but RBAC is missing on the resource.
-- `401` with a hint to install the `azure-aad` extra → you are in opportunistic
+- `401` with a hint to install the `azure-auth` extra → you are in opportunistic
   fallback mode without `azure-identity`. Install the extra or set
   `AZURE_API_KEY`.
 

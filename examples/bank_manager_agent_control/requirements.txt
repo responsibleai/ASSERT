@@ -1,0 +1,8 @@
+fastapi>=0.141.1
+langchain-core>=1.6.0
+langchain-mcp-adapters>=0.3.2
+langchain-openai>=1.6.0
+langgraph>=1.2.11
+mcp>=1.29.1
+openinference-instrumentation-langchain>=0.1.62
+uvicorn>=0.46.0

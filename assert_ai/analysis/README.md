@@ -37,4 +37,4 @@ The summary answers four questions about a suite of evaluation runs:
 
 ## Dependencies
 
-`stats.py` requires numpy (for example, install the analysis extras with `python -m pip install -e ".[analysis]"`). The other modules use only the standard library.
+`stats.py` requires NumPy (install `assert-ai[analysis]`). Local Hugging Face embeddings in `test_set_metrics.py` additionally require `assert-ai[embeddings]`; the OpenAI embedding backend only needs `analysis`. The other modules use only the standard library.

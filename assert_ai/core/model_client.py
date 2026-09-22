@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -159,40 +160,74 @@ class UsageAccumulator:
     invokes more than one model (e.g. test_set + stratification) can be inspected later.
     """
 
+    requests: int = 0
     calls: int = 0
+    missing_usage_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    total_tokens: int = 0
     cached_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     per_model: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def add(self, usage: UsageStats | None, *, model: str | None = None) -> None:
         """Fold one call's normalized usage into this accumulator."""
-        if usage is None:
-            return
-        self.calls += 1
-        ipt = int(usage.prompt_tokens or 0)
-        opt = int(usage.completion_tokens or 0)
-        cit = int(usage.cached_input_tokens or 0)
-        cct = int(usage.cache_creation_input_tokens or 0)
-        self.input_tokens += ipt
-        self.output_tokens += opt
-        self.cached_input_tokens += cit
-        self.cache_creation_input_tokens += cct
         key = model or "?"
         bucket = self.per_model.setdefault(
             key,
             {
+                "requests": 0,
                 "calls": 0,
+                "missing_usage_calls": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "total_tokens": 0,
                 "cached_input_tokens": 0,
                 "cache_creation_input_tokens": 0,
             },
         )
-        bucket["calls"] += 1
+        self.requests += 1
+        bucket["requests"] += 1
+        if usage is None:
+            self.missing_usage_calls += 1
+            bucket["missing_usage_calls"] += 1
+            return
+        ipt = int(usage.prompt_tokens or 0)
+        opt = int(usage.completion_tokens or 0)
+        reported_total = (
+            int(usage.total_tokens)
+            if usage.total_tokens is not None
+            else None
+        )
+        total = (
+            reported_total
+            if reported_total is not None and reported_total > 0
+            else ipt + opt
+        )
+        cit = int(usage.cached_input_tokens or 0)
+        cct = int(usage.cache_creation_input_tokens or 0)
+        usage_complete = (
+            (reported_total is not None and reported_total > 0)
+            or (
+                usage.prompt_tokens is not None
+                and usage.completion_tokens is not None
+                and (ipt > 0 or opt > 0)
+            )
+        )
+        if not usage_complete:
+            self.missing_usage_calls += 1
+            bucket["missing_usage_calls"] += 1
+        else:
+            self.calls += 1
+            bucket["calls"] += 1
+        self.input_tokens += ipt
+        self.output_tokens += opt
+        self.total_tokens += total
+        self.cached_input_tokens += cit
+        self.cache_creation_input_tokens += cct
         bucket["input_tokens"] += ipt
         bucket["output_tokens"] += opt
+        bucket["total_tokens"] += total
         bucket["cached_input_tokens"] += cit
         bucket["cache_creation_input_tokens"] += cct
 
@@ -205,9 +240,17 @@ class UsageAccumulator:
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable snapshot of this accumulator."""
         return {
+            "requests": self.requests,
             "calls": self.calls,
+            "missing_usage_calls": self.missing_usage_calls,
+            "usage_coverage": (
+                self.calls / self.requests
+                if self.requests > 0
+                else 0.0
+            ),
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
             "cached_input_tokens": self.cached_input_tokens,
             "cache_creation_input_tokens": self.cache_creation_input_tokens,
             "cache_hit_rate": self.cache_hit_rate(),
@@ -439,7 +482,7 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
             raise LLMAuthError(
                 "Azure managed-identity auth is active but the "
                 "azure-identity package is not installed. Install it "
-                "with `pip install 'assert-ai[azure-aad]'`, or set "
+                "with `pip install 'assert-ai[azure-auth]'`, or set "
                 "AZURE_API_KEY to use API-key auth."
             )
         # aad-fallback path: silently skip — LiteLLM's own auth error
@@ -834,6 +877,130 @@ def _get_litellm_module() -> Any:
     return _LITELLM_MODULE
 
 
+def estimate_token_count(
+    model: str,
+    *,
+    text: str | list[str] | None = None,
+    messages: str | Sequence[MessageLike] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> int:
+    """Estimate request tokens locally with LiteLLM's model-aware tokenizer.
+
+    Exactly one of ``text`` or ``messages`` must be supplied. When LiteLLM
+    cannot resolve a tokenizer for a provider/model pair, fall back to the
+    conventional four-characters-per-token approximation so preflight
+    estimation never requires a provider call.
+    """
+    if (text is None) == (messages is None):
+        raise ValueError("provide exactly one of text or messages")
+
+    normalized_messages = (
+        messages_to_openai(messages)
+        if messages is not None
+        else None
+    )
+    tokenizer_model = _tokenizer_model_name(model)
+    if tokenizer_model is None:
+        return _fallback_token_count(
+            text=text,
+            messages=normalized_messages,
+            tools=tools,
+        )
+    litellm = _get_litellm_module()
+    try:
+        value = litellm.token_counter(
+            model=tokenizer_model,
+            text=text,
+            messages=normalized_messages,
+            tools=tools,
+        )
+        return max(0, int(value))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return _fallback_token_count(
+            text=text,
+            messages=normalized_messages,
+            tools=tools,
+        )
+
+
+def _tokenizer_model_name(model: str) -> str | None:
+    """Map LiteLLM route names to a tokenizer model without silent fallback."""
+    normalized = (model or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized.startswith("azure_ai/agents/"):
+        return None
+    candidate = normalized.rsplit("/", 1)[-1]
+    gpt5_match = re.fullmatch(
+        r"gpt-5(?:\.\d+)?(?:-(mini|nano|pro|codex))?"
+        r"(?:-\d{4}-\d{2}-\d{2})?",
+        candidate,
+    )
+    if gpt5_match:
+        variant = gpt5_match.group(1)
+        if variant == "nano":
+            return "gpt-5-nano"
+        if variant == "mini":
+            return "gpt-5-mini"
+        return "gpt-5"
+    if re.fullmatch(
+        r"(?:gpt-3\.5|gpt-35)-turbo(?:-(?:\d{4}|16k))?",
+        candidate,
+    ):
+        return "gpt-3.5-turbo"
+    gpt4o_match = re.fullmatch(
+        r"gpt-4o(-mini)?(?:-\d{4}-\d{2}-\d{2})?",
+        candidate,
+    )
+    if gpt4o_match:
+        return "gpt-4o-mini" if gpt4o_match.group(1) else "gpt-4o"
+    gpt41_match = re.fullmatch(
+        r"gpt-4\.1(-mini|-nano)?(?:-\d{4}-\d{2}-\d{2})?",
+        candidate,
+    )
+    if gpt41_match:
+        return f"gpt-4.1{gpt41_match.group(1) or ''}"
+    if re.fullmatch(
+        r"gpt-4(?:-(?:\d{4}(?:-preview)?|turbo(?:-preview)?))?",
+        candidate,
+    ):
+        return "gpt-4"
+    known_patterns = (
+        r"o(?:1|3|4)(?:-(?:mini|preview|pro))?(?:-\d{4}-\d{2}-\d{2})?",
+        r"claude-(?:\d+(?:-\d+)*-(?:opus|sonnet|haiku)|"
+        r"(?:opus|sonnet|haiku)-\d+(?:-\d+)*)(?:-\d{8})?",
+        r"gemini-(?:1\.0|1\.5|2\.0|2\.5|3(?:\.\d+)?)-"
+        r"(?:pro|flash|flash-lite)(?:-(?:latest|preview(?:-\d{2}-\d{2})?))?",
+        r"text-embedding-(?:ada-002|3-small|3-large)",
+    )
+    if any(re.fullmatch(pattern, candidate) for pattern in known_patterns):
+        return candidate
+    return None
+
+
+def _fallback_token_count(
+    *,
+    text: str | list[str] | None,
+    messages: list[dict[str, Any]] | None,
+    tools: list[dict[str, Any]] | None,
+) -> int:
+    if text is not None:
+        serialized = "\n".join(text) if isinstance(text, list) else text
+    else:
+        serialized = json.dumps(
+            messages,
+            ensure_ascii=False,
+            default=str,
+        )
+    if tools:
+        serialized += json.dumps(
+            tools,
+            ensure_ascii=False,
+            default=str,
+        )
+    return max(1, (len(serialized) + 3) // 4)
+
+
 async def _await_with_timeout(awaitable: Any, *, timeout_s: float | None) -> Any:
     if timeout_s is None:
         return await awaitable
@@ -902,6 +1069,22 @@ _force_chat_completions: bool = False
 
 _responses_api_guard_installed: bool = False
 """Set to True after the bridge-check monkey-patch has been installed."""
+
+
+def chat_completions_fallback_active() -> bool:
+    """Whether this process has fallen back off the Responses API.
+
+    Callers that composed a prompt claiming live web research is available
+    must consult this before trusting that claim: once the fallback is
+    active there is no Responses API call, so there is no ``web_search``
+    tool and no retrieved page to cite. Prompts that keep demanding
+    citations after this returns True invite fabricated URLs.
+
+    Note this is sticky and can flip mid-run, so a prompt built while it
+    was False may still outlive the capability it advertised. Prompt text
+    must therefore be safe in both states rather than only checking once.
+    """
+    return _force_chat_completions
 
 
 def _install_responses_api_guard() -> None:
@@ -1086,14 +1269,14 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
                         "a manually-minted token (`az account "
                         "get-access-token --resource https://ai.azure.com`), "
                         "or install Azure AD support with "
-                        "`pip install 'assert-ai[azure-aad]'`."
+                        "`pip install 'assert-ai[azure-auth]'`."
                     )
                 else:
                     msg += (
                         "\nNo AZURE_API_KEY is set and azure-identity is not "
                         "installed. Either export AZURE_API_KEY, or install "
                         "Azure AD support with "
-                        "`pip install 'assert-ai[azure-aad]'`."
+                        "`pip install 'assert-ai[azure-auth]'`."
                     )
             elif _model_family(model) == "azure_ai":
                 msg += (
@@ -1226,7 +1409,7 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
                 hint = (
                     "Azure AI Foundry rejected the call because no bearer "
                     "token was supplied. Install Azure AD support with "
-                    "`pip install 'assert-ai[azure-aad]'` and run "
+                    "`pip install 'assert-ai[azure-auth]'` and run "
                     "`az login`, or export AZURE_AI_API_KEY with a "
                     "manually-minted token (`az account get-access-token "
                     "--resource https://ai.azure.com`)."
@@ -1266,8 +1449,12 @@ def _normalize_usage(raw_usage: Any) -> UsageStats | None:
         return None
     # Chat Completions API uses prompt_tokens/completion_tokens;
     # Responses API uses input_tokens/output_tokens.
-    prompt = _coerce_int(_get_value(raw_usage, "prompt_tokens")) or _coerce_int(_get_value(raw_usage, "input_tokens"))
-    completion = _coerce_int(_get_value(raw_usage, "completion_tokens")) or _coerce_int(_get_value(raw_usage, "output_tokens"))
+    prompt = _coerce_int(_get_value(raw_usage, "prompt_tokens"))
+    if prompt is None:
+        prompt = _coerce_int(_get_value(raw_usage, "input_tokens"))
+    completion = _coerce_int(_get_value(raw_usage, "completion_tokens"))
+    if completion is None:
+        completion = _coerce_int(_get_value(raw_usage, "output_tokens"))
     total = _coerce_int(_get_value(raw_usage, "total_tokens"))
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
@@ -1850,6 +2037,7 @@ async def generate(
         # closure without the web_search tool. Re-issue the call here
         # via Chat Completions without web grounding.
         if not resolved_options.web_search:
+            _record_usage(None, model=model)
             raise
         return await generate(
             model, messages,
@@ -1858,11 +2046,18 @@ async def generate(
                 reason="Responses API not available in this region",
             ),
         )
-    result = normalize_response(
-        raw_response,
-        api_mode="responses" if resolved_options.web_search else "chat_completion",
-        request_payload=payload,
-    )
+    except Exception:
+        _record_usage(None, model=model)
+        raise
+    try:
+        result = normalize_response(
+            raw_response,
+            api_mode="responses" if resolved_options.web_search else "chat_completion",
+            request_payload=payload,
+        )
+    except Exception:
+        _record_usage(None, model=model)
+        raise
     _log_response("generate", model, result, time.monotonic() - t0, api_mode=api_mode)
     _record_usage(result.usage, model=model)
     return result
@@ -1937,6 +2132,7 @@ async def generate_structured(
     except _ResponsesApiNotAvailableError:
         # Reactive degradation: see ``generate`` for the rationale.
         if not resolved_options.web_search:
+            _record_usage(None, model=model)
             raise
         return await generate_structured(
             model, messages,
@@ -1946,11 +2142,18 @@ async def generate_structured(
                 reason="Responses API not available in this region",
             ),
         )
-    result = normalize_response(
-        raw_response,
-        api_mode="responses" if resolved_options.web_search else "chat_completion",
-        request_payload=payload,
-    )
+    except Exception:
+        _record_usage(None, model=model)
+        raise
+    try:
+        result = normalize_response(
+            raw_response,
+            api_mode="responses" if resolved_options.web_search else "chat_completion",
+            request_payload=payload,
+        )
+    except Exception:
+        _record_usage(None, model=model)
+        raise
     _log_response("generate_structured", model, result, time.monotonic() - t0, api_mode=api_mode, schema=schema_name)
     _record_usage(result.usage, model=model)
     return result
@@ -1983,12 +2186,20 @@ async def generate_with_tools(
             timeout_s=resolved_options.timeout_s,
         )
 
-    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
-    result = normalize_response(
-        raw_response,
-        api_mode="chat_completion",
-        request_payload=payload,
-    )
+    try:
+        raw_response = await _with_retries(
+            _call,
+            model=model,
+            label=resolved_options.call_label,
+        )
+        result = normalize_response(
+            raw_response,
+            api_mode="chat_completion",
+            request_payload=payload,
+        )
+    except Exception:
+        _record_usage(None, model=model)
+        raise
     _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
     _record_usage(result.usage, model=model)
     return result

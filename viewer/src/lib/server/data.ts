@@ -7,6 +7,7 @@ import { loadDimensions } from './dimensions.js';
 import {
 	RUN_CONFIG_FILE,
 	RUN_MANIFEST_FILE,
+	RUN_METRICS_FILE,
 	ViewerReadModelError,
 	loadIndexedRunScoreRow,
 	loadIndexedRunTranscriptRow,
@@ -61,6 +62,11 @@ import type {
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
+	TokenActualUsageView,
+	TokenEstimateAccuracyView,
+	TokenEstimateView,
+	TokenStageEstimateView,
+	TokenUsageView,
 	Behavior,
 	ViewerResultItem
 } from '$lib/types.js';
@@ -109,7 +115,7 @@ interface CompareDimensionSummary {
 interface CompareRunSummary {
 	run_id: string;
 	display_name: string;
-	model: string;
+	target: string;
 	judge_model: string;
 	date: string;
 	total: number;
@@ -142,6 +148,178 @@ function hasKind(row: Record<string, unknown>, expected: 'prompt' | 'scenario'):
 function readObject(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === 'object' && !Array.isArray(value)
 		? (value as Record<string, unknown>)
+		: null;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readNonNegativeNumber(value: unknown): number | null {
+	const parsed = readFiniteNumber(value);
+	return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function readInteger(value: unknown): number | null {
+	const parsed = readFiniteNumber(value);
+	return parsed === null ? null : Math.trunc(parsed);
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+	const parsed = readNonNegativeNumber(value);
+	return parsed !== null ? Math.trunc(parsed) : null;
+}
+
+function normalizeTokenStageEstimate(value: unknown): TokenStageEstimateView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	if (
+		![record.calls, record.input_tokens, record.output_tokens, record.total_tokens].some(
+			(value) => readNonNegativeInteger(value) !== null
+		)
+	) return null;
+	const calls = readNonNegativeInteger(record.calls) ?? 0;
+	const inputTokens = readNonNegativeInteger(record.input_tokens) ?? 0;
+	const outputTokens = readNonNegativeInteger(record.output_tokens) ?? 0;
+	const totalTokens = readNonNegativeInteger(record.total_tokens) ?? inputTokens + outputTokens;
+	return { calls, inputTokens, outputTokens, totalTokens };
+}
+
+function normalizeTokenEstimate(value: unknown): TokenEstimateView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	const notes = Array.isArray(record.notes)
+		? record.notes.filter((note): note is string => typeof note === 'string')
+			.map((note) => note.trim()).filter(Boolean)
+		: [];
+	const aggregate = normalizeTokenStageEstimate(record) ??
+		(notes.length > 0 ? { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 } : null);
+	if (!aggregate) return null;
+
+	const stages: Record<string, TokenStageEstimateView> = {};
+	for (const [name, stageValue] of Object.entries(readObject(record.stages) ?? {})) {
+		const stage = normalizeTokenStageEstimate(stageValue);
+		if (stage) stages[name] = stage;
+	}
+
+	return {
+		...aggregate,
+		lowerBoundTokens:
+			readNonNegativeInteger(record.lower_bound_tokens) ?? aggregate.totalTokens,
+		upperBoundTokens:
+			readNonNegativeInteger(record.upper_bound_tokens) ?? aggregate.totalTokens,
+		stages,
+		notes
+	};
+}
+
+function normalizeActualTokenUsage(
+	value: unknown,
+	{ preserveZero = false }: { preserveZero?: boolean } = {}
+): TokenActualUsageView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	const requests = readNonNegativeInteger(record.requests) ?? 0;
+	const calls = readNonNegativeInteger(record.calls) ?? 0;
+	const missingUsageCalls = readNonNegativeInteger(record.missing_usage_calls) ?? 0;
+	const inputTokens = readNonNegativeInteger(record.input_tokens) ?? 0;
+	const outputTokens = readNonNegativeInteger(record.output_tokens) ?? 0;
+	const totalTokens = readNonNegativeInteger(record.total_tokens) ?? inputTokens + outputTokens;
+	const cachedInputTokens = readNonNegativeInteger(record.cached_input_tokens) ?? 0;
+	const cacheCreationInputTokens =
+		readNonNegativeInteger(record.cache_creation_input_tokens) ?? 0;
+	if (
+		!preserveZero &&
+		requests === 0 &&
+		calls === 0 &&
+		inputTokens === 0 &&
+		outputTokens === 0 &&
+		totalTokens === 0
+	) {
+		return null;
+	}
+	return {
+		requests,
+		calls,
+		missingUsageCalls,
+		inputTokens,
+		outputTokens,
+		totalTokens,
+		cachedInputTokens,
+		cacheCreationInputTokens,
+		cacheHitRate:
+			readNonNegativeNumber(record.cache_hit_rate) ??
+			(inputTokens > 0 ? cachedInputTokens / inputTokens : 0),
+		usageCoverage:
+			readNonNegativeNumber(record.usage_coverage) ??
+			(requests > 0 ? calls / requests : 0)
+	};
+}
+
+function normalizeTokenEstimateAccuracy(value: unknown): TokenEstimateAccuracyView | null {
+	const record = readObject(value);
+	if (!record) return null;
+	if (record.status === 'available' || record.status === undefined) {
+		const actualTotalTokens = readNonNegativeInteger(record.actual_total_tokens);
+		const estimatedTotalTokens = readNonNegativeInteger(record.estimated_total_tokens);
+		const differenceTokens = readInteger(record.difference_tokens);
+		const differenceRatio = readFiniteNumber(record.difference_ratio);
+		const absolutePercentageError = readNonNegativeNumber(record.absolute_percentage_error);
+		if (
+			actualTotalTokens === null ||
+			estimatedTotalTokens === null ||
+			differenceTokens === null ||
+			differenceRatio === null ||
+			absolutePercentageError === null
+		) {
+			return null;
+		}
+		return {
+			status: 'available',
+			actualTotalTokens,
+			estimatedTotalTokens,
+			differenceTokens,
+			differenceRatio,
+			absolutePercentageError
+		};
+	}
+	if (record.status === 'unavailable') {
+		return {
+			status: 'unavailable',
+			reason: typeof record.reason === 'string' ? record.reason : 'unknown',
+			usageCoverage: readNonNegativeNumber(record.usage_coverage)
+		};
+	}
+	return null;
+}
+
+function loadRunTokenUsage(suiteId: string, runId: string): TokenUsageView | null {
+	const payload = readJsonFile<Record<string, unknown>>(
+		`${runDirPath(suiteId, runId)}/${RUN_METRICS_FILE}`,
+		{ missingOk: true }
+	);
+	if (!payload) return null;
+	const estimate = normalizeTokenEstimate(payload.token_estimate);
+	const actual = normalizeActualTokenUsage(payload.totals);
+	const hasInvocation = Object.prototype.hasOwnProperty.call(payload, 'invocation');
+	const invocation = readObject(payload.invocation);
+	const invocationActual = normalizeActualTokenUsage(invocation?.totals, {
+		preserveZero: hasInvocation
+	});
+	const estimateScope =
+		payload.token_estimate_scope === 'current_invocation' ||
+		payload.token_estimate_scope === 'prior_invocation'
+			? payload.token_estimate_scope
+			: null;
+	const estimateActual =
+		estimateScope === 'prior_invocation'
+			? null
+			: hasInvocation
+				? invocationActual
+				: actual;
+	const accuracy = normalizeTokenEstimateAccuracy(payload.token_estimate_accuracy);
+	return estimate || actual || invocationActual
+		? { estimate, estimateScope, actual, invocationActual, estimateActual, accuracy }
 		: null;
 }
 
@@ -954,7 +1132,7 @@ function buildCompareRunSummary(
 	return {
 		run_id: runId,
 		display_name: runId,
-		model: metrics.target,
+		target: metrics.target,
 		judge_model: metrics.judge_model,
 		date: formatRunDate(manifest),
 		total: metrics.total,
@@ -1351,6 +1529,7 @@ function loadCompletedRunPageData(
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
 	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
 	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
+	const tokenUsage = loadRunTokenUsage(suiteId, runId);
 
 	return {
 		suite_id: suiteId,
@@ -1371,7 +1550,8 @@ function loadCompletedRunPageData(
 		dimensionDefs: loadDimensions(),
 		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
 		metrics: toPromptMetricView(promptMetrics),
-		auditMetrics: toAuditMetricView(auditMetrics)
+		auditMetrics: toAuditMetricView(auditMetrics),
+		tokenUsage
 	};
 }
 
@@ -1415,8 +1595,15 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		resolvedTab === 'audit' && auditScores.length === 0
 			? buildInferencePreviewRowsFromSnapshot(runSnapshot)
 			: [];
+	const tokenUsage = loadRunTokenUsage(suiteId, runId);
 
-	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && inferencePreviewRows.length === 0) {
+	if (
+		!runSnapshot.manifest &&
+		promptCount === 0 &&
+		auditCount === 0 &&
+		inferencePreviewRows.length === 0 &&
+		!tokenUsage
+	) {
 		return null;
 	}
 
@@ -1445,7 +1632,8 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		dimensionDefs: loadDimensions(),
 		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
 		metrics: toPromptMetricView(promptMetrics),
-		auditMetrics: toAuditMetricView(auditMetrics)
+		auditMetrics: toAuditMetricView(auditMetrics),
+		tokenUsage
 	};
 }
 
@@ -1518,21 +1706,38 @@ function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, see
 	);
 }
 
+function withDrawerPermissibilitySplit(
+	suiteId: string,
+	runId: string,
+	item: ViewerResultItem | null
+): ViewerResultItem | null {
+	if (!item) return null;
+	const taxonomy =
+		loadRunJudgeTaxonomyForRun(suiteId, runId) ?? loadSuiteSnapshot(suiteId)?.taxonomy;
+	return applyPermissibilitySplit([item], taxonomy?.behavior_categories)[0];
+}
+
 export async function loadPromptDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
+			return withDrawerPermissibilitySplit(
+				suiteId, runId, loadPromptDrawerItemFromReadModel(suiteId, runId, seedId)
+			);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
 	}
-	return loadPromptDrawerItemFromCanonical(suiteId, runId, seedId);
+	return withDrawerPermissibilitySplit(
+		suiteId, runId, await loadPromptDrawerItemFromCanonical(suiteId, runId, seedId)
+	);
 }
 
 export async function loadScenarioDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
+			return withDrawerPermissibilitySplit(
+				suiteId, runId, loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId)
+			);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
@@ -1547,7 +1752,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 
 	const runtimeMode = loadRuntimeModeForRun(suiteId, runId);
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
-	return buildScenarioDrawerItem(
+	const item = buildScenarioDrawerItem(
 		runtimeMode,
 		transcriptRow,
 		matchedScoreRow ?? undefined,
@@ -1557,6 +1762,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 			matchedScoreRow ? [buildAuditScoreRow(runtimeMode, matchedScoreRow, transcriptRow)] : []
 		)
 	);
+	return withDrawerPermissibilitySplit(suiteId, runId, item);
 }
 
 export function loadComparePageData(

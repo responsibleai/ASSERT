@@ -35,6 +35,19 @@ JUDGE_SYSTEM_PROMPT = load_prompt_text("judge_system.md")
 
 _JUDGE_CONFIG_HASH_FILE = ".judge_config_hash"
 
+
+def _register_usage_merge(
+    state: dict[str, Any] | None,
+    mode: str,
+) -> None:
+    if state is None:
+        return
+    state["_usage_merge_mode"] = mode
+    merge_modes = state.get("_usage_merge_modes")
+    if isinstance(merge_modes, dict):
+        merge_modes["judge"] = mode
+
+
 # Stop reasons that indicate the inference run never produced a meaningful
 # target response to judge. Scoring these would either burn judge tokens on
 # empty transcripts or produce unreliable verdicts the rates would have to
@@ -99,6 +112,7 @@ async def run_judge(
     disabled_dimensions: list[str] | None = None,
     forced: bool = False,
     heartbeat: Any = None,
+    usage_merge_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score inference rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
@@ -352,6 +366,7 @@ async def run_judge(
     # if the judge configuration and inference-set file hasn't changed since the
     # last run.
     completed_keys: set[tuple[str, str]] = set()
+    usage_merge = "replace"
     config_hash = _judge_config_fingerprint(
         judge_model=judge_model,
         judge_temperature=judge_temperature,
@@ -375,6 +390,7 @@ async def run_judge(
             # inference rows may produce byte-identical scores under stable
             # judge config, which would otherwise leave the cache intact.
             scores_path.unlink()
+            _register_usage_merge(usage_merge_state, "replace")
         else:
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
@@ -382,16 +398,20 @@ async def run_judge(
                     f"Judge config or inference set changed since last run - discarding {scores_path} and starting fresh"
                 )
                 scores_path.unlink()
+                _register_usage_merge(usage_merge_state, "replace")
             else:
                 for prior in load_jsonl(scores_path):
                     sid = prior.get("test_case_id")
                     if sid:
                         completed_keys.add((str(prior.get("type") or ""), str(sid)))
+                if completed_keys:
+                    usage_merge = "accumulate"
     if completed_keys:
         log.info(
             f"Resuming judge: {len(completed_keys)} inference rows already scored, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
+    _register_usage_merge(usage_merge_state, usage_merge)
 
     pending = [
         (i, row) for i, row in enumerate(rows)
@@ -492,6 +512,7 @@ async def run_judge(
         "count": len(completed_keys) + written_rows,
         "new_count": written_rows,
         "cached_count": len(completed_keys),
+        "usage_merge": usage_merge,
         "judge_failures": judge_failures,
         # Errored rows are NOT written to scores.jsonl so that re-running
         # the stage will pick them up via the existing resume logic and
@@ -527,6 +548,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         disabled_dimensions=disabled_dimensions,
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
+        usage_merge_state=ctx,
     )
     return {
         "scores_path": result["scores_path"],
@@ -541,4 +563,5 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
             # cache hit would silently reuse the smaller file.
             "errored_count": int(result.get("errored_count", 0) or 0),
         },
+        "_usage_merge": result.get("usage_merge", "replace"),
     }

@@ -1,4 +1,7 @@
 langchain-azure-ai[hosting]>=1.2.4
+# Required transitively by langchain-azure-ai; declaring the prerelease makes
+# this file resolvable by uv as well as pip.
+azure-ai-contentunderstanding>=1.2.0b2
 azure-ai-projects
 azure-identity
 langchain

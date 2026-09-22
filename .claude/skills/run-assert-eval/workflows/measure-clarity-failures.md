@@ -123,40 +123,43 @@ runs**.
 
 ## Step 3 — Confirm scope, then generate one config per selected behavior
 
-For **each** selected behavior, produce its **own** flat config:
-`evals/<atomic_behavior>.yaml`. Use a clear snake_case filename. Never bundle.
+For **each** selected behavior, produce its **own** config in its own isolated
+directory: `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml`. Use a clear snake_case
+slug. Never bundle.
 
-Config generation, in order of preference:
+**Config generation is owned by
+[`research-eval-dimensions.md`](research-eval-dimensions.md).** Follow it per selected
+behavior; do not hand-roll a config here and do not skip its gates. It reuses a repo
+behavior preset where one matches (settling the harm's stable slug), runs the path-only
+isolation preflight on that slug, researches **how the harm has been evaluated** against
+primary sources, runs `N` complete passes, deduplicates, blocks on explicit user approval,
+and writes a cited config.
 
-1. **Built-in preset first.** `assert-ai library list` shows the bundled behavior
-   and judge presets (e.g. `prompt_injection`, `doxxing`, `stereotyping`,
-   `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`);
-   `assert-ai library show <name>` prints one. If a preset matches the risk, seed
-   from it: `assert-ai init --behavior <name>` and/or `--judge-preset <name>`.
-2. **Domain template next.** Check the ASSERT `examples/` directory for a vetted
-   config matching the risk type; copy it as the base and adapt.
-3. **Otherwise** generate from the schema:
-   `assert-ai init --default-model <litellm-model> --describe-file <text-path> --non-interactive -o <path>`.
-   Write the failure-mode text (failure mode + how it arises + target context) to
-   a file first. It is Clarity-derived prose you did not author, so a quote,
-   backtick, or `$(...)` in it would break or inject into the shell if
-   interpolated into `--describe "<text>"`.
+The risk is already named by the time you reach this step — triage settled that. What the
+research settles is the test-set design: the timescale the harm becomes observable on,
+whose viewpoint the probes are authored from, and which conditions the evidence says change
+it.
+
+Collect `N` (positive integer) first, and never silently default it.
 
 Fill from the candidate behavior (real schema field names):
 
 | Config field | Source |
 | --- | --- |
-| `behavior.name` | candidate `name` (short, specific) |
-| `behavior.description` | candidate `description` (the doc **Summary**, tightened to a *testable* statement) |
+| `behavior.name` | candidate `name` (short, specific), or a matching library preset via `behavior.preset` |
+| `behavior.description` | candidate `description` (the doc **Summary**, tightened to a *testable* statement), or the preset's curated description |
 | `context` | Clarity `summary.md` / `goal/requirements.md` / `solution/architecture.md` |
 | `default_model.name` | the cheap model — drives the target, test-set generation, and tester (e.g. `azure/gpt-5.4-mini`) |
-| `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`). `init` has no flag for these, so they inherit `default_model` unless you edit the config by hand — see the ground-truth note below |
-| `pipeline.test_set.stratify.dimensions` | `candidate_dimensions` — **include the `elicitation_variant` dimension** derived from the doc's Variants |
-| `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
-| `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
+| `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`) — see the ground-truth note below |
+| `pipeline.systematize.behavior_category_count` | **`25`** — the standard count, and ASSERT's own default (`DEFAULT_BEHAVIOR_CATEGORY_COUNT`); research shapes *which* categories are generated, not how many |
+| `pipeline.systematize.web_search` | `true`, so systematization can expand categories with current context |
+| `pipeline.test_set.stratify.dimensions` | the **approved, deduplicated** dimension set — with explicit `levels` where the literature supports them. `candidate_dimensions` from the parser (notably `elicitation_variant`) are *seeds* for research, not the final set |
+| `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently, and never accept a value below `behavior_category_count` (so **`≥25`**); recommend `25`, `50`+ for the tightest signal. Write it with the inline review comment: `# min for behavior-category coverage -- user should review; 50+ tightens the signal` |
+| `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise; the same `≥ behavior_category_count` floor applies (see `govern-and-remeasure.md`), and the same inline review comment |
 | `pipeline.inference.target` | the target shape (see below) |
-| `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
-| `pipeline.judge.preset` | leave `dimensions` **unset** — `policy_violation` and `overrefusal` are built in and always judged (see the built-in note below) |
+| `pipeline.inference.max_turns` | **Fixed `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value. Not research-derived. Use the **same** value in the baseline and governed configs; a genuinely single-turn harm uses `prompt` cases, which ignore this knob. |
+| `pipeline.judge.preset` | `safety-extended` for nuanced harms (additive). **Not `safety-core`** — it replaces both built-in rubrics; skip it if a library preset suggests it |
+| `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
 > **Run the eval cheap, but judge and systematize with the strong model.**
 > `assert-ai init` has no `--systematize-model` / `--judge-model` flag, so every
@@ -183,13 +186,23 @@ Fill from the candidate behavior (real schema field names):
 > `assert-ai results status <suite> <run> --json` — the model actually used is
 > echoed at `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 
-> **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
-> `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are **always judged**
-> unless explicitly disabled — you get both for free with no `dimensions` block.
-> Config dimensions are merged over the built-ins **by name**, so declaring one
-> called `policy_violation` or `overrefusal` silently **replaces the built-in
-> rubric** with a hand-written one. Only add a dimension for a genuinely new
-> metric the built-ins don't cover, and never reuse a built-in name.
+> **Author researched judge `dimensions`, but never reuse a built-in name.**
+> `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`
+> (`assert_ai/core/judge.py`) and are **always judged** unless explicitly disabled —
+> you get both for free. The researched harm-specific dimensions from
+> `research-eval-dimensions.md` (e.g. `harm_actionability`, `severe_harm_escalation`,
+> `longitudinal_harm_pattern`) are **added on top** of them. Config dimensions are
+> merged over the built-ins **by name** into the same dict, so declaring one called
+> `policy_violation` or `overrefusal` silently **replaces the built-in rubric** with a
+> hand-written one. That does **not** move the headline permissibility split — which
+> `assert_ai/results.py` recomputes from the per-behavior `node_judgments`, not from
+> either dimension's verdict — but it does change the verdict stored in the run JSON and
+> `DEFAULT_COMPARE_METRIC`, so stored results stop meaning what the engine documents. The
+> same applies to `judge.preset`, which expands into that same merged list — do **not**
+> use `safety-core`, whose only two dimensions are named exactly `policy_violation` and
+> `overrefusal`, and which the engine hides anyway once the split is available. The
+> validator's pre-write gate rejects a reused name in the ledger, and its post-write gate
+> rejects it in the written config, in both the inline and the preset form.
 
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated
@@ -200,34 +213,44 @@ Fill from the candidate behavior (real schema field names):
 > config: `assert-ai results status <suite> <run> --json` already reports the
 > headline pair — `not_permissible_policy_violation_rate` (real harm) and
 > `permissible_policy_violation_rate` (allowed behavior broken) — each one vote per
-> conversation. The split is derived from stored judgments, so it needs no config
+> conversation. The split is recomputed from the stored per-behavior `node_judgments`,
+> so it needs no config
 > change and works on existing runs. In the viewer the same pair appears as the
 > dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
 > labelled **Impermissible behavior violated** / **Permissible behavior violated**. When the
 > split is present the viewer now **hides** `policy_violation` / `overrefusal` as
 > superseded — they are still judged, aggregated, and written to artifacts.
 
-> **Sizing for noise (why the first-run "10" is often too small).** Each rate is
-> `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the
-> number 10 percentage points**. Inference is non-deterministic (agent temperature
-> is 1.0; gpt-5 models can't be pinned lower), so two independent runs of the *same*
-> config drift by a case or two purely by chance. That noise is harmless for a quick
-> "is it broken?" look, but it **wrecks an ACS before/after A/B**: a phantom ±10pp
-> swing on a small sample can masquerade as a governance effect (or hide one).
+> **Sizing floor: `sample_size` must be `≥ behavior_category_count` (so `≥25`).**
+> Two independent reasons, and both have to hold.
+>
+> **Coverage.** The test set spreads `sample_size` cases across
+> `behavior_category_count` categories. Below the category count some categories
+> receive **zero** cases, so `coverage_at_k(…, k=1, …)`
+> (`assert_ai/analysis/test_set_metrics.py`) cannot reach `1.0` — those categories
+> still sit in the denominator while never being probed. A harm that lives in an
+> unsampled category reads as absent.
+>
+> **Noise.** Each rate is `violations / sample_size`, so **even at the `25` floor
+> one flipped case moves the number 4 percentage points** — and the swing grows as
+> the sample shrinks. Inference is non-deterministic (agent temperature is 1.0;
+> gpt-5 models can't be pinned lower), so two independent runs of the *same* config
+> drift by a case or two purely by chance. That distorts an **ACS before/after A/B**:
+> a phantom swing can masquerade as a governance effect (or hide one). This is why
+> `50`+ is worth the cost when the expected delta is small — the floor protects
+> coverage, not precision.
 >
 > **Always ask the user for the sample size before generating the config — do not
-> pick it silently.** Present the tradeoff in one line and let them choose, e.g.:
-> *"How many cases per behavior should I sample? `10` = fast/noisy first look,
-> `25` = stable rate (recommended), `50`+ = tightest signal. Cost scales linearly.
-> I'll use the same size for prompt and scenario."* Recommend `25` as the default,
-> and **`≥25` whenever the run will become an ACS A/B baseline** (the governed
-> config is a byte-identical copy that inherits this size — see
-> `govern-and-remeasure.md`). If the user has no preference, default to `25` (or
-> their first-look `10` only if they explicitly want a throwaway pass).
+> pick it silently, and do not accept a value below `behavior_category_count`.**
+> Present the tradeoff in one line, e.g.: *"How many cases per behavior should I
+> sample? `25` = the floor and the recommendation, `50`+ = tightest signal. Cost
+> scales linearly. I'll use the same size for prompt and scenario."* If the user has
+> no preference, use `25`. If they ask for less, explain the coverage floor and offer
+> `25` — there is no supported sub-coverage "quick look".
 
-> **Set `pipeline.inference.max_turns: 10`; do not leave it low (e.g. `2`).**
+> **Leave `pipeline.inference.max_turns` at `6`; do not lower it (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
-> cases (single-turn `prompt` cases ignore it). `10` is the ASSERT default
+> cases (single-turn `prompt` cases ignore it). `6` is the ASSERT default
 > (`DEFAULT_TESTER_MAX_TURNS`) and gives a realistic persistence/erosion arc room to
 > land — many of the strongest findings are **multi-turn erosion** (the agent holds
 > firm for a few turns, then softens into a dose/clearance/leak under pressure). A low
@@ -235,12 +258,19 @@ Fill from the candidate behavior (real schema field names):
 > rate**, and in an ACS A/B it hides violations the gate should be measured against.
 > Keep `max_turns` **identical in the baseline and governed configs** (it changes
 > elicitation depth, so a mismatch would break the "only ACS differs" comparison).
-> Only lower it (`4`–`6`) if the risk is genuinely single-turn (a one-shot disclosure
-> or a structural tool-arg failure) *and* the user wants a cheaper run.
+> If the risk is genuinely single-turn (a one-shot disclosure or a structural tool-arg
+> failure), express that with `prompt` test cases rather than by shrinking the turn
+> budget.
 
-> `stratify.dimensions` entries are `{name, description}`. Fold the parser's
-> `values` list into each dimension's `description` (e.g. "Values: variant A;
-> variant B; …") so the stratifier samples across the elicitation routes.
+> **`stratify.dimensions` come from the approved research**, not straight from the
+> parser. `research-eval-dimensions.md` uses the parser's `candidate_dimensions`
+> (notably `elicitation_variant`, folded from the doc's **Variants**) as research
+> *seeds*, then gates, expands, and deduplicates them. Entries may be explicit
+> (`{name, description, levels[]}`) when the literature supports specific levels, or
+> generated (`{name, description}`) otherwise — but a config must use **one mode
+> throughout**, not a mix. When using generated mode, fold the parser's `values` list
+> into the dimension's `description` (e.g. "Values: variant A; variant B; …") so the
+> stratifier samples across the elicitation routes.
 
 **Target shape:**
 - Framework agent (LangGraph, CrewAI, …) with a Python entry function →
@@ -253,15 +283,15 @@ Fill from the candidate behavior (real schema field names):
   (`def chat(message, history=None)`) — ASSERT detects multi-turn support by that
   parameter's *name*, so a callable that omits it (or calls it `messages` /
   `conversation`) silently receives only the latest turn, breaking multi-turn scenario
-  cases (prior verification/context is dropped, inflating both the violation and
-  `overrefusal` rates).
+  cases (prior verification/context is dropped, inflating both halves of the
+  permissibility split).
 - Hosted model + system prompt (+ optional tools) → `target.model` / `target.tools`.
 - Pre-collected traces → `assert-ai judge-traces --traces <path> --config <path>`.
 
 ## Step 4 — Atomicity (enforce)
 
-**One atomic behavior per YAML.** Bundling makes `policy_violation`
-a fuzzy logical-OR and masks per-behavior signal.
+**One atomic behavior per YAML.** Bundling makes the reported **impermissible
+behavior violated** rate a fuzzy logical-OR and masks per-behavior signal.
 
 - A single Clarity failure mode is usually one behavior → one config.
 - If a doc is flagged `multi_behavior` (e.g. failure-07 "operational **and**
@@ -290,7 +320,7 @@ Skip the offer only when the user has asked to run everything unattended.
 **1. Produce the artifacts without paying for inference.**
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 ```
 
@@ -301,7 +331,7 @@ Runs systematize and test_set only, producing the **full** taxonomy and the
 
 ```
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config evals/<atomic_behavior>.yaml --count 3
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
 ```
 
 Prints a JSON summary and writes `artifacts/smoke/<suite>-prompt-3.jsonl`. Take
@@ -311,7 +341,7 @@ risk is inherently multi-turn; scenario cases cost far more per case.
 **3. Run inference and judge on the slice only.**
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke \
   --override inference.test_set_path=<out path from step 2>
 ```
@@ -368,7 +398,7 @@ supplied with its taxonomy from context, so no `taxonomy_path` wiring is needed.
 ## Step 6 — Run sequentially
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
@@ -381,8 +411,9 @@ remaining configs. Note each `suite`/`run` for the report.
 
 One results table, **one behavior per column, one experiment per row**, with:
 
-- `policy_violation` and `overrefusal` rates reported **separately** (two
-  different problems).
+- The permissibility split — `not_permissible_policy_violation_rate` (real harm)
+  and `permissible_policy_violation_rate` (an allowed behavior broken) — as the only
+  reported rates. Do **not** report the built-in `policy_violation` or `overrefusal`.
 - Cited failure examples pulled from the run artifacts
   (`assert-ai results status <suite> <run>`, then `scores.jsonl` for
   `verdict.dimension_justifications`). Do **not** trawl raw traces.
@@ -402,13 +433,13 @@ didn't cover.
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
-(`evals/<atomic_behavior>.yaml`). This keeps Clarity's staleness tracking aware of the eval.
+(`examples/<domain>/<risk>/eval_config.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
 ## Step 9 — Curate the example and handle discovery scratch
 
 Do this at the end of the domain you just measured:
 
-1. Keep one selected failure mode per YAML under `evals/`.
+1. Keep one selected failure mode per config directory under `examples/<domain>/`.
 2. Write or update the example README with the scenario, setup, run command,
    suite/run result path, and a concise behavior table.
 3. Do not copy generated taxonomies, test sets, result artifacts, mailboxes,
@@ -444,15 +475,38 @@ Do this at the end of the domain you just measured:
 2. `failures.md` exists → parse. Top candidate is **`user_disengagement`** (P1),
    with an `elicitation_variant` dimension of 7 variants (challenging disposition,
    wrong calibration, happy-path attachment, cultural aversion, verbosity, unused
-   protocol, alert fatigue).
+   protocol, alert fatigue). Treat those variants as **research seeds**, not the
+   final dimension set.
 3. Triage: user picks **P1s only** → just `user_disengagement`.
-4. **Ask the user for `sample_size`** (recommend `25`; `10` = quick look, `50`+ = tightest). Say they pick `25`.
-5. Generate `evals/user_disengagement.yaml`: `behavior.description`
-   from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
-   (7 values folded into its description), `prompt.sample_size: 25` (the size the
-   user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
-   `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
-6. Confirm → offer a smoke run (Step 5a): generate artifacts with
+4. Collect both inputs that must never be silently defaulted: **`N`** (say they
+   pick `3`) and **`sample_size`** (floor is `behavior_category_count`, so `25`;
+   `50`+ = tightest — say they pick `25`).
+5. Hand off to [`research-eval-dimensions.md`](research-eval-dimensions.md); do
+   not hand-roll the config here:
+   - **Intent intake** — the user says this gates a support-bot release, so
+     `purposes: [product_readiness]`; decision and population left blank and not
+     inferred.
+   - **Reuse a spec** — `assert-ai library list` has no matching preset, so draft
+     an inline description in the same `# Title` / `## Key Terms` /
+     `## Behavior Categories` shape as the bundled specs. The slug settles as
+     `user_disengagement`.
+   - **Isolation preflight** — `plan_generation_path.py --eval-type harm --name
+     user_disengagement --root examples/<domain>` finds no prior generation, so
+     the run directory is `examples/<domain>/user_disengagement/`.
+   - **Research** — `elicitation_variant` seeds the search; the retained axes are
+     only those ≥2 independent sources support, with explicit `levels` where the
+     literature supplies them. Judge dimensions are researched as their own
+     namespace (e.g. `disengagement_severity`, `recovery_quality`) under new
+     names — never `policy_violation` or `overrefusal`.
+   - **`N` passes → dedup → approval** — 3 complete passes, semantic dedup within
+     each namespace, then the three namespace tables go to the user. **Silence is
+     not approval**; `validate_dimension_review.py pre-write` enforces it.
+   - **Write** the cited config to
+     `examples/<domain>/user_disengagement/eval_config.yaml`:
+     `prompt.sample_size: 25` (applied to `scenario` too),
+     `inference.max_turns: 6`, `judge.preset: safety-extended` plus the approved
+     judge dimensions, inline `# sources:` comments, and a `# References` block.
+6. Offer a smoke run (Step 5a): generate artifacts with
    `--override inference.enabled=false --override judge.enabled=false`, slice 3
    real prompt cases with `smoke_slice.py`, run them under `run=baseline-smoke`.
    They pass, so continue.
@@ -460,9 +514,9 @@ Do this at the end of the domain you just measured:
    `user_disengagement` column.
    Headline the permissibility split from `results status --json` —
    `not_permissible_policy_violation_rate` (real harm got through) and
-   `permissible_policy_violation_rate` (an allowed behavior was broken) — with
-   `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
+   `permissible_policy_violation_rate` (an allowed behavior was broken) — as the only
+   reported rates, plus 3–5 cited examples.
 8. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
-   measured baseline at evals/user_disengagement.yaml."
+   measured baseline at examples/<domain>/user_disengagement/eval_config.yaml."
 9. Curate the example (Step 9): keep the atomic config and README, and export
    `.clarity-protocol/` outside `examples/` only if the user wants the raw record.

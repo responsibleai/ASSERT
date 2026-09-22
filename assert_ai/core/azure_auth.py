@@ -16,7 +16,7 @@ Auth-mode precedence (explicit AAD flag wins, then key, then auto-fallback):
 3. Neither set → AAD via ``DefaultAzureCredential`` (auto-fallback).
 
 The ``azure-identity`` package is an *optional* dependency
-(``pip install assert-ai[azure-aad]``). When it is not installed and
+(``pip install assert-ai[azure-auth]``). When it is not installed and
 the resolved mode is AAD, :func:`get_azure_token_provider` returns
 ``None`` so callers can produce a clear install-hint error instead of
 crashing on import.
@@ -169,7 +169,7 @@ def get_azure_token_provider(
     except ImportError:
         log.info(
             "azure-identity is not installed; AAD auth unavailable. "
-            "Install with: pip install 'assert-ai[azure-aad]'"
+            "Install with: pip install 'assert-ai[azure-auth]'"
         )
         _IDENTITY_IMPORT_ATTEMPTED = True
         _IDENTITY_AVAILABLE = False
@@ -312,7 +312,7 @@ def log_resolved_azure_auth_mode() -> None:
             log.warning(
                 "%s is set but azure-identity is not installed; the next "
                 "azure/* or azure_ai/* request will fail. Install with: "
-                "pip install 'assert-ai[azure-aad]'",
+                "pip install 'assert-ai[azure-auth]'",
                 ENV_USE_AAD_FLAG,
             )
     elif mode == "aad-fallback":
@@ -320,7 +320,7 @@ def log_resolved_azure_auth_mode() -> None:
             log.info(
                 "Azure auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "azure-identity not installed — install with: "
-                "pip install 'assert-ai[azure-aad]').",
+                "pip install 'assert-ai[azure-auth]').",
             )
         else:
             log.info(

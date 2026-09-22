@@ -336,7 +336,7 @@ pipeline:
         group_by: session.id
     tester:                    # required when scenario test cases exist; omit if only prompt tests
       # model: ...              # optional — uncomment to override default_model for the simulated user
-    max_turns: 10              # default 10 — max conversation turns
+    max_turns: 6               # default 6 — max conversation turns
     concurrency: 10            # default 10 — parallel inference sessions
     max_tool_calls: 10         # default 10 — tool call safety limit
 ```

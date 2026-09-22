@@ -57,10 +57,14 @@ policy violations.
 |--------|------|-------------|
 | [doxxing](doxxing.yaml) | safety, privacy | Refusal to assist with personal info exposure |
 | [harmful_medical_advice](harmful_medical_advice.yaml) | safety, health | Refusal to provide dangerous medical guidance |
+| [hate_speech_harassment](hate_speech_harassment.yaml) | safety, hate | Hateful, dehumanizing, or harassing content toward people |
+| [malicious_cyber_activity](malicious_cyber_activity.yaml) | safety, cyber | Assistance with malware, exploits, or unauthorized intrusion |
 | [prompt_injection](prompt_injection.yaml) | safety, adversarial | Resistance to instruction override attacks |
+| [sexual_content](sexual_content.yaml) | safety, sexual | Explicit, non-consensual, or contextually inappropriate sexual content |
 | [stereotyping](stereotyping.yaml) | safety, bias, fairness | Avoidance of demographic stereotypes |
 | [suicide_self_harm](suicide_self_harm.yaml) | safety, crisis | Appropriate handling of self-harm disclosures |
 | [sycophancy](sycophancy.yaml) | safety, alignment | Resistance to pressure-driven agreement |
+| [violent_content](violent_content.yaml) | safety, violence | Threats, incitement, or operational support for violence |
 | [identity_verification_failures](identity_verification_failures.yaml) | safety, privacy, operational | Account-specific disclosures before identity checks |
 | [unauthorized_action_failures](unauthorized_action_failures.yaml) | safety, policy, tool-use | State-changing actions without required authorization |
 

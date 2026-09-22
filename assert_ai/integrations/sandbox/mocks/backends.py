@@ -113,32 +113,63 @@ class ScenarioBackend:
           when_state: transferred
           response: {balance: 500}
 
-    State is keyed by scenario name and scoped to this backend instance, so a
-    fresh runner (one per case) starts clean. Case-scoped isolation across
-    interleaved multi-turn cases remains a known gap in the design doc; this
-    backend does not silently pretend otherwise.
+    State is keyed by case ID plus scenario name and scoped to this backend
+    instance. A fresh runner still starts clean, while a shared host also keeps
+    interleaved cases independent.
     """
 
     name = "scenario"
 
     def __init__(self) -> None:
-        self._state: dict[str, str] = {}
-        self._cursor: dict[tuple[str, str], int] = {}
+        self._state: dict[tuple[str, str], str] = {}
+        self._cursor: dict[tuple[str, str, str], int] = {}
 
     def current_state(self, scenario: str) -> str:
-        return self._state.get(scenario, "start")
+        """Return legacy/default-case state; kept stable for custom backends."""
+        return self._state.get(("", scenario), "start")
+
+    def _current_state_for_call(self, scenario: str, case_id: str | None) -> str:
+        """Read built-in case state without changing the extension signature."""
+        if (
+            type(self).current_state is not ScenarioBackend.current_state
+            or type(self).matches_state is not ScenarioBackend.matches_state
+        ):
+            return self.current_state(scenario)
+        return self._state.get((case_id or "", scenario), "start")
+
+    def _case_key(self, case_id: str | None) -> str:
+        """Use legacy shared state when an override cannot accept case identity."""
+        if (
+            type(self).current_state is not ScenarioBackend.current_state
+            or type(self).matches_state is not ScenarioBackend.matches_state
+        ):
+            return ""
+        return case_id or ""
 
     def reset(self) -> None:
         self._state.clear()
         self._cursor.clear()
 
     def matches_state(self, rule: Mapping[str, Any]) -> bool:
-        """Whether a rule's `when_state` guard holds right now."""
+        """Whether a rule's `when_state` guard holds in the legacy default case."""
         want = rule.get("when_state")
         if want is None:
             return True
         scenario = str(rule.get("scenario") or "")
         return self.current_state(scenario) == str(want)
+
+    def matches_state_for_call(self, rule: Mapping[str, Any], call: MockCall) -> bool:
+        """Evaluate state for a case while preserving older subclass overrides."""
+        if (
+            type(self).matches_state is not ScenarioBackend.matches_state
+            or type(self).current_state is not ScenarioBackend.current_state
+        ):
+            return self.matches_state(rule)
+        want = rule.get("when_state")
+        if want is None:
+            return True
+        scenario = str(rule.get("scenario") or "")
+        return self._current_state_for_call(scenario, call.case_id) == str(want)
 
     def resolve(self, rule: Mapping[str, Any], call: MockCall) -> Resolution:
         scenario = str(rule.get("scenario") or "")
@@ -159,17 +190,18 @@ class ScenarioBackend:
                 raise MockBackendError(f"`responses:` for '{call.tool}' must be a non-empty list")
             steps = list(responses)
 
-        key = (scenario, call.tool)
+        case_key = self._case_key(call.case_id)
+        key = (case_key, scenario, call.tool)
         index = self._cursor.get(key, 0)
         # The last step repeats once exhausted, so a scenario cannot run off the
         # end mid-eval and start returning nothing.
         step = steps[min(index, len(steps) - 1)]
         self._cursor[key] = index + 1
 
-        before = self.current_state(scenario)
+        before = self._current_state_for_call(scenario, call.case_id)
         if "sets_state" in step:
-            self._state[scenario] = str(step["sets_state"])
-        after = self.current_state(scenario)
+            self._state[(case_key, scenario)] = str(step["sets_state"])
+        after = self._current_state_for_call(scenario, call.case_id)
 
         is_error = "error" in step
         payload = step.get("error") if is_error else step.get("response")

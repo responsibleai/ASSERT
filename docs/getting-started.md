@@ -20,9 +20,12 @@ bash (macOS / Linux):
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 ```
+
+The second install is required because the flagship target imports LangGraph, LangChain Core, and LangChain OpenAI directly. Those are dependencies of the example agent, not features of the `assert-ai` package.
 
 Edit `.env` with credentials for your provider. Defaults match the example's `azure/...` model. Any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, and others) works.
 
@@ -32,13 +35,14 @@ PowerShell (Windows):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 ```
 
 ### Run your first evaluation
 
-The example's `auto_trace.py` calls `assert_ai.auto_trace.enable()`, which installs the available OpenInference instrumentors locally so the judge can cite tool calls, routing decisions, model calls, and latency as evidence. It does **not** start a Phoenix server.
+The example's requirements install its LangChain OpenInference instrumentor. Its `auto_trace.py` then calls `assert_ai.auto_trace.enable()`, which discovers and activates installed instrumentors so the judge can cite tool calls, routing decisions, model calls, and latency as evidence. It does **not** install packages or start a Phoenix server.
 
 `phoenix serve` is optional — only run it if you want a browser UI to inspect the traces visually. The eval runs and the judge see the same span data either way.
 
@@ -46,14 +50,14 @@ bash (macOS / Linux):
 
 ```bash
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 PowerShell (Windows):
 
 ```powershell
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 Check run status:
@@ -61,26 +65,26 @@ Check run status:
 PowerShell (Windows):
 
 ```powershell
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 bash (macOS / Linux):
 
 ```bash
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 Artifacts are written under:
 
 ```text
-artifacts/results/travel-planner-langgraph-v1/demo-1/
+artifacts/results/travel-planner-budget-overrun/baseline/
 ```
 
 ### Codespaces / VS Code Dev Containers
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs the root development group plus `examples/travel_planner_langgraph/requirements.txt` because the container is also the golden-path example environment, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
 
 PowerShell (Windows) — full sequence:
 
@@ -88,12 +92,13 @@ PowerShell (Windows) — full sequence:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[phoenix]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
 phoenix serve  # optional
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
+assert-ai results status travel-planner-budget-overrun baseline
 ```
 
 ## What just happened
@@ -124,7 +129,7 @@ assert-ai init --model azure/gpt-5.4
 # or skip the first question:
 assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
-assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 See [CLI Commands](cli/commands.md) for the full option reference.
@@ -143,7 +148,7 @@ This works for any `azure/*` model string and uses LiteLLM's native
 ### Install the optional dependency
 
 ```bash
-python -m pip install -e ".[azure-aad]"
+python -m pip install -e ".[azure-auth]"
 ```
 
 This pulls in `azure-identity` and lets ASSERT mint bearer tokens through
@@ -171,7 +176,7 @@ to call.
 The same auth mode also applies to `azure_ai/*` LiteLLM routes, including
 hosted Azure AI Foundry agents (`azure_ai/agents/<AGENT_ID>`). Those routes
 need `AZURE_AI_API_BASE` set to the Foundry project endpoint instead of
-`AZURE_API_BASE`. No extra setup beyond `pip install -e ".[azure-aad]"` and
+`AZURE_API_BASE`. No extra setup beyond `pip install -e ".[azure-auth]"` and
 `az login` (or Service Principal env vars).
 
 ### Local development with `az login`
@@ -193,7 +198,7 @@ when multiple are attached, set `AZURE_CLIENT_ID` to its client ID;
 ### Troubleshooting
 
 - `LLMAuthError: ... azure-identity package is not installed` — run
-  `pip install -e ".[azure-aad]"` (or `assert-ai[azure-aad]` if you installed from PyPI).
+  `pip install -e ".[azure-auth]"` (or `assert-ai[azure-auth]` if you installed from PyPI).
 - `401` with a hint about *Cognitive Services OpenAI User* — the credential
   resolved, but the identity is missing the RBAC role on the resource.
 - A 401 that mentions the install hint instead — you are in `aad-fallback`

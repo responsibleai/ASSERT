@@ -46,6 +46,7 @@ live in the same file without ordering games.
 from __future__ import annotations
 
 import copy
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,13 @@ from typing import Any, cast
 import yaml
 
 from ..policy import _glob_match
-from .backends import MockBackend, MockCall, Resolution, ScenarioBackend, default_backends
+from .backends import (
+    MockBackend,
+    MockCall,
+    Resolution,
+    ScenarioBackend,
+    default_backends,
+)
 from .matching import match_args, specificity
 
 SUPPORTED_VERSIONS = frozenset({1})
@@ -72,6 +79,7 @@ class MockRule:
     raw: dict[str, Any]
     order: int
     note: str = ""
+    case_id: str | None = None
 
     @property
     def specificity(self) -> int:
@@ -99,9 +107,20 @@ class MockLibrary:
         backends: Mapping[str, MockBackend] | None = None,
         cassette_dir: str | Path | None = None,
     ) -> None:
-        self.rules = sorted(rules, key=lambda r: (-r.specificity, r.order))
+        # Case precedence is exact ID, matching prefix/suffix glob, then generic.
+        # Within each tier, preserve argument specificity and file order.
+        def case_rank(rule: MockRule) -> int:
+            if rule.case_id is None:
+                return 2
+            return 1 if "*" in rule.case_id else 0
+
+        self.rules = sorted(
+            rules,
+            key=lambda r: (case_rank(r), -r.specificity, r.order),
+        )
         self.backends: dict[str, MockBackend] = dict(backends or default_backends(cassette_dir))
         self.cassette_dir = Path(cassette_dir) if cassette_dir else None
+        self._resolve_lock = threading.RLock()
         self._validate_backends()
 
     def _validate_backends(self) -> None:
@@ -147,6 +166,11 @@ class MockLibrary:
             if not tool:
                 raise MockConfigError(f"mocks[{index}] is missing `tool:`")
             when = _require_mapping(entry.get("when"), f"mocks[{index}].when")
+            case_id: str | None = None
+            if "case_id" in entry:
+                if not isinstance(entry["case_id"], str) or not entry["case_id"].strip():
+                    raise MockConfigError(f"mocks[{index}].case_id must be a non-empty string")
+                case_id = entry["case_id"].strip()
             backend = str(entry.get("backend") or "").strip().lower()
             if not backend:
                 backend = _infer_backend(entry)
@@ -154,6 +178,7 @@ class MockLibrary:
                 MockRule(
                     tool=tool,
                     when=when,
+                    case_id=case_id,
                     backend=backend,
                     raw=entry,
                     order=index,
@@ -184,10 +209,16 @@ class MockLibrary:
         for rule in self.rules:
             if not _glob_match(rule.tool, call.tool):
                 continue
+            if rule.case_id is not None:
+                # Every case-bound rule, including the catch-all ``*`` glob,
+                # requires a correlated call. Matching a missing ID as an empty
+                # string makes ``*`` fail open and can select the wrong mock.
+                if not call.case_id or not _glob_match(rule.case_id, call.case_id):
+                    continue
             if not match_args(rule.when, call.args):
                 continue
             if rule.backend == "scenario" and isinstance(scenario_backend, ScenarioBackend):
-                if not scenario_backend.matches_state(rule.raw):
+                if not scenario_backend.matches_state_for_call(rule.raw, call):
                     continue
             return rule
         return None
@@ -199,24 +230,30 @@ class MockLibrary:
         about this call, and the caller should fall back to whatever the policy
         declares. It is never a silent empty response.
         """
-        rule = self.find(call)
-        if rule is None:
-            return None
-        backend = self.backends[rule.backend]
-        resolution = backend.resolve(rule.raw, call)
-        detail = dict(resolution.detail)
-        detail.update({"mock_rule": rule.tool, "backend": rule.backend})
-        if rule.when:
-            detail["matched_args"] = sorted(rule.when)
-        if rule.note:
-            detail["note"] = rule.note
-        return Resolution(
-            value=resolution.value,
-            mock_source=resolution.mock_source,
-            is_error=resolution.is_error,
-            state_note=resolution.state_note,
-            detail=detail,
-        )
+        # Matching and state transition are one operation. A target may issue
+        # parallel tool calls within one case; without this boundary two calls
+        # can both match the same state or consume the same scenario step.
+        with self._resolve_lock:
+            rule = self.find(call)
+            if rule is None:
+                return None
+            backend = self.backends[rule.backend]
+            resolution = backend.resolve(rule.raw, call)
+            detail = dict(resolution.detail)
+            detail.update({"mock_rule": rule.tool, "backend": rule.backend})
+            if rule.when:
+                detail["matched_args"] = sorted(rule.when)
+            if rule.case_id:
+                detail["matched_case_id"] = rule.case_id
+            if rule.note:
+                detail["note"] = rule.note
+            return Resolution(
+                value=resolution.value,
+                mock_source=resolution.mock_source,
+                is_error=resolution.is_error,
+                state_note=resolution.state_note,
+                detail=detail,
+            )
 
     def reset(self) -> None:
         """Reset per-run state (scenario cursors) between cases."""
