@@ -28,7 +28,7 @@ import weakref
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.collector import SpanCollector
@@ -41,6 +41,9 @@ from assert_ai.core.otel import (
     validate_spans,
 )
 from assert_ai.core.session import TurnResult
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +90,7 @@ class OTelTracedSession:
         max_events_per_turn: int = 50,
         live_otel: bool = False,
         config_path: Path | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         self._callable_ref = callable_ref
         self._collector = collector
@@ -95,6 +99,7 @@ class OTelTracedSession:
         self._message_timeout_s = message_timeout_s
         self._max_events_per_turn = max_events_per_turn
         self._config_path = config_path
+        self._path_policy = path_policy
         self._callable: Any = None
         self._supports_history = False
         self._session_id = ""
@@ -142,7 +147,9 @@ class OTelTracedSession:
         _orig_stdout = sys.stdout
         sys.stdout = io.StringIO()
         try:
-            mod = import_callable_module(module_path, config_path=self._config_path)
+            mod = import_callable_module(
+                module_path, config_path=self._config_path, path_policy=self._path_policy
+            )
         finally:
             sys.stdout = _orig_stdout
         try:

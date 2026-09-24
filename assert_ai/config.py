@@ -33,6 +33,7 @@ from assert_ai.core.config_model import (
     ToolsConfig,
     TraceConfig,
 )
+from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH_KEYS = {"save_dir", "save_path"}
@@ -119,12 +120,25 @@ def _resolve_path(
     artifacts_root: Path,
     cfg_dir: Path | None = None,
     use_artifacts_root: bool = False,
+    path_policy: RuntimePathPolicy | None = None,
+    field_name: str = "path",
 ) -> str:
     """Resolve one path against artifacts and config roots.
 
     Validates that relative paths do not escape their expected root directory
     via traversal sequences.
     """
+    if path_policy is not None:
+        if use_artifacts_root:
+            return str(path_policy.resolve_output(path, field_name=field_name))
+        return str(
+            path_policy.resolve_input(
+                path,
+                base_dir=cfg_dir or path_policy.config_root,
+                field_name=field_name,
+            )
+        )
+
     artifacts_root = Path(artifacts_root).expanduser().resolve()
     cfg_dir = Path(cfg_dir).expanduser().resolve() if cfg_dir is not None else None
     candidate = Path(path).expanduser()
@@ -170,8 +184,11 @@ def load_runtime_context(
     cfg_path: Path,
     *,
     stage_modules: dict[str, Any],
+    path_policy: RuntimePathPolicy | None = None,
 ) -> dict[str, Any]:
     """Build the shared runtime context used by every stage."""
+    if path_policy is not None:
+        cfg_path = path_policy.resolve_config_path(cfg_path, reject_links=True)
     reject_unknown_keys(
         raw,
         field_name="config",
@@ -198,14 +215,34 @@ def load_runtime_context(
     pipeline = parse_pipeline_config(raw)
     target = pipeline.target if pipeline else None
 
-    artifacts_root = Path(raw.get("artifacts_root") or "artifacts").expanduser()
-    if not artifacts_root.is_absolute():
-        artifacts_root = (ROOT / artifacts_root).resolve()
+    if path_policy is not None:
+        artifacts_root = path_policy.artifacts_root
+        if raw.get("artifacts_root"):
+            path_policy.require_managed_root(
+                raw["artifacts_root"],
+                artifacts_root,
+                field_name="artifacts_root",
+            )
     else:
-        artifacts_root = artifacts_root.resolve()
+        artifacts_root = Path(raw.get("artifacts_root") or "artifacts").expanduser()
+        if not artifacts_root.is_absolute():
+            artifacts_root = (ROOT / artifacts_root).resolve()
+        else:
+            artifacts_root = artifacts_root.resolve()
 
     results_dir_raw = raw.get("results_dir")
-    if results_dir_raw:
+    if path_policy is not None:
+        results_dir = path_policy.results_root
+        if results_dir_raw:
+            path_policy.require_managed_root(
+                path_policy.resolve_output(
+                    results_dir_raw,
+                    field_name="results_dir",
+                ),
+                results_dir,
+                field_name="results_dir",
+            )
+    elif results_dir_raw:
         results_dir = Path(
             _resolve_path(
                 results_dir_raw,
@@ -219,6 +256,29 @@ def load_runtime_context(
     suite_id = str(raw.get("suite") or datetime.now(timezone.utc).strftime("eval-%Y%m%dT%H%M%S"))
     _validate_identifier(suite_id, "suite")
     stages = _validate_pipeline_stages(pipeline_raw, stage_modules=stage_modules)
+    if path_policy is not None:
+        _validate_configured_path_fields(
+            stages,
+            cfg_path=cfg_path,
+            path_policy=path_policy,
+        )
+        if target is not None and target.tools is not None and target.tools.toolset:
+            path_policy.resolve_input(
+                target.tools.toolset,
+                base_dir=cfg_path.parent,
+                field_name="pipeline.inference.target.tools.toolset",
+            )
+        if target is not None and target.sandbox:
+            from assert_ai.integrations.sandbox import load_setup
+
+            setup_path = path_policy.resolve_input(
+                target.sandbox,
+                base_dir=cfg_path.parent,
+                field_name="pipeline.inference.target.sandbox",
+                must_exist=True,
+                file_only=True,
+            )
+            load_setup(setup_path, path_policy=path_policy)
     if default_model_raw is not None:
         for stage_name, stage_cfg in stages:
             if stage_name in {"systematize", "test_set"} and "model" not in stage_cfg:
@@ -281,11 +341,43 @@ def load_runtime_context(
     if context is not None and not isinstance(context, str):
         raise ValueError("context must be a string")
 
-    suite_root = (results_dir / suite_id).resolve()
-    _require_within(suite_root, results_dir, "suite_root")
-    run_root = (suite_root / run_id).resolve() if run_id else None
-    if run_root is not None:
-        _require_within(run_root, suite_root, "run_root")
+    if path_policy is not None:
+        suite_root = path_policy.resolve_managed_output(
+            results_dir / suite_id,
+            field_name="suite_root",
+            expected_root=results_dir,
+            reject_links=True,
+        )
+        run_root = (
+            path_policy.resolve_managed_output(
+                suite_root / run_id,
+                field_name="run_root",
+                expected_root=suite_root,
+                reject_links=True,
+            )
+            if run_id
+            else None
+        )
+        for stage_name, stage_cfg in stages:
+            expected_root = (
+                suite_root if stage_modules[stage_name].SCOPE == "suite" else run_root
+            )
+            if expected_root is None:
+                continue
+            for key in OUTPUT_PATH_KEYS:
+                if stage_cfg.get(key):
+                    path_policy.resolve_managed_output(
+                        stage_cfg[key],
+                        field_name=f"pipeline.{stage_name}.{key}",
+                        expected_root=expected_root,
+                        reject_links=True,
+                    )
+    else:
+        suite_root = (results_dir / suite_id).resolve()
+        _require_within(suite_root, results_dir, "suite_root")
+        run_root = (suite_root / run_id).resolve() if run_id else None
+        if run_root is not None:
+            _require_within(run_root, suite_root, "run_root")
 
     return {
         "config_path": cfg_path,
@@ -302,7 +394,28 @@ def load_runtime_context(
         "stages": stages,
         "target": target,
         "evaluation": pipeline.evaluation if pipeline else None,
+        "path_policy": path_policy,
     }
+
+
+def _validate_configured_path_fields(
+    stages: list[tuple[str, dict[str, Any]]],
+    *,
+    cfg_path: Path,
+    path_policy: RuntimePathPolicy,
+) -> None:
+    for stage_name, stage_cfg in stages:
+        for key, value in stage_cfg.items():
+            if not value or not key.endswith(("_path", "_dir")):
+                continue
+            _resolve_path(
+                value,
+                artifacts_root=path_policy.artifacts_root,
+                cfg_dir=cfg_path.parent,
+                use_artifacts_root=key in OUTPUT_PATH_KEYS,
+                path_policy=path_policy,
+                field_name=f"pipeline.{stage_name}.{key}",
+            )
 
 
 def resolve_stage_paths(
@@ -310,17 +423,35 @@ def resolve_stage_paths(
     *,
     cfg_path: Path,
     artifacts_root: Path,
+    path_policy: RuntimePathPolicy | None = None,
+    managed_output_root: Path | None = None,
 ) -> dict[str, Any]:
     """Resolve all *_path and *_dir values in one stage config mapping."""
     resolved = dict(cfg)
     for key, value in list(resolved.items()):
         if not value or not key.endswith(("_path", "_dir")):
             continue
+        if (
+            path_policy is not None
+            and managed_output_root is not None
+            and key in OUTPUT_PATH_KEYS
+        ):
+            resolved[key] = str(
+                path_policy.resolve_managed_output(
+                    value,
+                    field_name=key,
+                    expected_root=managed_output_root,
+                    reject_links=True,
+                )
+            )
+            continue
         resolved[key] = _resolve_path(
             value,
             artifacts_root=artifacts_root,
             cfg_dir=cfg_path.parent,
             use_artifacts_root=key in OUTPUT_PATH_KEYS,
+            path_policy=path_policy,
+            field_name=key,
         )
     return resolved
 

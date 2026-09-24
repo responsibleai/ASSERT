@@ -11,7 +11,7 @@ import json
 import logging
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,9 @@ from assert_ai.core.judge import (
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from assert_ai.viewer_read_model import build_run_viewer_artifacts
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 SCOPE = "run"
 SUITE_OUTPUT = None
@@ -109,6 +112,9 @@ async def run_judge(
     forced: bool = False,
     heartbeat: Any = None,
     usage_merge_state: dict[str, Any] | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    config_path: Path | None = None,
+    managed_output_root: Path | None = None,
 ) -> dict[str, Any]:
     """Score inference rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
@@ -126,16 +132,45 @@ async def run_judge(
         if disabled_dimensions is not None
         else getattr(evaluation.judge, "disabled_dimensions", [])
     )
-    resolved_inference_set_path = resolve_path(inference_set_path)
+    resolved_inference_set_path = (
+        path_policy.resolve_input(
+            inference_set_path,
+            base_dir=config_path.parent if config_path is not None else path_policy.config_root,
+            field_name="judge inference set",
+            must_exist=True,
+            file_only=True,
+        )
+        if path_policy is not None
+        else resolve_path(inference_set_path)
+    )
     rows = load_jsonl(resolved_inference_set_path)
     if not rows:
         raise ValueError(f"No inference rows found in {inference_set_path}")
 
-    out_dir = resolve_path(save_dir or str(resolved_inference_set_path.parent))
+    if path_policy is not None:
+        if managed_output_root is None:
+            raise ValueError("managed_output_root is required with a runtime path policy")
+        out_dir = path_policy.require_managed_tree(
+            save_dir or managed_output_root,
+            field_name="judge output directory",
+            expected_root=managed_output_root,
+        )
+    else:
+        out_dir = resolve_path(save_dir or str(resolved_inference_set_path.parent))
     out_dir.mkdir(parents=True, exist_ok=True)
     if not taxonomy_path:
         raise ValueError("judge stage requires taxonomy_path")
-    resolved_taxonomy_path = resolve_path(taxonomy_path)
+    resolved_taxonomy_path = (
+        path_policy.resolve_input(
+            taxonomy_path,
+            base_dir=config_path.parent if config_path is not None else path_policy.config_root,
+            field_name="judge taxonomy",
+            must_exist=True,
+            file_only=True,
+        )
+        if path_policy is not None
+        else resolve_path(taxonomy_path)
+    )
     if not resolved_taxonomy_path.exists():
         raise ValueError(f"Taxonomy file not found: {taxonomy_path}")
     try:
@@ -436,6 +471,13 @@ async def run_judge(
         result = await completed_task
         score = result.get("score_row")
         if score is not None:
+            if path_policy is not None:
+                scores_path = path_policy.resolve_managed_output(
+                    scores_path,
+                    field_name="judge scores output",
+                    expected_root=out_dir,
+                    reject_links=True,
+                )
             append_jsonl_row(scores_path, score)
             written_rows += 1
         error = result.get("error")
@@ -454,6 +496,12 @@ async def run_judge(
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
+    if path_policy is not None:
+        path_policy.require_managed_tree(
+            out_dir,
+            field_name="judge output directory",
+            expected_root=managed_output_root,
+        )
     build_run_viewer_artifacts(out_dir)
     # Per-row failures should not kill the stage as long as *some* rows
     # succeeded. The errors are surfaced via judge_failures in the
@@ -528,6 +576,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=ctx.get("run_root"),
     )
     result = await run_judge(
         inference_set_path=cfg["inference_set_path"],
@@ -539,6 +589,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
         usage_merge_state=ctx,
+        path_policy=ctx.get("path_policy"),
+        config_path=Path(ctx["config_path"]),
+        managed_output_root=ctx.get("run_root"),
     )
     return {
         "scores_path": result["scores_path"],
