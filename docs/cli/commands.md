@@ -18,6 +18,7 @@ assert-ai [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
 ## Command groups
 
 - `init`: interactive config generation assistant
+- `estimate`: preview tracked model token usage without running stages
 - `run`: execute pipeline stages
 - `results`: list/status/compare suites and runs
 - `analysis`: post-hoc metrics commands
@@ -52,6 +53,18 @@ Options:
 - `--dry-run` optional flag
 - `--no-color` optional flag
 
+## `estimate`
+
+Estimate token usage without executing any pipeline stages.
+
+```bash
+assert-ai estimate --config <path> [OPTIONS]
+```
+
+The command uses the same local, conservative estimator shown before `run`.
+It does not call a provider or create run artifacts. Use `--output json` for
+machine-readable output.
+
 ## `run`
 
 Run the evaluation pipeline from evaluation config YAML file.
@@ -73,6 +86,43 @@ Optional:
 - `-q`, `--quiet`
 - `--log-file <path>`
 - `--output text|json`
+
+Before uncached stages execute, `run` prints a best-effort token estimate with
+a likely range and per-stage breakdown. The point estimate deliberately uses
+high-side output assumptions so it is more likely to be above actual usage than
+below it. Estimation uses local tokenization and does not call a provider. For
+callable, connector, endpoint, and sandbox targets, model usage inside the
+target is opaque to ASSERT and is explicitly excluded; tester and judge usage
+is still estimated.
+
+The estimator counts known prompts and tool schemas locally, then projects
+completion lengths and their reuse in later conversation turns and judge inputs.
+Small target output limits use 87.5% of the configured cap rather than assuming
+every answer exhausts it. Larger prompt answers retain a 512-token baseline,
+75% budget scaling, and a 768-token projection ceiling; scenario answers use
+384 tokens, subject to the same 87.5% cap. Judge outputs use the larger of
+512 tokens or a representative response shaped by the scoring contract, capped
+by the judge's output limit.
+
+Simple English response-wide word, token, or sentence instructions can lower
+the answer projection: 2 tokens per word, 1.25 per requested token, or 64 per
+sentence, plus 32 tokens of formatting/compliance headroom, never above the
+usual projection. Quoted, nested/per-item, negative, lower-bound, and ambiguous
+instructions retain the usual projection. Prompt cases use the effective system
+prompt and user request; scenarios use only the system prompt, since scenario
+descriptions can specify different requirements for different turns. These hints
+are not enforced output limits.
+
+The point estimate for tool-enabled targets assumes one round trip per turn: one schema-shaped
+tool-call response, one tool result, and one final answer. Tool history is
+retained in later requests and projected judge transcripts. Simulated-tool
+requests use the same prompt builder as execution. The upper end of the range
+instead projects `pipeline.inference.max_tool_calls` resolved tool calls per
+turn, cumulative target/simulator context, a possible forced final reply after
+the tool limit, and the resulting judge transcript, with 35% headroom. It can
+therefore exceed 135% of the point estimate. These are planning
+heuristics, not guaranteed upper bounds: larger arguments/results, longer responses,
+retries, and hidden provider overhead can exceed the estimate.
 
 ## `results list`
 

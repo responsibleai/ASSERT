@@ -1395,6 +1395,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(call_log, [], "No test_set should have been re-run")
             self.assertEqual(result["count"], 2)
+            self.assertEqual(result["usage_merge"], "accumulate")
 
     async def test_run_inference_discards_transcripts_on_config_change(self) -> None:
         """Changing target model invalidates existing transcripts."""
@@ -1436,6 +1437,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
             # count is 1 (re-ran, not 2 = resumed + new)
             self.assertEqual(result["count"], 1)
+            self.assertEqual(result["usage_merge"], "replace")
         test_case_rows = [
             {"type": "prompt", "seed": {"description": "base prompt"}},
             {

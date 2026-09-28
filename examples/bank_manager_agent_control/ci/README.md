@@ -1,12 +1,12 @@
-# Beat 3 in CI — ASSERT evals as an AI-safety regression gate
+# Use ASSERT results as an SDLC regression gate
 
-The third beat of the demo — the control plane, enforced in **CI** — ships as its own
-standalone repository, because that is how teams actually adopt it: your agent is its own
-project that installs ASSERT as a dependency and wires it into `.github/workflows/`, not a
-fork of ASSERT.
+The bank support agent produces the inputs a release gate needs:
 
-**→ [`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)**
-&nbsp;*(the canonical CI shipping vehicle)*
+- one behavior per config;
+- one frozen test set across candidate arms;
+- impermissible and permissible behavior measurements;
+- full evidence for every failed case; and
+- paired comparisons where the same cases are rerun.
 
 To run the local Bank Manager example, use these commands from the root of the
 ASSERT checkout:
@@ -16,9 +16,13 @@ python -m pip install -e ".[acs]"
 python -m pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
-The standalone `assert-ci-banking-demo` repository does not contain that
-`examples/` path. It owns a separate root `requirements.txt`; use its README and
-dependency manifest when working in that checkout.
+The standalone shipping example remains:
+
+[`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)
+
+That repository does not contain this `examples/` path. It owns a separate
+root `requirements.txt`; use its own README and dependency manifest when
+working in that checkout.
 
 The standalone repository adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,
 compares it to the unguarded production baseline with a paired statistical test, and
@@ -26,26 +30,59 @@ compares it to the unguarded production baseline with a paired statistical test,
 `overrefusal`** — an improvement gate, not a fixed threshold. If it fails, the build is
 skipped and the PR is blocked.
 
-Two demo pull requests make the beat concrete, each measured against the same unguarded
-baseline (`policy_violation` 54%, `overrefusal` 19%):
+## Gate both safety and product quality
 
-| PR | Change | `policy_violation` vs baseline | Gate |
-|----|--------|-------------------------------|------|
-| Defensive **system-prompt** | prompt-only hardening | 54% → 62% (no significant improvement) | ❌ **FAIL** |
-| **Control plane** (ASSERT + ACS) | typed-feature gate | 54% → 17% (improved; over-refusal 19% → 8%) | ✅ **PASS** |
+| Behavior | Impermissible dimension | Permissible dimension |
+|---|---|---|
+| Sensitivity-tier authorization | unauthorized exposure / `policy_violation` | standard-tier request mishandled / `overrefusal` |
+| Coercion via unverified authority | `coercion_bypass` | `legitimate_escalation_overrefusal` |
 
-The story mirrors the live demo: **prompting alone doesn't clear the safety bar; the
-structural control plane does — and CI enforces it.** See the standalone repo for the
-workflow, the gate script, and the real pass/fail PR action-run summaries.
+The display-level product language is **Impermissible behavior violated** and
+**Permissible behavior violated**. The lower-level dimension keys above remain
+useful for behavior-specific automation.
 
-## Why a standalone repo is the right shipping vehicle
+### Behavior 1
 
-- **Matches how teams work** — the agent is a normal project that `pip install`s
-  `assert-ai`; nobody develops inside a cloned eval framework.
-- **CI is the natural home for the control-plane beat** — a gate belongs in the target
-  repo's `.github/workflows/`, next to the code it guards.
-- **Deterministic** — the standalone repo commits pre-computed ASSERT artifacts, so every
-  CI run is reproducible with no live LLM calls.
+Published historical viewer snapshot only; source runs were not committed. The
+viewer top-level result moved from 8% impermissible violations at baseline to
+6% with the defensive prompt and 0% with ACS Rego. All three arms remained at
+0% permissible violations.
 
-This `examples/ci/` directory is the in-repo reference and pointer; the standalone repo is
-where you copy the pattern into your own agent project.
+### Behavior 2
+
+On the historical viewer snapshot, Total 120 per arm:
+
+| Arm | Impermissible | Permissible |
+|---|---:|---:|
+| Baseline | 8% | 27% |
+| Hardened prompt | 0% | 47% |
+| Classifier | 0% | 27% |
+
+A safety-only gate would accept the hardened prompt. In the published
+historical snapshot, a two-axis gate rejects it because it creates 20.0
+percentage points more permissible violations.
+
+## Recommended CI logic
+
+1. Install the reviewed fixture.
+2. Execute the baseline and candidate on the same case IDs.
+3. Reject any regression in the impermissible or permissible dimensions.
+4. Use a paired test for the predeclared primary comparison.
+5. Attach the failed cases and trace evidence to the build summary.
+6. Include model/tool cost and latency when the release decision is
+   cost-sensitive.
+
+For the historical Behavior 2 comparison, the classifier preserved 20
+percentage points more legitimate work than the hardened prompt while both
+showed 0% impermissible violations. Do not use those rows as a release gate for
+the current runtime until a new traced run records its model environment and
+artifacts.
+
+`fixtures/coercion_powered_120_arm_outcomes.json` contains one row per test case
+and arm. The tests recompute the published counts and exact paired McNemar
+result from that table instead of trusting the summary JSON alone. The raw
+score and trace artifacts are not committed, so this repository does not claim
+that it can independently verify trace lineage for those reviewed rows.
+
+These thresholds are evidence for this agent and dataset, not universal release
+defaults. Size and calibrate each gated suite for its own decision.

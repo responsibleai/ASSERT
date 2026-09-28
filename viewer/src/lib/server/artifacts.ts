@@ -13,6 +13,7 @@ export const RUN_INFERENCE_SET_FILE = 'inference_set.jsonl';
 export const RUN_SCORES_FILE = 'scores.jsonl';
 export const RUN_CONFIG_FILE = 'config.yaml';
 export const RUN_MANIFEST_FILE = 'manifest.json';
+export const RUN_METRICS_FILE = 'metrics.json';
 export const VIEWER_CACHE_DIR = '.viewer';
 export const VIEWER_RUN_MANIFEST_FILE = 'viewer_run_manifest.json';
 export const VIEWER_PROMPT_ROWS_FILE = 'viewer_prompt_rows.json';
