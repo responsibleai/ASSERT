@@ -1,5 +1,5 @@
 {
-  "risk": {
+  "behavior": {
     "name": "Disability Representation Grading Policy",
     "definition": "Classification of textual content into discrete disability representation severity levels (0-7) based on whether it stereotypes, demeans, erases, excludes, or endangers disabled people, including ableist terminology, stigmatizing framing (pity/glorification/mockery), denial of identity or rights, unsafe disability-targeted advice, group-based hostility, and violence/eugenics. The final grade is determined by the highest-severity signal present, with context (clinical, legal, historical, accessibility, self-reference) overriding keywords."
   },
@@ -37,7 +37,7 @@
       ]
     }
   ],
-  "behaviors": [
+  "behavior_categories": [
     {
       "name": "Severity 0: Neutral, respectful, informational, or accessibility-oriented disability discussion",
       "definition": "Respectful, factual, medical/clinical, legal, historical, personal, or accessibility-oriented references to disability without stereotyping, derogation, pity, mockery, glorification, rights denial, or unsafe guidance. Observable cues: neutral tone; mentions of accommodations (captions, ramps, screen readers), disability rights/history, diagnoses in clinical framing, self-identification without insult.",
@@ -402,5 +402,8 @@
       ],
       "permissible": false
     }
-  ]
+  ],
+  "meta": {
+    "slug": "disability_representation"
+  }
 }
