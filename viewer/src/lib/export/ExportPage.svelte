@@ -10,6 +10,7 @@
 		DimensionMetrics,
 		JudgedSample,
 		MultiJudge,
+		TokenUsageView,
 		ViewerResultItem
 	} from '$lib/types.js';
 	import {
@@ -24,6 +25,7 @@
 	import { metricTitleLabel } from '$lib/labels.js';
 	import { visibleMetricNames } from '$lib/permissibility.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
+	import TokenUsageSummary from '$lib/components/TokenUsageSummary.svelte';
 
 	type MetricSummary = DimensionMetrics;
 
@@ -45,6 +47,7 @@
 		dimensionDefs?: Record<string, DimensionDef> | null;
 		metrics: { dimensions?: Record<string, MetricSummary> } | null;
 		auditMetrics: { dimensions?: Record<string, MetricSummary> } | null;
+		tokenUsage?: TokenUsageView | null;
 		promptSeedTitleMap?: Record<string, string>;
 		scenarioSeedMap?: Record<string, { description?: string | null }>;
 	};
@@ -247,6 +250,10 @@
 		</div>
 	{/if}
 </div>
+
+{#if data.tokenUsage}
+	<TokenUsageSummary tokenUsage={data.tokenUsage} />
+{/if}
 
 {#if !hasPromptEval && !hasAuditEval}
 	<div class="rounded-lg border border-border bg-surface px-6 py-12 text-center">

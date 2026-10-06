@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 import logging
 import shutil
 import unittest
@@ -17,6 +18,7 @@ from assert_ai.core.artifact_cache import (
     hash_payload,
     override_cacheable_output_paths,
     prepare_artifact_plan,
+    preview_artifact_plan,
     refresh_compatibility_files,
     _allocate_version_dir,
     _iter_version_dirs,
@@ -99,6 +101,34 @@ class ArtifactCacheTest(unittest.TestCase):
 
             self.assertFalse(second.reused)
             self.assertEqual(second.version, "v0002")
+
+    def test_preview_plan_redirects_outputs_without_allocating_version(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_category_count": 2,
+                "save_dir": "user/elsewhere",
+            }
+
+            plan = preview_artifact_plan(
+                ctx=ctx,
+                stage_name="systematize",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            overridden = override_cacheable_output_paths(
+                "systematize",
+                raw_cfg,
+                plan,
+            )
+
+            self.assertFalse(plan.reused)
+            self.assertEqual(plan.version, "preview")
+            self.assertFalse(plan.artifact_dir.exists())
+            self.assertEqual(Path(overridden["save_dir"]), plan.artifact_dir)
+            self.assertEqual(raw_cfg["save_dir"], "user/elsewhere")
 
     def test_revert_to_prior_config_reuses_existing_version(self) -> None:
         """v0001 -> change behavior -> v0002 -> revert -> reuse v0001 (not v0002)."""
@@ -254,6 +284,46 @@ class ArtifactCacheTest(unittest.TestCase):
             persisted_ref = persisted["artifacts"]["systematize"]
             self.assertNotIn("MISSING", persisted_ref.get("artifact_dir", ""))
             self.assertNotIn("MISSING", persisted_ref.get("metadata_path", ""))
+
+    def test_activate_latest_read_only_recovers_without_writing(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_category_count": 2,
+            }
+            plan = self._finalize_policy(ctx, raw_cfg)
+            latest_path = Path(ctx["suite_root"]) / "latest.json"
+            latest = json.loads(latest_path.read_text(encoding="utf-8"))
+            latest_ref = latest["artifacts"]["systematize"]
+            latest_ref["artifact_dir"] = "artifacts/systematize/MISSING"
+            latest_ref["metadata_path"] = (
+                "artifacts/systematize/MISSING/artifact.json"
+            )
+            latest_path.write_text(json.dumps(latest), encoding="utf-8")
+            latest_before = latest_path.read_bytes()
+
+            recovery_ctx = self._ctx(root)
+            with (
+                mock.patch(
+                    "assert_ai.core.artifact_cache.refresh_compatibility_files"
+                ) as refresh,
+                mock.patch(
+                    "assert_ai.core.artifact_cache.update_latest"
+                ) as update,
+            ):
+                activate_latest_artifacts(recovery_ctx, read_only=True)
+
+            recovered = recovery_ctx.get("artifact_versions", {}).get(
+                "systematize"
+            )
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["version"], plan.version)
+            self.assertNotIn("MISSING", recovered["artifact_dir"])
+            self.assertEqual(latest_path.read_bytes(), latest_before)
+            refresh.assert_not_called()
+            update.assert_not_called()
 
     def test_activate_latest_handles_metadata_missing_primary_output_key(self) -> None:
         """Regression for Copilot review (round 4).
@@ -964,4 +1034,3 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

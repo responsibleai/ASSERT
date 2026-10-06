@@ -68,7 +68,7 @@ Output:
 
 - `scores.jsonl`
 
-`metrics.json` (pipeline token-usage telemetry) is written by the runner after all stages complete, not by the judge stage itself.
+`metrics.json` (pipeline token-usage telemetry) is written by the runner, not by the judge stage itself. It includes the pre-run token estimate, provider-reported total usage, and usage coverage. Estimate accuracy is reported only for complete runs with complete provider usage metadata; partial, failed, or sparsely reported runs record why accuracy is unavailable.
 
 ## Risks and limitations of ASSERT
 

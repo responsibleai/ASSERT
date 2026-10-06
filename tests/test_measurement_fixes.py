@@ -1422,6 +1422,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
             self.assertEqual(call_count["n"], 3, "no transcripts should be re-judged on resume")
             self.assertEqual(result["count"], 3)
+            self.assertEqual(result["usage_merge"], "accumulate")
             scores_path = Path(tmp_dir) / "scores.jsonl"
             self.assertEqual(len(scores_path.read_text(encoding="utf-8").splitlines()), 3)
 
