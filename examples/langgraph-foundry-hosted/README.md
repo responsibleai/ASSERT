@@ -56,6 +56,7 @@ langgraph-foundry-hosted/
 ├── .dockerignore
 ├── .agentignore            # Files excluded from the deploy package
 ├── .env.example            # Environment variable template
+├── evaluation/             # Foundry-native target, trace, and dataset evaluation adapter
 └── README.md
 ```
 
@@ -212,3 +213,20 @@ cd ../../viewer && npm run dev
 > output. This matters because the graph emits the `intent_classifier`'s routing
 > JSON as an earlier assistant message — returning the first message would feed
 > the judge the internal routing blob instead of the final itinerary.
+
+## Foundry platform-native evaluation
+
+The flow above is ASSERT's current callable-wrapper path: ASSERT invokes the
+deployed `/responses` endpoint and its local judge scores the resulting
+transcript.
+
+The [`evaluation/`](evaluation/) subfolder demonstrates a separate integration:
+Foundry's platform evaluation service invokes a registered prompt/hosted agent,
+evaluates existing `invoke_agent` telemetry, or evaluates an ASSERT
+`inference_set.jsonl` dataset. In all three routes, ASSERT's resolved boolean
+judge dimensions are registered as versioned Foundry custom prompt evaluators.
+
+See [`evaluation/README.md`](evaluation/README.md) for the semantic inversion
+(`ASSERT true = bad event`, `Foundry true = pass`), content-addressed assets,
+prompt/scenario splitting, trace limitations, dry-run commands, and offline
+tests. The adapter never reads or uploads `scores.jsonl`.
