@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from assert_ai.core.io import PROMPTS_DIR, write_json
+from assert_ai.core.runtime_path_policy import RuntimePathError
 
 
 log = logging.getLogger(__name__)
@@ -141,6 +142,49 @@ def supports_artifact_cache(ctx: dict[str, Any]) -> bool:
     return bool(ctx.get("suite_root") and ctx.get("config_path") and ctx.get("artifacts_root"))
 
 
+def _managed_output_path(
+    ctx: dict[str, Any],
+    path: str | Path,
+    *,
+    field_name: str,
+    expected_root: Path,
+) -> Path:
+    policy = ctx.get("path_policy")
+    if policy is None:
+        return Path(path)
+    return policy.resolve_managed_output(
+        path,
+        field_name=field_name,
+        expected_root=expected_root,
+        reject_links=True,
+    )
+
+
+def _managed_suite_root(ctx: dict[str, Any]) -> Path:
+    policy = ctx.get("path_policy")
+    if policy is None:
+        return Path(ctx["suite_root"])
+    return _managed_output_path(
+        ctx,
+        ctx["suite_root"],
+        field_name="artifact cache suite root",
+        expected_root=policy.results_root,
+    )
+
+
+def _managed_stage_root(ctx: dict[str, Any], stage_name: str) -> Path:
+    suite_root = _managed_suite_root(ctx)
+    stage_root = suite_root / ARTIFACTS_DIR / stage_name
+    policy = ctx.get("path_policy")
+    if policy is not None:
+        stage_root = policy.require_managed_tree(
+            stage_root,
+            field_name=f"{stage_name} artifact cache root",
+            expected_root=suite_root,
+        )
+    return stage_root
+
+
 def _matching_artifact_plan(
     *,
     stage_name: str,
@@ -174,9 +218,8 @@ def preview_artifact_plan(
 
     if stage_name not in CACHEABLE_STAGES:
         raise ValueError(f"unsupported cacheable stage: {stage_name}")
-    suite_root = Path(ctx["suite_root"])
+    stage_root = _managed_stage_root(ctx, stage_name)
     fingerprint = build_artifact_fingerprint(ctx=ctx, stage_name=stage_name, raw_cfg=raw_cfg)
-    stage_root = suite_root / ARTIFACTS_DIR / stage_name
     if not forced:
         match = _matching_artifact_plan(
             stage_name=stage_name,
@@ -210,9 +253,8 @@ def prepare_artifact_plan(
 
     if stage_name not in CACHEABLE_STAGES:
         raise ValueError(f"unsupported cacheable stage: {stage_name}")
-    suite_root = Path(ctx["suite_root"])
+    stage_root = _managed_stage_root(ctx, stage_name)
     fingerprint = build_artifact_fingerprint(ctx=ctx, stage_name=stage_name, raw_cfg=raw_cfg)
-    stage_root = suite_root / ARTIFACTS_DIR / stage_name
 
     if not forced:
         match = _matching_artifact_plan(
@@ -238,12 +280,25 @@ def prepare_artifact_plan(
 def activate_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str, Any]:
     """Put selected artifact paths/version metadata into runner context."""
 
+    artifact_dir = _managed_output_path(
+        ctx,
+        plan.artifact_dir,
+        field_name=f"{plan.stage_name} artifact cache version",
+        expected_root=_managed_stage_root(ctx, plan.stage_name),
+    )
     ctx.setdefault("artifact_versions", {})
     ref = artifact_ref(ctx=ctx, plan=plan, metadata=plan.metadata)
     ctx["artifact_versions"][plan.stage_name] = ref
-    ctx[_CONTEXT_DIR_KEYS[plan.stage_name]] = str(plan.artifact_dir)
+    ctx[_CONTEXT_DIR_KEYS[plan.stage_name]] = str(artifact_dir)
     for output_key, context_key in _CONTEXT_PATH_KEYS[plan.stage_name].items():
-        ctx[context_key] = str(plan.output_paths[output_key])
+        ctx[context_key] = str(
+            _managed_output_path(
+                ctx,
+                plan.output_paths[output_key],
+                field_name=f"{plan.stage_name} artifact output '{output_key}'",
+                expected_root=artifact_dir,
+            )
+        )
     return ref
 
 
@@ -315,8 +370,14 @@ def activate_latest_artifacts(
     files.
     """
 
-    suite_root = Path(ctx["suite_root"])
-    latest = _load_json_object(suite_root / LATEST_FILE)
+    suite_root = _managed_suite_root(ctx)
+    latest_path = _managed_output_path(
+        ctx,
+        suite_root / LATEST_FILE,
+        field_name="artifact cache latest metadata",
+        expected_root=suite_root,
+    )
+    latest = _load_json_object(latest_path)
     artifacts = latest.get("artifacts") if isinstance(latest, dict) else None
     if not isinstance(artifacts, dict):
         return
@@ -328,14 +389,25 @@ def activate_latest_artifacts(
         version = ref.get("version")
         if not isinstance(version, str) or not version:
             continue
-        stage_root = suite_root / ARTIFACTS_DIR / stage_name
-        fallback_artifact_dir = stage_root / version
+        stage_root = _managed_stage_root(ctx, stage_name)
+        fallback_artifact_dir = _managed_output_path(
+            ctx,
+            stage_root / version,
+            field_name=f"{stage_name} artifact cache version",
+            expected_root=stage_root,
+        )
         resolved_artifact_dir = _resolve_ref_path(suite_root, ref.get("artifact_dir"))
         artifact_dir_fallback_used = (
             resolved_artifact_dir is None or not resolved_artifact_dir.exists()
         )
         artifact_dir = (
             fallback_artifact_dir if artifact_dir_fallback_used else resolved_artifact_dir
+        )
+        artifact_dir = _managed_output_path(
+            ctx,
+            artifact_dir,
+            field_name=f"{stage_name} artifact cache version",
+            expected_root=stage_root,
         )
         resolved_metadata_path = _resolve_ref_path(
             suite_root,
@@ -348,6 +420,12 @@ def activate_latest_artifacts(
             artifact_dir / ARTIFACT_METADATA_FILE
             if metadata_path_fallback_used
             else resolved_metadata_path
+        )
+        metadata_path = _managed_output_path(
+            ctx,
+            metadata_path,
+            field_name=f"{stage_name} artifact metadata",
+            expected_root=artifact_dir,
         )
         metadata = _load_json_object(metadata_path)
         if metadata and _metadata_outputs_exist(stage_name, artifact_dir, metadata):
@@ -424,8 +502,23 @@ def activate_latest_artifacts(
 def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str, Any]:
     """Write sidecar metadata and update latest/compatibility artifacts."""
 
-    plan.artifact_dir.mkdir(parents=True, exist_ok=True)
-    file_hashes = _file_hashes(plan.output_paths)
+    artifact_dir = _managed_output_path(
+        ctx,
+        plan.artifact_dir,
+        field_name=f"{plan.stage_name} artifact cache version",
+        expected_root=_managed_stage_root(ctx, plan.stage_name),
+    )
+    output_paths = {
+        key: _managed_output_path(
+            ctx,
+            path,
+            field_name=f"{plan.stage_name} artifact output '{key}'",
+            expected_root=artifact_dir,
+        )
+        for key, path in plan.output_paths.items()
+    }
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    file_hashes = _file_hashes(output_paths)
     hashes: dict[str, Any] = {
         "config_hash": plan.fingerprint.config_hash,
         "input_hash": plan.fingerprint.input_hash,
@@ -440,15 +533,21 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
         "hashes": hashes,
         "inputs": plan.fingerprint.descriptor,
         "files": {
-            key: path.name for key, path in plan.output_paths.items()
+            key: path.name for key, path in output_paths.items()
         },
         "file_hashes": file_hashes,
     }
-    write_json(plan.artifact_dir / ARTIFACT_METADATA_FILE, metadata)
+    metadata_path = _managed_output_path(
+        ctx,
+        artifact_dir / ARTIFACT_METADATA_FILE,
+        field_name=f"{plan.stage_name} artifact metadata",
+        expected_root=artifact_dir,
+    )
+    write_json(metadata_path, metadata)
     ref = artifact_ref(ctx=ctx, plan=plan, metadata=metadata)
     ctx.setdefault("artifact_versions", {})[plan.stage_name] = ref
     update_latest(ctx, plan.stage_name, ref)
-    refresh_compatibility_files(ctx, plan.stage_name, plan.output_paths)
+    refresh_compatibility_files(ctx, plan.stage_name, output_paths)
     return ref
 
 
@@ -480,7 +579,19 @@ def discard_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> None:
 
     if plan.reused:
         return
-    artifact_dir = plan.artifact_dir
+    try:
+        artifact_dir = _managed_output_path(
+            ctx,
+            plan.artifact_dir,
+            field_name=f"{plan.stage_name} abandoned artifact cache version",
+            expected_root=_managed_stage_root(ctx, plan.stage_name),
+        )
+    except RuntimePathError as exc:
+        log.warning(
+            "[artifact-cache] refusing to clean up an unmanaged artifact path: %s",
+            exc,
+        )
+        return
     if artifact_dir.exists() and artifact_dir.is_dir():
         try:
             shutil.rmtree(artifact_dir)
@@ -523,11 +634,23 @@ def refresh_compatibility_files(
     copy branch.
     """
 
-    suite_root = Path(ctx["suite_root"])
+    suite_root = _managed_suite_root(ctx)
+    stage_root = _managed_stage_root(ctx, stage_name)
     for path in output_paths.values():
+        path = _managed_output_path(
+            ctx,
+            path,
+            field_name=f"{stage_name} compatibility source",
+            expected_root=stage_root,
+        )
         if not path.exists():
             continue
-        dest = suite_root / path.name
+        dest = _managed_output_path(
+            ctx,
+            suite_root / path.name,
+            field_name=f"{stage_name} compatibility destination",
+            expected_root=suite_root,
+        )
         if _is_local_edit(suite_root, stage_name, dest, path):
             log.warning(
                 "[%s] Preserving local edits to %s: contents differ from the "
@@ -608,8 +731,13 @@ def _was_cached_artifact(
 
 
 def update_latest(ctx: dict[str, Any], stage_name: str, ref: dict[str, Any]) -> None:
-    suite_root = Path(ctx["suite_root"])
-    latest_path = suite_root / LATEST_FILE
+    suite_root = _managed_suite_root(ctx)
+    latest_path = _managed_output_path(
+        ctx,
+        suite_root / LATEST_FILE,
+        field_name="artifact cache latest metadata",
+        expected_root=suite_root,
+    )
     latest = _load_json_object(latest_path) or {"schema_version": 1, "artifacts": {}}
     artifacts = latest.setdefault("artifacts", {})
     if not isinstance(artifacts, dict):
@@ -627,7 +755,7 @@ def artifact_ref(
 ) -> dict[str, Any]:
     """Build the compact artifact reference stored in manifests/context."""
 
-    suite_root = Path(ctx["suite_root"])
+    suite_root = _managed_suite_root(ctx)
     primary_key = next(iter(_OUTPUT_FILES[plan.stage_name]))
     primary_path = plan.output_paths[primary_key]
     sidecar_path = plan.artifact_dir / ARTIFACT_METADATA_FILE
@@ -663,7 +791,7 @@ def _ref_from_metadata(
 ) -> dict[str, Any]:
     """Build a ref payload from on-disk metadata (no plan/fingerprint needed)."""
 
-    suite_root = Path(ctx["suite_root"])
+    suite_root = _managed_suite_root(ctx)
     sidecar_path = artifact_dir / ARTIFACT_METADATA_FILE
     hashes = metadata.get("hashes", {}) if isinstance(metadata, dict) else {}
     file_hashes = metadata.get("file_hashes", {}) if isinstance(metadata, dict) else {}
@@ -819,6 +947,13 @@ def _artifact_or_file_dependency(
             raw_path = str(Path(ctx["suite_root"]) / default_name)
     if isinstance(raw_path, str) and raw_path:
         path = Path(raw_path)
+        policy = ctx.get("path_policy")
+        if policy is not None:
+            path = policy.resolve_input(
+                path,
+                base_dir=Path(ctx["config_path"]).parent,
+                field_name=f"{artifact_type} cache dependency",
+            )
         if path.exists():
             return {
                 "path": str(path),

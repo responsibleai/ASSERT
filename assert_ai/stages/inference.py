@@ -15,7 +15,7 @@ import re
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +70,9 @@ from assert_ai.core.transcript import (
 )
 from assert_ai.stages.test_set import TOOL_SOURCE_PER_TEST_CASE, TOOL_SOURCE_RUNTIME
 from assert_ai.viewer_read_model import build_run_viewer_artifacts
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 SCOPE = "run"
 SUITE_OUTPUT = None
@@ -182,6 +185,7 @@ def _inference_config_fingerprint(
     test_set_path: Path | None = None,
     config_path: Path | None = None,
     test_set_content: bytes | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> str:
     """Deterministic hash of config values that affect inference output.
 
@@ -204,7 +208,10 @@ def _inference_config_fingerprint(
         setup_path = Path(target.sandbox).expanduser()
         if not setup_path.is_absolute() and config_path is not None:
             setup_path = config_path.parent / setup_path
-        setup = load_setup(setup_path.resolve())
+        setup = load_setup(
+            setup_path if path_policy is not None else setup_path.resolve(),
+            path_policy=path_policy,
+        )
         sandbox_hash = hashlib.sha256()
         for path in (setup.source_path, setup.policy_path, setup.mocks_path):
             if path is not None and path.exists():
@@ -531,6 +538,7 @@ def _build_hosted_session(
     synthetic_prompt_template: str,
     tool_timeout_s: float | None = None,
     startup_timeout_s: float | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> HostedSession:
     if not tools_config:
         return HostedSession(
@@ -545,7 +553,9 @@ def _build_hosted_session(
     if module_ref is not None:
         if not isinstance(module_ref, str) or not module_ref.strip():
             raise ValueError("tool-module tools require module")
-        tools_cls, schemas = inspect_tool_module(module_ref, config_path=config_path)
+        tools_cls, schemas = inspect_tool_module(
+            module_ref, config_path=config_path, path_policy=path_policy
+        )
         return HostedSession(
             model=model,
             generate_options=generate_options,
@@ -572,6 +582,7 @@ def _build_hosted_session(
             resolved_path = resolve_toolset_path(
                 toolset_path,
                 config_path=config_path,
+                path_policy=path_policy,
             )
             tools = load_toolset_file(resolved_path)
         return HostedSession(
@@ -598,6 +609,7 @@ def _build_target_session(
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
+    path_policy: RuntimePathPolicy | None = None,
     call_label: str | None = None,
 ) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession | Any:
     """Create the runtime session for one test-case inference."""
@@ -612,6 +624,7 @@ def _build_target_session(
             config_path=config_path,
             message_timeout_s=inference.tool_timeout_s,
             startup_timeout_s=inference.startup_timeout_s,
+            path_policy=path_policy,
         )
 
     if target.is_endpoint:
@@ -636,12 +649,14 @@ def _build_target_session(
                 group_by=target.trace.group_by,
                 live_otel=True,
                 config_path=config_path,
+                path_policy=path_policy,
             )
         return CallableSession(
             callable_ref=target.callable,
             system_prompt=target.system_prompt,
             message_timeout_s=inference.tool_timeout_s,
             config_path=config_path,
+            path_policy=path_policy,
         )
 
     if target.is_external:
@@ -653,6 +668,7 @@ def _build_target_session(
             startup_timeout_s=inference.startup_timeout_s,
             message_timeout_s=inference.tool_timeout_s,
             config_path=config_path,
+            path_policy=path_policy,
         )
 
     if not target.model:
@@ -681,6 +697,7 @@ def _build_target_session(
         synthetic_prompt_template=TOOL_SIM_PROMPT,
         tool_timeout_s=inference.tool_timeout_s,
         startup_timeout_s=inference.startup_timeout_s,
+        path_policy=path_policy,
     )
 
 
@@ -691,6 +708,7 @@ async def _run_prompt_test_case(
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> Transcript:
     """Run one prompt test case against the target runtime."""
     test_case_payload = test_case.get("seed")
@@ -704,6 +722,7 @@ async def _run_prompt_test_case(
         inference=inference,
         max_tokens=max_tokens,
         config_path=config_path,
+        path_policy=path_policy,
         call_label=f"target:{test_case_id}",
     )
     target_id = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or "")
@@ -1035,6 +1054,7 @@ async def _run_scenario_test_case(
     evaluation: EvaluationConfig,
     max_tokens: int,
     config_path: Path | None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> Transcript:
     """Run one scenario test case and capture its transcript."""
     tester = evaluation.tester
@@ -1050,6 +1070,7 @@ async def _run_scenario_test_case(
         inference=evaluation.inference,
         max_tokens=max_tokens,
         config_path=config_path,
+        path_policy=path_policy,
         call_label=f"target:{test_case_id}",
     )
     transcript = Transcript(
@@ -1133,6 +1154,9 @@ async def run_inference(
     target: TargetConfig,
     evaluation: EvaluationConfig | None = None,
     config_path: Path | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    managed_output_root: Path | None = None,
+    managed_test_set_root: Path | None = None,
     strict: bool = False,
     forced: bool = False,
     heartbeat: Any = None,
@@ -1161,7 +1185,28 @@ async def run_inference(
     elif target.tools is not None and target.tools.simulator and not target.tools.toolset:
         raise ValueError("runtime tool_source requires target.tools.toolset when target.tools.simulator is set")
     fixed_system_prompt = str(target.system_prompt or "").strip() or None
-    resolved_test_set_path = resolve_path(test_set_path)
+    resolved_test_set_path = (
+        path_policy.resolve_input(
+            test_set_path,
+            base_dir=config_path.parent if config_path is not None else path_policy.config_root,
+            field_name="inference test set",
+            must_exist=True,
+            file_only=True,
+        )
+        if path_policy is not None
+        else resolve_path(test_set_path)
+    )
+    resolved_run_id = str(run_id or uuid.uuid4().hex[:8]).lower()
+    if path_policy is not None:
+        if managed_output_root is None:
+            raise ValueError("managed_output_root is required with a runtime path policy")
+        out_dir = path_policy.require_managed_tree(
+            save_dir or managed_output_root,
+            field_name="inference output directory",
+            expected_root=managed_output_root,
+        )
+    else:
+        out_dir = resolve_path(save_dir or (Path("artifacts/outputs") / resolved_run_id))
     canonical_rows = normalize_test_case_rows(load_test_cases(resolved_test_set_path, strict=strict))
     test_cases = _prepare_test_cases(
         canonical_rows,
@@ -1175,10 +1220,17 @@ async def run_inference(
         # invalidate the recorded file_hashes in artifact.json.
         rewrite_test_set_path = False
     if rewrite_test_set_path:
+        if path_policy is not None:
+            if managed_test_set_root is None:
+                raise ValueError("managed_test_set_root is required to rewrite a managed test set")
+            resolved_test_set_path = path_policy.resolve_managed_output(
+                resolved_test_set_path,
+                field_name="canonicalized test set",
+                expected_root=managed_test_set_root,
+                reject_links=True,
+            )
         write_jsonl(resolved_test_set_path, canonical_rows)
 
-    resolved_run_id = str(run_id or uuid.uuid4().hex[:8]).lower()
-    out_dir = resolve_path(save_dir or (Path("artifacts/outputs") / resolved_run_id))
     out_dir.mkdir(parents=True, exist_ok=True)
     resolved_max_tokens = max_tokens if max_tokens is not None else DEFAULT_INFERENCE_MAX_TOKENS
     inference = evaluation.inference if evaluation is not None else InferenceConfig()
@@ -1194,6 +1246,7 @@ async def run_inference(
         resolved_max_tokens,
         test_set_path=resolved_test_set_path,
         config_path=config_path,
+        path_policy=path_policy,
     )
     config_hash_path = out_dir / _INFERENCE_CONFIG_HASH_FILE
     if inference_set_path.exists():
@@ -1269,6 +1322,7 @@ async def run_inference(
                     inference=inference,
                     max_tokens=resolved_max_tokens,
                     config_path=config_path,
+                    path_policy=path_policy,
                 )
             elif kind == "scenario":
                 if evaluation is None:
@@ -1279,6 +1333,7 @@ async def run_inference(
                     evaluation=evaluation,
                     max_tokens=resolved_max_tokens,
                     config_path=config_path,
+                    path_policy=path_policy,
                 )
             else:
                 raise ValueError(f"unsupported test case type: {kind}")
@@ -1350,6 +1405,13 @@ async def run_inference(
         results.append(result)
         inference_row = result.get("inference_row")
         if inference_row is not None:
+            if path_policy is not None:
+                inference_set_path = path_policy.resolve_managed_output(
+                    inference_set_path,
+                    field_name="inference output",
+                    expected_root=out_dir,
+                    reject_links=True,
+                )
             append_jsonl_row(inference_set_path, inference_row)
         error = result.get("error")
         # Scenario inferences catch target exceptions mid-conversation and
@@ -1476,6 +1538,12 @@ async def run_inference(
             "the target raised an exception mid-conversation",
             target_error_count,
         )
+    if path_policy is not None:
+        path_policy.require_managed_tree(
+            out_dir,
+            field_name="inference output directory",
+            expected_root=managed_output_root,
+        )
     build_run_viewer_artifacts(out_dir)
 
     return {
@@ -1493,6 +1561,29 @@ async def run_inference(
     }
 
 
+def _should_rewrite_test_set(
+    ctx: dict[str, Any],
+    test_set_path: Path,
+) -> bool:
+    if (
+        isinstance((ctx.get("artifact_versions") or {}).get("test_set"), dict)
+        or _is_versioned_test_set_artifact_path(test_set_path)
+    ):
+        return False
+    policy = ctx.get("path_policy")
+    if policy is not None:
+        suite_root = Path(ctx["suite_root"])
+        if not test_set_path.resolve().is_relative_to(suite_root.resolve()):
+            return False
+        policy.resolve_managed_output(
+            test_set_path,
+            field_name="canonicalized test set",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+    return True
+
+
 async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     """Validate config and run the inference workflow."""
     target = ctx.get("target")
@@ -1507,12 +1598,12 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=ctx.get("run_root"),
     )
     test_set_artifact_ref = (ctx.get("artifact_versions") or {}).get("test_set")
-    # Only rewrite the test_set file when there is no cached artifact to protect.
-    # If the user supplied an explicit test_set_path AND we have no cache ref, we
-    # still want the canonicalization pass to normalize their input file.
-    rewrite_test_set_path = not isinstance(test_set_artifact_ref, dict)
+    # Cached artifacts and inputs outside the managed suite remain read-only.
+    rewrite_test_set_path = _should_rewrite_test_set(ctx, Path(cfg["test_set_path"]))
     result = await run_inference(
         test_set_path=cfg["test_set_path"],
         save_dir=cfg["save_dir"],
@@ -1521,6 +1612,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target=ctx["target"],
         evaluation=ctx.get("evaluation"),
         config_path=ctx["config_path"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=ctx.get("run_root"),
+        managed_test_set_root=ctx.get("suite_root"),
         strict=cfg.get("strict", False),
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,

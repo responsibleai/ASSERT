@@ -78,6 +78,37 @@ Overrides where ASSERT stores artifacts.
 
 Overrides the suite/run output root.
 
+Python integrations can pass a `RuntimePathPolicy` through `path_policy=` to
+`run_pipeline` or `estimate_pipeline_usage`. `WorkspaceService.create(workspace).path_policy`
+provides the standard workspace layout. Relative config references then resolve
+under its config root, and YAML cannot redirect the managed artifact or result
+roots. Stage inputs, toolsets, and sandbox setup references must stay within the
+configured read roots; outputs and cache operations stay within their suite/run
+roots and reject linked managed paths. Inputs outside the managed suite are read
+without rewriting them. Callable and tool-module source files resolve within the
+workspace, with local imports isolated by workspace and config directory.
+
+```python
+from pathlib import Path
+
+from assert_ai.core.workspace import WorkspaceService
+from assert_ai.runner import estimate_pipeline_usage, run_pipeline
+
+policy = WorkspaceService.create(Path.cwd()).path_policy
+estimate = estimate_pipeline_usage(config="eval_config.yaml", path_policy=policy)
+exit_code = run_pipeline(config="eval_config.yaml", path_policy=policy)
+```
+
+The example expects `evals/eval_config.yaml` in the workspace. Operators can
+approve external data directories using the `additional_read_roots` argument to
+`WorkspaceService.create`; this does not authorize writes there.
+
+This is an opt-in Python API, not a YAML field or a change to CLI defaults.
+Path checks assume untrusted processes cannot concurrently modify the managed
+trees. They do not restrict arbitrary target code, installed dependencies, or
+network access, and do not replace an OS sandbox. Environment bootstrapping is
+unchanged.
+
 ### `pipeline`
 
 - Type: mapping

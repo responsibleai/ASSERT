@@ -55,6 +55,7 @@ from assert_ai.core.runtime_safety import (
     PipelineWatchdog,
     run_stage_coro,
 )
+from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 from assert_ai.display import label_metric
 from assert_ai.stages import STAGES
 
@@ -129,11 +130,25 @@ def _load_context(
     *,
     config: str,
     overrides: list[str] | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> dict[str, Any]:
     """Load one config file into runtime context."""
-    cfg_path = Path(config).resolve()
+    cfg_path = (
+        path_policy.resolve_config_path(config, must_exist=True, reject_links=True)
+        if path_policy is not None
+        else Path(config).resolve()
+    )
     raw = _apply_config_overrides(load_config(cfg_path), overrides)
-    return load_runtime_context(raw, cfg_path, stage_modules=STAGES)
+    ctx = load_runtime_context(
+        raw, cfg_path, stage_modules=STAGES, path_policy=path_policy
+    )
+    if path_policy is not None:
+        path_policy.require_managed_tree(
+            ctx["suite_root"],
+            field_name="suite output directory",
+            expected_root=path_policy.results_root,
+        )
+    return ctx
 
 
 def _write_suite_metadata(ctx: dict[str, Any]) -> None:
@@ -188,10 +203,11 @@ def estimate_pipeline_usage(
     force_stages: list[str] | None = None,
     overrides: list[str] | None = None,
     concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> dict[str, Any]:
     """Estimate configured token usage without creating artifacts or running stages."""
 
-    ctx = _load_context(config=config, overrides=overrides)
+    ctx = _load_context(config=config, overrides=overrides, path_policy=path_policy)
     concurrency_ignored = False
     if concurrency is not None:
         evaluation = ctx.get("evaluation")
@@ -1134,6 +1150,7 @@ def run_pipeline(
     strict: bool = False,
     overrides: list[str] | None = None,
     concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> int:
     """Execute the configured stages sequentially and persist suite/run metadata."""
     # Suppress litellm's internal async logging warnings — they fire because
@@ -1160,7 +1177,7 @@ def run_pipeline(
     _install_async_cleanup_filters()
 
     try:
-        ctx = _load_context(config=config, overrides=overrides)
+        ctx = _load_context(config=config, overrides=overrides, path_policy=path_policy)
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")

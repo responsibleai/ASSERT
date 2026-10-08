@@ -167,7 +167,13 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         {"save_dir": save_dir},
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=suite_root,
     )
+    if ctx.get("path_policy") is not None:
+        ctx["path_policy"].require_managed_tree(
+            cfg["save_dir"], field_name="systematize output", expected_root=suite_root
+        )
 
     behavior_name = ctx.get("behavior_name") or "behavior"
     behavior_description = ctx.get("behavior") or ""
