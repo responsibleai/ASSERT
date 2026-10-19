@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the captured external inference input for judge-only viewer artifacts and cache fingerprints, without rewriting same-file inputs or overwriting conflicting run evidence.
+
 ## [0.3.0] - 2026-09-04
 
 Adds evidence-backed eval authoring, stronger host-authoritative sandbox mediation, a broader atomic behavior library, and cleaner optional dependency ownership. This release also changes the default multi-turn budget and includes security, compatibility, and viewer fixes.
