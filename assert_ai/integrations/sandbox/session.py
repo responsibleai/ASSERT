@@ -8,11 +8,14 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from assert_ai.core.action_claims import ActionClaim, make_action_claim
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, TurnResult
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 from .evidence import host_action_event
 from .host_mediator import HostActionBatch
@@ -366,11 +369,20 @@ class SandboxedEndpointSession:
         config_path: Path | None = None,
         message_timeout_s: float | None = None,
         startup_timeout_s: float | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         path = Path(setup_path).expanduser()
         if not path.is_absolute() and config_path is not None:
             path = config_path.parent / path
-        self.setup: MediationSetup = load_setup(path.resolve())
+        if path_policy is not None:
+            path = path_policy.resolve_input(
+                path,
+                base_dir=config_path.parent if config_path is not None else path_policy.config_root,
+                field_name="pipeline.inference.target.sandbox",
+                must_exist=True,
+                file_only=True,
+            )
+        self.setup: MediationSetup = load_setup(path.resolve(), path_policy=path_policy)
         self.case_id = case_id
         self._message_timeout_s = message_timeout_s
         self._startup_timeout_s = startup_timeout_s

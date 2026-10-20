@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import yaml
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 
 def _normalize_parameter_schema(param: Dict[str, Any]) -> dict[str, Any]:
@@ -96,8 +99,17 @@ def resolve_toolset_path(
     path: str | Path,
     *,
     config_path: Path | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> Path:
     """Resolve a toolset using the same config-dir then cwd lookup as runtime."""
+    if path_policy is not None:
+        return path_policy.resolve_input(
+            path,
+            base_dir=config_path.parent if config_path is not None else path_policy.config_root,
+            field_name="pipeline.inference.target.tools.toolset",
+            must_exist=True,
+            file_only=True,
+        )
     resolved = Path(path).expanduser()
     if resolved.is_absolute():
         return resolved

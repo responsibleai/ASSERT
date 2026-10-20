@@ -352,7 +352,14 @@ def _resolved_path(
         {key: value},
         cfg_path=Path(ctx["config_path"]),
         artifacts_root=Path(ctx["artifacts_root"]),
+        path_policy=ctx.get("path_policy"),
     )
+    if ctx.get("path_policy") is not None and key in {"save_dir", "save_path"}:
+        return ctx["path_policy"].require_managed_tree(
+            resolved[key],
+            field_name=key,
+            expected_root=ctx["path_policy"].artifacts_root,
+        )
     return Path(resolved[key])
 
 
@@ -1073,6 +1080,7 @@ def _target_tools(
         toolset_path = resolve_toolset_path(
             target.tools.toolset,
             config_path=Path(ctx["config_path"]),
+            path_policy=ctx.get("path_policy"),
         )
         try:
             return build_target_tools(load_toolset_file(toolset_path)), None
@@ -1463,15 +1471,7 @@ def _pending_case_inventory(
     if not isinstance(resolved_max_tokens, int) or resolved_max_tokens <= 0:
         resolved_max_tokens = DEFAULT_INFERENCE_MAX_TOKENS
     test_set_content: bytes | None = None
-    test_set_artifact_ref = (ctx.get("artifact_versions") or {}).get(
-        "test_set"
-    )
-    rewrite_test_set = (
-        not isinstance(test_set_artifact_ref, dict)
-        and not inference_stage._is_versioned_test_set_artifact_path(
-            test_set_path
-        )
-    )
+    rewrite_test_set = inference_stage._should_rewrite_test_set(ctx, test_set_path)
     if rewrite_test_set:
         canonical_rows = normalize_test_case_rows(load_jsonl(test_set_path))
         test_set_content = (
@@ -1488,6 +1488,7 @@ def _pending_case_inventory(
         test_set_path=test_set_path,
         config_path=Path(ctx["config_path"]),
         test_set_content=test_set_content,
+        path_policy=ctx.get("path_policy"),
     )
     hash_path = output_dir / inference_stage._INFERENCE_CONFIG_HASH_FILE
     stored_hash = (

@@ -1335,9 +1335,17 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         path_cfg,
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=Path(ctx["suite_root"]),
     )
     taxonomy_path = cfg["taxonomy_path"]
     stratification_dir = Path(cfg["save_path"]).parent
+    if ctx.get("path_policy") is not None:
+        ctx["path_policy"].require_managed_tree(
+            stratification_dir,
+            field_name="test-set output",
+            expected_root=Path(ctx["suite_root"]),
+        )
     stratification_result = await run_stratification(
         taxonomy_path=taxonomy_path,
         out_dir=str(stratification_dir),
