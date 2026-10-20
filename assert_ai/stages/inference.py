@@ -1460,7 +1460,7 @@ async def run_inference(
             raise errors[0]
     if errors:
         # By the time we reach here, the configurable
-        # ASSERT_ROLLOUT_ERROR_FAIL_RATIO gate above has already raised on
+        # ASSERT_INFERENCE_ERROR_FAIL_RATIO gate above has already raised on
         # any run whose untyped-error ratio exceeds the threshold
         # (default 10%). A small residual count of seed-level failures
         # (e.g. an auditor turn tripping the model provider's content

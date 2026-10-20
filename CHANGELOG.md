@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apply a consistent judge row-error ratio to small and large runs, configurable with validated `ASSERT_JUDGE_ERROR_FAIL_RATIO` (default 10%). Preserve successful scores and retries while surfacing provider content-filter coverage gaps (#297).
 - Preserve the captured external inference input for judge-only viewer artifacts and cache fingerprints, without rewriting same-file inputs or overwriting conflicting run evidence.
 
 ## [0.3.0] - 2026-09-04
