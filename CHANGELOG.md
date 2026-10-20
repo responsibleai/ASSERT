@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Report monotonic elapsed seconds for passing and failing bank-manager smoke checks (#338).
+
 ### Changed
 
 ### Fixed
