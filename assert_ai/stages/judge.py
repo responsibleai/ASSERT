@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any
@@ -79,9 +80,12 @@ def _judge_config_fingerprint(
     policy_raw: dict[str, Any],
     system_prompt: str,
     inference_set_path: Path,
+    inference_set_bytes: bytes | None = None,
 ) -> str:
     """Deterministic hash of inputs that affect judge output."""
-    inference_set_sha = hashlib.sha256(inference_set_path.read_bytes()).hexdigest()
+    inference_set_sha = hashlib.sha256(
+        inference_set_path.read_bytes() if inference_set_bytes is None else inference_set_bytes
+    ).hexdigest()
     key = json.dumps(
         {
             "judge_model": judge_model,
@@ -98,6 +102,18 @@ def _judge_config_fingerprint(
         sort_keys=True,
     )
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _capture_inference_set(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    """Parse and fingerprint one capture, using the existing JSONL loader."""
+    if not path.exists():
+        return b"", []
+    data = path.read_bytes()
+    with tempfile.TemporaryDirectory(prefix="assert-judge-input-") as temporary:
+        snapshot = Path(temporary) / INFERENCE_SET_FILE
+        snapshot.write_bytes(data)
+        rows = load_jsonl(snapshot)
+    return data, rows
 
 
 async def run_judge(
@@ -138,7 +154,7 @@ async def run_judge(
         else getattr(evaluation.judge, "disabled_dimensions", [])
     )
     resolved_inference_set_path = resolve_path(inference_set_path)
-    rows = load_jsonl(resolved_inference_set_path)
+    inference_set_bytes, rows = _capture_inference_set(resolved_inference_set_path)
     if not rows:
         raise ValueError(f"No inference rows found in {inference_set_path}")
 
@@ -162,6 +178,19 @@ async def run_judge(
         disabled_dimensions=effective_disabled_dimensions,
         schema_name="transcript_judgment",
     )
+
+    # The viewer must read the same bytes that produced the scores and cache
+    # fingerprint. Never copy a separately reread external file after judging.
+    canonical_input = out_dir / INFERENCE_SET_FILE
+    try:
+        with canonical_input.open("xb") as handle:
+            handle.write(inference_set_bytes)
+    except FileExistsError:
+        if canonical_input.read_bytes() != inference_set_bytes:
+            raise ValueError(
+                f"Canonical inference artifact differs from the supplied input: {canonical_input}. "
+                "Use a fresh save_dir to preserve the existing run evidence."
+            ) from None
 
     async def score_row(row: dict[str, Any]) -> dict[str, Any]:
         """Score a single inference row with the judge model."""
@@ -381,6 +410,7 @@ async def run_judge(
         policy_raw=policy_raw,
         system_prompt=judge_contract["system_prompt"],
         inference_set_path=resolved_inference_set_path,
+        inference_set_bytes=inference_set_bytes,
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
     if scores_path.exists():
@@ -465,6 +495,11 @@ async def run_judge(
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
+    if canonical_input.read_bytes() != inference_set_bytes:
+        raise ValueError(
+            f"Canonical inference artifact changed during judging: {canonical_input}. "
+            "Use a fresh save_dir to avoid pairing scores with different input."
+        )
     build_run_viewer_artifacts(out_dir)
     content_filter_errors = sum(isinstance(error, LLMContentFilterError) for error in errors)
     if content_filter_errors:
