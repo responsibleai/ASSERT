@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cap LiteLLM below 1.106.0 so fresh Phoenix installations do not load MCP 2-only types with MCP 1, which aborts Azure Responses calls before the science regression gate can run.
 - Apply a consistent judge row-error ratio to small and large runs, configurable with validated `ASSERT_JUDGE_ERROR_FAIL_RATIO` (default 10%). Preserve successful scores and retries while surfacing provider content-filter coverage gaps (#297).
 
 ## [0.3.0] - 2026-09-04

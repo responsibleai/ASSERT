@@ -32,7 +32,8 @@ classifiers = [
 dependencies = [
   "aiohttp>=3.12.0",
   "click>=8.0",
-  "litellm>=1.84.1,<2",
+  # LiteLLM 1.106 imports MCP 2-only types into Phoenix's MCP 1 environment.
+  "litellm>=1.84.1,<1.106.0",
   "openinference-instrumentation-litellm>=0.1.30",
   "opentelemetry-api>=1.39.0",
   "opentelemetry-sdk>=1.39.0",

@@ -468,7 +468,7 @@ requires-dist = [
     { name = "assert-ai", extras = ["phoenix", "analysis", "embeddings", "azure-auth", "acs"], marker = "extra == 'all'" },
     { name = "azure-identity", marker = "extra == 'azure-auth'", specifier = ">=1.19.0" },
     { name = "click", specifier = ">=8.0" },
-    { name = "litellm", specifier = ">=1.84.1,<2" },
+    { name = "litellm", specifier = ">=1.84.1,<1.106.0" },
     { name = "numpy", marker = "extra == 'analysis'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'analysis'", specifier = ">=2.20.0,<3" },
