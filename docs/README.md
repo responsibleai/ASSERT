@@ -48,6 +48,10 @@ Command reference for creating, running, and inspecting evaluations.
 
 - [CI Safety Gate](ci/README.md): Wire ASSERT into pull requests with `assert-ai-action` to block on evidence of new safety regressions.
 
+## Integrations
+
+- [Langfuse artifact export](integrations/langfuse.md): Send completed ASSERT traces and judgments to Langfuse for storage and visualization.
+
 ## Targets
 
 Choose the right target integration path for your system.

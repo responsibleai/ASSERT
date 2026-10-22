@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -43,6 +44,7 @@ __all__ = [
     "get_verdict_dimension",
     "has_successful_judge_verdict",
     "infer_judge_status",
+    "inference_row_sha256",
     "is_not_applicable_dimension",
     "is_valid_confidence_label",
     "is_valid_event_flag",
@@ -212,6 +214,17 @@ def infer_judge_status(record: Dict[str, Any]) -> str:
     if isinstance(status, str) and status:
         return "judge_failed"
     return "ok" if success else "judge_failed"
+
+
+def inference_row_sha256(row: Dict[str, Any]) -> str:
+    """Fingerprint the exact inference content a score row judges."""
+    payload = json.dumps(
+        row,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def has_successful_judge_verdict(
