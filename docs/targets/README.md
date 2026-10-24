@@ -11,7 +11,7 @@ Pick a target based on how your agent is built.
 | A system prompt + tool schema, no orchestration code yet | **Prompt Agent target** (`target.model`, `target.system_prompt`, `target.tools`): the runtime owns the tool-call loop (up to 10 rounds, real or simulated tools). Best for test-driven prompt + toolset design before any agent is implemented | [Prompt Agent Target (model + tools)](model-and-tools.md) |
 | Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, and others) | **Callable target with OTel traces (recommended)**: point `target.callable` at your entry function and add `target.trace` so Phoenix/OpenInference (or your own OTel SDK spans) feed tool calls, routing, model calls, and latency to the judge | [Callable Target](callable.md) |
 | A configured agent that must attempt risky actions without reaching real systems | **Stock sandbox target** (`target.sandbox`): ASSERT starts a disposable Docker container, can make pass/mock/block decisions on the host, denies direct internet access, and records host-owned action decisions plus audited egress evidence | [Sandboxed Action Mediation](../../examples/sandbox_action_mediation/README.md) |
-| Existing OpenTelemetry traces from a prior run | **Judge pre-collected traces**: parse the trace file into an inference set with `assert-ai judge-traces --traces <path> --config <path>`, then score it with `assert-ai run --config <path> --force-stage judge` | [CLI reference](../cli/commands.md#judge-traces) |
+| Existing OpenTelemetry traces from a prior run | **Judge pre-collected traces**: import and score an OTLP JSON cohort with `assert-ai judge-traces --traces <path> --config <path>` using an existing taxonomy | [CLI reference](../cli/commands.md#judge-traces) |
 | A black-box HTTP service you cannot import as Python | **HTTP endpoint target**: point `target.endpoint` at the service URL. The runtime POSTs to it directly — no wrapper code. Same black-box visibility as a plain callable: the judge sees only the final response | [HTTP endpoint (`target.endpoint`)](callable.md#http-endpoint-targetendpoint) |
 | A black-box API you cannot instrument | **Plain callable (customization fallback, not recommended)**: `target.callable` with no `target.trace`. The judge sees only the final response; use only when instrumentation is impossible | [Callable Target (without traces)](callable.md#customization-without-traces) |
 
@@ -37,19 +37,18 @@ After an eval finds policy violations, see [Securing agents with ACS](../guides/
 ## Offline path: bring your own OTel traces
 
 If your repo already emits OpenTelemetry spans, you can turn a captured trace file into scored
-results without running live inference — in two steps:
+results without running live inference:
 
 ```bash
 assert-ai judge-traces --traces <path> --config <path>
-assert-ai run --config <path> --force-stage judge
 ```
 
-`judge-traces` parses the OTel spans into an inference set (`inference_set.jsonl`); it does not
-call the judge itself. `--force-stage judge` runs the judge stage against that inference set and
-produces `scores.jsonl`. This is separate from `assert-ai run`'s normal path: there is no
-`--trace` flag on `assert-ai run`. Use `target.callable` + `target.trace` when ASSERT should run
-the target and collect traces; use `judge-traces` + `--force-stage judge` when traces already
-exist.
+`judge-traces` imports the spans and runs the existing judge stage to produce `scores.jsonl`
+and viewer artifacts. Supply a judge config and a reviewed taxonomy; no target is invoked.
+It calls the judge model, so provider credentials and normal model charges apply.
+Use `--parse-only` to retain the earlier conversion-only behavior without model calls.
+See the [CLI reference](../cli/commands.md#judge-traces) for output layout and evidence limits.
+Use `target.callable` + `target.trace` when ASSERT should run the target and collect traces.
 
 ## Simple path: Prompt Agent (model + tools)
 
@@ -85,7 +84,7 @@ Because this path has no trace capture, the judge sees only the returned text. P
 | Path | Who owns the tool-call loop? | Best for | Config anchor |
 |---|---|---|---|
 | Callable target with OTel traces (recommended) | You (your callable runs the loop; ASSERT reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
-| Pre-collected OTel traces | You (`judge-traces` parses spans into an inference set; `--force-stage judge` scores them) | Repos that already captured spans from a prior run | `assert-ai judge-traces --traces <path> --config <path>` then `assert-ai run --config <path> --force-stage judge` |
+| Pre-collected OTel traces | No new agent execution; ASSERT judges the imported evidence | Repos that already captured spans from a prior run | `assert-ai judge-traces --traces <path> --config <path>` |
 | Prompt Agent (model + tools) | ASSERT runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
 | Stock sandbox target | Your configured image owns the tool loop; ASSERT owns containment and lifecycle | Adversarial action evaluation without real outside-world side effects | `target.sandbox` |
 | HTTP endpoint | The HTTP service (ASSERT doesn't see inside) | A deployed service you cannot import as Python | `target.endpoint` |

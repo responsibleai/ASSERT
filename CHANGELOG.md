@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `judge-traces` now runs the configured judge against imported OTLP conversations and
+  writes standard run/viewer artifacts without invoking the target. It requires an
+  existing taxonomy and judge credentials; use `--parse-only` for the previous
+  conversion-only behavior without model calls. Incomplete evaluations exit nonzero.
+
 ### Fixed
 
 - Apply a consistent judge row-error ratio to small and large runs, configurable with validated `ASSERT_JUDGE_ERROR_FAIL_RATIO` (default 10%). Preserve successful scores and retries while surfacing provider content-filter coverage gaps (#297).

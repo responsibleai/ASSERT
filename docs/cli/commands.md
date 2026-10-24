@@ -215,7 +215,9 @@ Optional:
 
 ## `judge-traces`
 
-Judge pre-collected OTel traces without running inference.
+Judge pre-collected OTLP JSON traces without invoking the target, generating test cases,
+or regenerating the taxonomy. This command calls the configured judge model and incurs
+its normal cost. Use `--parse-only` for conversion without model calls.
 
 ```bash
 assert-ai judge-traces --traces <path> --config <path> [OPTIONS]
@@ -224,12 +226,61 @@ assert-ai judge-traces --traces <path> --config <path> [OPTIONS]
 Required:
 
 - `--traces <path>`
-- `--config <path>`
+- `--config <path>` with an enabled `pipeline.judge`, a judge model (or `default_model`),
+  and an existing taxonomy. Relative `taxonomy_path` values resolve from this config.
 
 Optional:
 
 - `--group-by <attribute>` default `session.id`
-- `--output <path>`
+- `--output <results>/<suite>/<run>` overrides the run directory. Otherwise the command
+  uses the config's normal `results_dir`, `suite`, and `run`.
+- `--parse-only` preserves the earlier conversion-only behavior. Its output directory
+  contains parsed rows, not a scored run.
+
+Minimal judge-only config:
+
+```yaml
+suite: imported-traces
+run: baseline-1
+pipeline:
+  judge:
+    model:
+      name: azure/my-judge-deployment
+    taxonomy_path: ./taxonomy.json
+```
+
+Provide the judge's usual provider credentials through the environment. Neither agent
+credentials nor a target configuration are needed. Upstream stages in a supplied config
+are ignored. The taxonomy must contain non-empty `behavior_categories`; use reviewed
+categories and permissibility labels for the behavior being evaluated.
+
+The command writes standard `inference_set.jsonl`, `scores.jsonl`, a judge-only
+`config.yaml`, `manifest.json`, and viewer artifacts. It also writes `trace_import.json`
+with the source hash and grouping choice. Scores carry an `inference_row_sha256` binding
+them to their exact imported row. Tool arguments/results and source trace/span IDs stay
+in the local artifacts; review access and retention before importing sensitive traces.
+
+Use a dedicated trace suite. Existing run directories, differing suite taxonomies, and
+suites with generated artifact versions are rejected rather than overwritten. Select a
+new run for another cohort and a new suite when the taxonomy changes.
+
+The exit status reports evaluation completeness, not whether the agent was safe. It is
+nonzero for missing evidence, skipped/failed judgments, or provider errors, with counts
+printed separately. Successful judgments that find violations do not fail the command.
+Request text is retained where the export provides it, but a response-only export cannot
+establish request context or prove tool enforcement. A recorded tool request without an
+execution receipt is an attempted action, not proof of a side effect.
+
+Imports retain final outputs recorded on root chain/agent spans and structured tool
+requests in message history. Matching parent/child outputs are deduplicated only when
+the span lineage identifies the child; tool history is correlated by call ID, name,
+and arguments. Conflicting recorded results or contradictory causal relationships
+at tied timestamps fail the import instead of choosing silently.
+Evidence eligibility is checked against the reconstructed transcript,
+so a source field that the parser cannot represent does not make an empty row scoreable.
+Repeated history retains its established action bindings across intervening wrappers.
+It cannot transfer a receipt to an earlier-captured or incomplete action; replacing
+a captured binding requires a later capture that records the matching receipt.
 
 ## `acs generate`
 
