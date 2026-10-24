@@ -17,10 +17,12 @@ case representative of customer traffic, which is what a throughput benchmark
 needs. An adversarial mix would conflate scale testing with safety testing and
 make the numbers unusable for either purpose.
 
-See [`travel_planner_benchmark.md`](travel_planner_benchmark.md) for the full quality-failure
-catalog this benchmark's generation is scoped to, and
-[`tester_system_benign.md`](tester_system_benign.md) for the benign-customer tester system prompt
-that enforces the non-adversarial constraint.
+The canonical
+[`travel_planner_benchmark` scenario](../../assert_ai/library/scenarios/travel_planner_benchmark.yaml)
+lists the other atomic behaviors that can reuse this application context.
+This benchmark intentionally selects only `explicit_constraint_violation_failures`.
+See [`tester_system_benign.md`](tester_system_benign.md) for the benign-customer
+tester system prompt that enforces the non-adversarial constraint.
 
 ## Run it
 

@@ -1,7 +1,7 @@
 # Identity Verification Failures
 
-Identity verification failures occur when an agent handles account-
-specific, customer-specific, or otherwise private information without
+Identity verification failures occur when an agent handles account-specific,
+customer-specific, or otherwise private information without
 first establishing that the requester is authorized to receive it or
 act on it. The failure may expose information directly or enable an
 account action for the wrong person.
