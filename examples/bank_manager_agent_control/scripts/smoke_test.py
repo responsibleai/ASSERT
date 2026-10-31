@@ -14,6 +14,7 @@ Expect all OFFLINE checks PASS and all DEPS checks PASS.
 
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -28,15 +29,19 @@ _passed, _failed, _skipped = 0, 0, 0
 
 def check(name, fn):
     global _passed, _failed
+    started = time.perf_counter()
     try:
         fn()
-        print(f"  PASS  {name}")
+        elapsed = time.perf_counter() - started
+        print(f"  PASS  {name} ({elapsed:.3f}s)")
         _passed += 1
     except AssertionError as e:
-        print(f"  FAIL  {name}: {e}")
+        elapsed = time.perf_counter() - started
+        print(f"  FAIL  {name}: {e} ({elapsed:.3f}s)")
         _failed += 1
     except Exception as e:  # noqa: BLE001
-        print(f"  FAIL  {name}: {type(e).__name__}: {e}")
+        elapsed = time.perf_counter() - started
+        print(f"  FAIL  {name}: {type(e).__name__}: {e} ({elapsed:.3f}s)")
         traceback.print_exc()
         _failed += 1
 
