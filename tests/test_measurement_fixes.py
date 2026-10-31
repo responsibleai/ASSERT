@@ -3,10 +3,12 @@
 
 import asyncio
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from assert_ai.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
 from assert_ai.core.transcript import (
@@ -26,8 +28,13 @@ from assert_ai.core.judge import (
     infer_judge_status,
     normalize_transcript_judge_verdict,
 )
+from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMProviderError
 from assert_ai.stages.judge import run_judge
-from assert_ai.viewer_read_model import ViewerReadModelBuildError
+from assert_ai.viewer_read_model import (
+    VIEWER_CACHE_DIR,
+    VIEWER_TRANSCRIPT_INDEX_FILE,
+    ViewerReadModelBuildError,
+)
 
 
 class MeasurementFixesTest(unittest.TestCase):
@@ -1343,6 +1350,251 @@ class MeasurementFixesTest(unittest.TestCase):
                 0,
             )
         return fake
+
+    def _judge_error_inputs(self, root: Path, row_count: int) -> dict[str, Any]:
+        inference_set_path = root / "inference_set.jsonl"
+        taxonomy_path = root / "taxonomy.json"
+        taxonomy_path.write_text(
+            json.dumps({"behavior": {"name": "c", "definition": "d"}, "behavior_categories": []}),
+            encoding="utf-8",
+        )
+        self._make_minimal_transcripts(
+            inference_set_path, [f"case-{i}" for i in range(row_count)],
+        )
+        return {
+            "inference_set_path": str(inference_set_path),
+            "taxonomy_path": str(taxonomy_path),
+            "save_dir": str(root),
+            "evaluation": EvaluationConfig(
+                judge=JudgeConfig(model="judge"),
+                inference=InferenceConfig(concurrency=1),
+            ),
+        }
+
+    def _attempts_with_errors(self, errors: list[Exception]):
+        remaining = iter(errors)
+        ok_attempts = self._ok_attempts_factory()
+
+        async def fake(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
+            error = next(remaining, None)
+            if error is not None:
+                raise error
+            return await ok_attempts(*args, **kwargs)
+
+        return fake
+
+    def test_run_judge_default_error_ratio_boundaries(self) -> None:
+        cases = [
+            (9, 1, True),
+            (10, 1, False),
+            (10, 2, True),
+            (19, 1, False),
+            (20, 2, False),
+            (20, 3, True),
+        ]
+        for row_count, error_count, should_fail in cases:
+            with self.subTest(rows=row_count, errors=error_count), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                inputs = self._judge_error_inputs(root, row_count)
+                error = LLMProviderError("synthetic judge failure")
+                attempts = AsyncMock(side_effect=self._attempts_with_errors([error] * error_count))
+                with patch.dict(os.environ), patch("assert_ai.core.judge._run_judge_attempts", new=attempts):
+                    os.environ.pop("ASSERT_JUDGE_ERROR_FAIL_RATIO", None)
+                    if should_fail:
+                        with self.assertRaises(LLMProviderError) as raised:
+                            asyncio.run(run_judge(**inputs))
+                        self.assertIs(raised.exception, error)
+                    else:
+                        result = asyncio.run(run_judge(**inputs))
+                        self.assertEqual(result["count"], row_count - error_count)
+                        self.assertEqual(result["new_count"], row_count - error_count)
+                        self.assertEqual(result["errored_count"], error_count)
+                        self.assertEqual(result["judge_failures"], 0)
+
+                self.assertEqual(attempts.await_count, row_count)
+                score_rows = [
+                    json.loads(line)
+                    for line in (root / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+                ]
+                self.assertEqual(
+                    {row["test_case_id"] for row in score_rows},
+                    {f"case-{i}" for i in range(error_count, row_count)},
+                )
+                self.assertTrue(all(row["judge_status"] == "ok" for row in score_rows))
+                self.assertTrue((root / VIEWER_CACHE_DIR / VIEWER_TRANSCRIPT_INDEX_FILE).exists())
+
+    def test_run_judge_configured_error_ratio_and_all_failed_guard(self) -> None:
+        cases = [
+            ("0", 10, 1, True),
+            ("0.20", 10, 2, False),
+            ("0.20", 10, 3, True),
+            ("1.0", 10, 9, False),
+            ("1.0", 10, 10, True),
+        ]
+        for ratio, row_count, error_count, should_fail in cases:
+            with self.subTest(ratio=ratio, errors=error_count), TemporaryDirectory() as tmp_dir:
+                inputs = self._judge_error_inputs(Path(tmp_dir), row_count)
+                error = LLMProviderError("synthetic judge failure")
+                attempts = AsyncMock(side_effect=self._attempts_with_errors([error] * error_count))
+                with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": ratio}), \
+                     patch("assert_ai.core.judge._run_judge_attempts", new=attempts):
+                    if should_fail:
+                        with self.assertRaises(LLMProviderError) as raised:
+                            asyncio.run(run_judge(**inputs))
+                        self.assertIs(raised.exception, error)
+                    else:
+                        result = asyncio.run(run_judge(**inputs))
+                        self.assertEqual(result["count"], row_count - error_count)
+                        self.assertEqual(result["errored_count"], error_count)
+                self.assertEqual(attempts.await_count, row_count)
+
+    def test_run_judge_invalid_error_ratio_preserves_cache_before_calls(self) -> None:
+        for ratio in ("", "not-a-number", "-0.1", "1.1", "nan", "inf", "-inf"):
+            with self.subTest(ratio=ratio), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                inputs = self._judge_error_inputs(root, 2)
+                scores_path = root / "scores.jsonl"
+                hash_path = root / ".judge_config_hash"
+                scores_path.write_text("synthetic cached scores\n", encoding="utf-8")
+                hash_path.write_text("synthetic cached fingerprint\n", encoding="utf-8")
+                with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": ratio}), \
+                     patch("assert_ai.core.judge._run_judge_attempts", new_callable=AsyncMock) as attempts, \
+                     patch("assert_ai.stages.judge.build_run_viewer_artifacts") as build_viewer:
+                    with self.assertRaisesRegex(ValueError, "ASSERT_JUDGE_ERROR_FAIL_RATIO"):
+                        asyncio.run(run_judge(**inputs, forced=True))
+                attempts.assert_not_awaited()
+                build_viewer.assert_not_called()
+                self.assertEqual(scores_path.read_text(encoding="utf-8"), "synthetic cached scores\n")
+                self.assertEqual(hash_path.read_text(encoding="utf-8"), "synthetic cached fingerprint\n")
+
+    def test_run_judge_zero_error_ratio_preserves_score_row_statuses(self) -> None:
+        for status in ("filter_skipped", "scoring_skipped", "judge_failed"):
+            with self.subTest(status=status), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                inputs = self._judge_error_inputs(root, 2)
+                if status == "scoring_skipped":
+                    inference_path = Path(inputs["inference_set_path"])
+                    rows = [
+                        json.loads(line)
+                        for line in inference_path.read_text(encoding="utf-8").splitlines()
+                    ]
+                    rows[0]["stop_reason"] = "target_error"
+                    inference_path.write_text(
+                        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8",
+                    )
+                ok_attempts = self._ok_attempts_factory()
+                first_attempt = True
+
+                async def fake(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
+                    nonlocal first_attempt
+                    if first_attempt:
+                        first_attempt = False
+                        if status == "filter_skipped":
+                            raise LLMInputError("synthetic input refusal")
+                        if status == "judge_failed":
+                            return [], [], 1
+                    return await ok_attempts(*args, **kwargs)
+
+                attempts = AsyncMock(side_effect=fake)
+                with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "0"}), \
+                     patch("assert_ai.core.judge._run_judge_attempts", new=attempts):
+                    result = asyncio.run(run_judge(**inputs))
+
+                self.assertEqual(result["count"], 2)
+                self.assertEqual(result["new_count"], 2)
+                self.assertEqual(result["errored_count"], 0)
+                self.assertEqual(result["judge_failures"], int(status != "scoring_skipped"))
+                self.assertEqual(attempts.await_count, 1 if status == "scoring_skipped" else 2)
+                score_rows = [
+                    json.loads(line)
+                    for line in (root / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+                ]
+                by_id = {row["test_case_id"]: row for row in score_rows}
+                self.assertEqual(by_id["case-0"]["judge_status"], status)
+                self.assertEqual(by_id["case-1"]["judge_status"], "ok")
+                self.assertNotIn("dimensions", by_id["case-0"]["verdict"])
+
+    def test_run_judge_error_ratio_resume_retries_only_missing_rows(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            inputs = self._judge_error_inputs(root, 10)
+            error = LLMProviderError("synthetic judge failure")
+            with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "0.10"}), \
+                 patch("assert_ai.core.judge._run_judge_attempts", new=self._attempts_with_errors([error])):
+                result = asyncio.run(run_judge(**inputs))
+            self.assertEqual(result["count"], 9)
+            self.assertEqual(result["errored_count"], 1)
+            scores_path = root / "scores.jsonl"
+            cached_scores = scores_path.read_bytes()
+
+            attempts = AsyncMock(side_effect=self._attempts_with_errors([error]))
+            with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "0.20"}), \
+                 patch("assert_ai.core.judge._run_judge_attempts", new=attempts):
+                with self.assertRaises(LLMProviderError) as raised:
+                    asyncio.run(run_judge(**inputs))
+            self.assertIs(raised.exception, error)
+            self.assertEqual(attempts.await_count, 1, "cached successes must not dilute the retry error ratio")
+            self.assertEqual(scores_path.read_bytes(), cached_scores)
+
+            attempts = AsyncMock(side_effect=self._ok_attempts_factory())
+            with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "0.10"}), \
+                 patch("assert_ai.core.judge._run_judge_attempts", new=attempts):
+                result = asyncio.run(run_judge(**inputs))
+                self.assertEqual(result["count"], 10)
+                self.assertEqual(result["new_count"], 1)
+                self.assertEqual(result["cached_count"], 9)
+                self.assertEqual(result["errored_count"], 0)
+                self.assertEqual(attempts.await_count, 1)
+                attempts.reset_mock()
+                result = asyncio.run(run_judge(**inputs))
+                attempts.assert_not_awaited()
+                self.assertEqual(result["count"], 10)
+                self.assertEqual(result["new_count"], 0)
+                self.assertEqual(result["cached_count"], 10)
+                self.assertEqual(result["errored_count"], 0)
+            score_rows = [json.loads(line) for line in scores_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(score_rows), 10)
+            self.assertEqual({row["test_case_id"] for row in score_rows}, {f"case-{i}" for i in range(10)})
+
+    def test_run_judge_auth_error_remains_fatal_with_relaxed_ratio(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            inputs = self._judge_error_inputs(Path(tmp_dir), 2)
+            error = LLMAuthError("synthetic authentication failure")
+            with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "1.0"}), \
+                 patch("assert_ai.core.judge._run_judge_attempts", new=self._attempts_with_errors([error])):
+                with self.assertRaises(LLMAuthError) as raised:
+                    asyncio.run(run_judge(**inputs))
+            self.assertIs(raised.exception, error)
+
+    def test_run_judge_error_ratio_content_filter_diagnostics(self) -> None:
+        filtered = LLMContentFilterError("synthetic content-filter rejection")
+        provider = LLMProviderError("synthetic provider failure")
+        cases = [
+            (10, [filtered], False, 1),
+            (10, [filtered, filtered], True, 2),
+            (1, [filtered], True, 1),
+            (10, [provider, filtered], True, 1),
+        ]
+        for row_count, errors, should_fail, filter_count in cases:
+            with self.subTest(rows=row_count, errors=len(errors)), TemporaryDirectory() as tmp_dir:
+                inputs = self._judge_error_inputs(Path(tmp_dir), row_count)
+                with patch.dict(os.environ, {"ASSERT_JUDGE_ERROR_FAIL_RATIO": "0.10"}), \
+                     patch("assert_ai.core.judge._run_judge_attempts", new=self._attempts_with_errors(errors)), \
+                     self.assertLogs("assert_ai.stages.judge", level="WARNING") as captured:
+                    if should_fail:
+                        with self.assertRaises(type(errors[0])) as raised:
+                            asyncio.run(run_judge(**inputs))
+                        self.assertIs(raised.exception, errors[0])
+                    else:
+                        result = asyncio.run(run_judge(**inputs))
+                        self.assertEqual(result["errored_count"], len(errors))
+                messages = "\n".join(captured.output)
+                self.assertIn(f"LLMContentFilterError: {filter_count}/{row_count}", messages)
+                self.assertIn("https://responsibleai.github.io/ASSERT/docs/config/best-practices/", messages)
+                self.assertIn(type(errors[0]).__name__, messages)
+                self.assertIn(f"{len(errors)}/{row_count} ({len(errors) / row_count:.1%})", messages)
+                self.assertIn("10.0%", messages)
+                self.assertIn("ASSERT_JUDGE_ERROR_FAIL_RATIO", messages)
 
     def test_run_judge_streams_rows_to_disk_during_execution(self) -> None:
         with TemporaryDirectory() as tmp_dir:
