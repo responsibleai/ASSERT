@@ -9,9 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Report monotonic elapsed seconds for passing and failing bank-manager smoke checks (#338).
+
 ### Changed
 
+- **Breaking:** the optional `phoenix` extra now requires Phoenix 19.17.0 or later within the existing `<19.18.0` compatibility range. Phoenix 15's pinned Strawberry version cannot import with GraphQL Core 3.3; Phoenix 19.17 supports both GraphQL Core 3.2 and 3.3. Upgrade with `python -m pip install --upgrade "assert-ai[phoenix]"`; ASSERT no longer caps GraphQL Core globally. Compatibility CI covers both GraphQL Core versions with minimum and current allowed Phoenix/client dependencies.
+
 ### Fixed
+
+- Cap LiteLLM below 1.106.0 so fresh Phoenix installations do not load MCP 2-only types with MCP 1, which aborts Azure Responses calls before the science regression gate can run.
+- Apply a consistent judge row-error ratio to small and large runs, configurable with validated `ASSERT_JUDGE_ERROR_FAIL_RATIO` (default 10%). Preserve successful scores and retries while surfacing provider content-filter coverage gaps (#297).
+- Preserve the captured external inference input for judge-only viewer artifacts and cache fingerprints, without rewriting same-file inputs or overwriting conflicting run evidence.
 
 ## [0.3.0] - 2026-09-04
 
