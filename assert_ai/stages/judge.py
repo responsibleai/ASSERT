@@ -9,6 +9,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
+import os
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any
@@ -77,9 +80,12 @@ def _judge_config_fingerprint(
     policy_raw: dict[str, Any],
     system_prompt: str,
     inference_set_path: Path,
+    inference_set_bytes: bytes | None = None,
 ) -> str:
     """Deterministic hash of inputs that affect judge output."""
-    inference_set_sha = hashlib.sha256(inference_set_path.read_bytes()).hexdigest()
+    inference_set_sha = hashlib.sha256(
+        inference_set_path.read_bytes() if inference_set_bytes is None else inference_set_bytes
+    ).hexdigest()
     key = json.dumps(
         {
             "judge_model": judge_model,
@@ -98,6 +104,18 @@ def _judge_config_fingerprint(
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
+def _capture_inference_set(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    """Parse and fingerprint one capture, using the existing JSONL loader."""
+    if not path.exists():
+        return b"", []
+    data = path.read_bytes()
+    with tempfile.TemporaryDirectory(prefix="assert-judge-input-") as temporary:
+        snapshot = Path(temporary) / INFERENCE_SET_FILE
+        snapshot.write_bytes(data)
+        rows = load_jsonl(snapshot)
+    return data, rows
+
+
 async def run_judge(
     *,
     inference_set_path: str,
@@ -111,6 +129,15 @@ async def run_judge(
     usage_merge_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score inference rows and write score artifacts."""
+    try:
+        error_fail_ratio = float(os.environ.get("ASSERT_JUDGE_ERROR_FAIL_RATIO", "0.10"))
+        if not math.isfinite(error_fail_ratio) or not 0 <= error_fail_ratio <= 1:
+            raise ValueError("ratio is outside the finite [0, 1] range")
+    except ValueError as exc:
+        raise ValueError(
+            "ASSERT_JUDGE_ERROR_FAIL_RATIO must be a finite number between 0 and 1"
+        ) from exc
+
     judge_model = str(evaluation.judge.model.name)
     judge_temperature = evaluation.judge.model.temperature
     judge_max_tokens = evaluation.judge.model.max_tokens
@@ -127,7 +154,7 @@ async def run_judge(
         else getattr(evaluation.judge, "disabled_dimensions", [])
     )
     resolved_inference_set_path = resolve_path(inference_set_path)
-    rows = load_jsonl(resolved_inference_set_path)
+    inference_set_bytes, rows = _capture_inference_set(resolved_inference_set_path)
     if not rows:
         raise ValueError(f"No inference rows found in {inference_set_path}")
 
@@ -151,6 +178,19 @@ async def run_judge(
         disabled_dimensions=effective_disabled_dimensions,
         schema_name="transcript_judgment",
     )
+
+    # The viewer must read the same bytes that produced the scores and cache
+    # fingerprint. Never copy a separately reread external file after judging.
+    canonical_input = out_dir / INFERENCE_SET_FILE
+    try:
+        with canonical_input.open("xb") as handle:
+            handle.write(inference_set_bytes)
+    except FileExistsError:
+        if canonical_input.read_bytes() != inference_set_bytes:
+            raise ValueError(
+                f"Canonical inference artifact differs from the supplied input: {canonical_input}. "
+                "Use a fresh save_dir to preserve the existing run evidence."
+            ) from None
 
     async def score_row(row: dict[str, Any]) -> dict[str, Any]:
         """Score a single inference row with the judge model."""
@@ -370,6 +410,7 @@ async def run_judge(
         policy_raw=policy_raw,
         system_prompt=judge_contract["system_prompt"],
         inference_set_path=resolved_inference_set_path,
+        inference_set_bytes=inference_set_bytes,
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
     if scores_path.exists():
@@ -454,45 +495,52 @@ async def run_judge(
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
+    if canonical_input.read_bytes() != inference_set_bytes:
+        raise ValueError(
+            f"Canonical inference artifact changed during judging: {canonical_input}. "
+            "Use a fresh save_dir to avoid pairing scores with different input."
+        )
     build_run_viewer_artifacts(out_dir)
-    # Per-row failures should not kill the stage as long as *some* rows
-    # succeeded. The errors are surfaced via judge_failures in the
-    # returned summary and as judge_status != "ok" in scores.jsonl, so
-    # downstream consumers (metrics, viewer, CSV) can present them
-    # without losing the rows that did succeed. The stage hard-fails
-    # outright when (a) no rows succeeded AND no prior scores were
-    # cached (failure is systemic — auth, config), or (b) the per-row
-    # failure rate exceeds 10% on runs of >=20 transcripts (mirrors
-    # rollout.py's ASSERT_ROLLOUT_ERROR_FAIL_RATIO ceiling, so a near-
-    # broken run doesn't silently publish thin scores). Below the
-    # tolerance, log and continue — adversarial-eval workloads will
-    # routinely trip the judge model's provider-side content filter
-    # (e.g. Azure's "potentially high-risk cyber activity" check on
-    # XPIA/PII transcripts) and a small residual count is expected.
+    content_filter_errors = sum(isinstance(error, LLMContentFilterError) for error in errors)
+    if content_filter_errors:
+        log.warning(
+            "[judge] LLMContentFilterError: %d/%d new rows rejected by provider content filters. "
+            "Review the judge endpoint and missing scoring coverage; increasing the failure "
+            "threshold does not recover missing judgments. See "
+            "https://responsibleai.github.io/ASSERT/docs/config/best-practices/",
+            content_filter_errors, len(pending),
+        )
+
+    # Failed rows stay out of scores.jsonl and are retried on resume.
+    # Measure only newly attempted rows so cached successes cannot mask
+    # a failing retry batch. An uncached all-error run must still fail.
     if errors and written_rows == 0 and not completed_keys:
         log.error(
-            "Judge stage failed: all %d row(s) errored and no prior scores were cached",
-            len(errors),
+            "Judge stage failed: all %d/%d (100.0%%) new rows errored and no prior scores "
+            "were cached (first error was %s). The %.1f%% ASSERT_JUDGE_ERROR_FAIL_RATIO "
+            "threshold cannot permit an uncached all-error run.",
+            len(errors), len(pending), type(errors[0]).__name__, error_fail_ratio * 100,
         )
         raise errors[0]
     if errors:
         total_pending = len(pending)
-        tolerance = total_pending // 10 if total_pending >= 20 else 0
-        if 0 < len(errors) <= tolerance:
-            log.warning(
-                "[judge] tolerating %d/%d row-level failures (<= %d): "
-                "first error was %s. The remaining %d scores will proceed "
-                "to metrics.",
-                len(errors), total_pending, tolerance, type(errors[0]).__name__,
-                written_rows,
-            )
-        else:
+        actual_ratio = len(errors) / total_pending
+        if actual_ratio > error_fail_ratio:
             log.error(
-                "Judge stage failed: %d/%d new rows errored, exceeding the "
-                "10%% tolerance (first error was %s)",
-                len(errors), total_pending, type(errors[0]).__name__,
+                "Judge stage failed: %d/%d (%.1f%%) new rows errored, exceeding the "
+                "failure threshold of %.1f%% (first error was %s; "
+                "set ASSERT_JUDGE_ERROR_FAIL_RATIO to override)",
+                len(errors), total_pending, actual_ratio * 100, error_fail_ratio * 100,
+                type(errors[0]).__name__,
             )
             raise errors[0]
+        log.warning(
+            "[judge] tolerating %d/%d (%.1f%%) row-level failures within the "
+            "failure threshold of %.1f%% (ASSERT_JUDGE_ERROR_FAIL_RATIO); "
+            "first error was %s. The remaining %d new scores will proceed to metrics.",
+            len(errors), total_pending, actual_ratio * 100, error_fail_ratio * 100,
+            type(errors[0]).__name__, written_rows,
+        )
 
     judge_failures = sum(
         1 for row in load_jsonl(scores_path) if infer_judge_status(row) == "judge_failed"
