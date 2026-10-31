@@ -34,10 +34,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
       - run: python -m pip install --upgrade build twine
@@ -45,7 +45,7 @@ jobs:
       - run: python -m twine check dist/*
       - name: Upload dist (PR build, short retention)
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
@@ -53,7 +53,7 @@ jobs:
           if-no-files-found: error
       - name: Upload dist (main / dispatch, long retention)
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
@@ -69,16 +69,16 @@ jobs:
         python: ['3.11', '3.12', '3.13']
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       # Checkout to a subdirectory so the workspace root does not contain
       # `assert_ai/`. This prevents pytest from importing the source tree
       # instead of the installed wheel.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -125,15 +125,15 @@ jobs:
           - example: bank-manager-agent-control
             assert_extras: acs
             requirements: examples/bank_manager_agent_control/requirements.txt
-            import: examples.bank_manager_agent_control.agent
+            import: examples.bank_manager_agent_control.agent_tier_authz; import examples.bank_manager_agent_control.coercion_agent
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -158,12 +158,14 @@ jobs:
       - name: Test Phoenix collector against installed client
         if: matrix.example == 'phoenix-auto-trace-openai'
         run: python source/tests/test_phoenix_collector.py -v
-      - name: Test Bank Manager model routing
+      - name: Test Bank Manager model and annotation routing
         if: matrix.example == 'bank-manager-agent-control'
         working-directory: source
         env:
           PYTHONPATH: examples/bank_manager_agent_control/tests
-        run: python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+        run: |
+          python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_model_config.py' -v
+          python -m unittest discover -s examples/bank_manager_agent_control/tests -p 'test_coercion_routing.py' -v
       - name: Test Science Research Agent tools
         if: matrix.example == 'science-research-agent'
         working-directory: source
@@ -178,19 +180,21 @@ jobs:
       matrix:
         include:
           - name: minimum supported
-            phoenix: '15.0.0'
-            phoenix_client: '2.1.0'
-          - name: maximum supported
             phoenix: '19.17.0'
+            phoenix_client: '2.13.0'
+            graphql_core: '>=3.2.0,<3.3.0'
+          - name: maximum supported
+            phoenix: ''
             phoenix_client: ''
+            graphql_core: '>=3.3.0,<3.4.0'
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -199,7 +203,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           WHEEL="$(ls dist/*.whl)[phoenix]"
-          PACKAGES=("$WHEEL" "arize-phoenix==${{ matrix.phoenix }}")
+          PACKAGES=("$WHEEL" "graphql-core${{ matrix.graphql_core }}")
+          if [ -n "${{ matrix.phoenix }}" ]; then
+            PACKAGES+=("arize-phoenix==${{ matrix.phoenix }}")
+          fi
           if [ -n "${{ matrix.phoenix_client }}" ]; then
             PACKAGES+=("arize-phoenix-client==${{ matrix.phoenix_client }}")
           fi
@@ -212,10 +219,10 @@ jobs:
     name: "Example install: langgraph-foundry-hosted server"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install standalone host environment
         run: |
           python -m pip install --upgrade pip

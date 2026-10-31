@@ -1,0 +1,48 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "bank-manager-tier-authorization"
+
+# Sensitivity-tier authorization. The bundle contains ONE rule
+# (policy_tier_authz/tier_authorization.rego) keyed on the platform-normalized
+# `risk_tier` property.
+#
+# The native ACS runtime requires the host's controlled tool surface to be
+# registered. This registry is a dispatch boundary, not policy logic: the Rego
+# below still contains no tool-name predicate and evaluates every registered
+# result through the same property rule.
+
+policies:
+  tier_authorization:
+    type: rego
+    bundle: ./policy_tier_authz
+    query: data.agent_control_specification.tier_authorization.verdict
+
+intervention_points:
+  pre_tool_call:
+    policy_target: "$.tool_call.args"
+    policy_target_kind: tool_args
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: tier_authorization
+      query: data.agent_control_specification.tier_authorization.pre_tool_call_verdict
+
+  post_tool_call:
+    policy_target: "$.tool_result"
+    policy_target_kind: tool_result
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: tier_authorization
+      query: data.agent_control_specification.tier_authorization.post_tool_call_verdict
+
+tools:
+  verify_authorization: {}
+  read_client: {}
+  read_account: {}
+  read_transaction_history: {}
+  prepare_transfer: {}
+  request_customer_approval: {}
+  create_transfer: {}
+  read_loan: {}
+  prepare_loan_modification: {}
+  read_portfolio: {}
+  place_trade: {}
